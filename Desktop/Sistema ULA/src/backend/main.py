@@ -29,7 +29,7 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# CONEXIÓN A LA BASE DE DATOS TiDB CLOUD (CON SSL AUTOMÁTICO)
+# CONEXIÓN A LA BASE DE DATOS TiDB CLOUD (OFICIAL WINDOWS)
 # ---------------------------------------------------------
 def get_db_connection():
     db_host = os.getenv("DB_HOST")
@@ -44,9 +44,12 @@ def get_db_connection():
         ("DB_PASSWORD", db_password),
         ("DB_NAME", db_name),
     ) if not value]
+    
     if missing_vars:
         raise RuntimeError(f"Faltan variables de entorno: {', '.join(missing_vars)}")
 
+    # SOLUCIÓN: Usar certifi.where() asegura una conexión SSL exitosa a TiDB 
+    # en cualquier entorno, ignorando rutas estáticas locales.
     return pymysql.connect(
         host=db_host,
         user=db_user,
@@ -54,11 +57,13 @@ def get_db_connection():
         db=db_name,
         port=db_port,
         cursorclass=pymysql.cursors.DictCursor,
-        ssl={"ca": certifi.where()} # Certificado inyectado automáticamente para TiDB
+        ssl_verify_cert=True,
+        ssl_verify_identity=True,
+        ssl={"ca": certifi.where()} # <--- Generación automática del certificado
     )
 
 # ---------------------------------------------------------
-# MODELOS DE DATOS (PYDANTIC) - RECEPTAN EL JSON DE REACT
+# MODELOS DE DATOS (PYDANTIC)
 # ---------------------------------------------------------
 class RegistroUsuario(BaseModel):
     nombre: str
@@ -84,6 +89,9 @@ class Aula(BaseModel):
     capacidad: int
     equipos: list = []
     estado: str = "Activo"
+
+class AsistenciaUpdate(BaseModel):
+    status: str
 
 # ---------------------------------------------------------
 # ENDPOINTS (RUTAS DE LA API)
@@ -172,170 +180,207 @@ def login_usuario(datos: LoginUsuario):
         connection.close()
 
 
-
 # ---------------------------------------------------------
-# ---------------------------------------------------------
-# ENDPOINT PARA PROCESAR PDF DE HORARIOS (PARSER INTELIGENTE)
+# ENDPOINT PARA PROCESAR PDF Y ARCHIVOS DE IMAGEN DE HORARIOS
 # ---------------------------------------------------------
 @app.post("/upload-pdf")
 async def procesar_pdf(archivo: UploadFile = File(...)):
     """
-    Parser inteligente y a prueba de balas para PDFs institucionales.
-    Limpia saltos de línea ocultos y detecta tablas dinámicamente.
+    Parser inteligente que acepta PDF e imágenes (PNG, JPG).
+    Para PDF: usa pdfplumber.
+    Para imágenes: intenta usar pytesseract si está disponible.
     """
     try:
         contenido = await archivo.read()
-        pdf_file = BytesIO(contenido)
+        
+        # Validar tipo de archivo
+        tipo_archivo = archivo.content_type
+        if tipo_archivo not in ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg']:
+            raise ValueError("Formato no soportado. Usa PDF o imágenes (PNG, JPG).")
         
         licenciatura_extraida = "Licenciatura no identificada"
-        mapa_docentes = {}  # {asignatura_limpia: docente_limpio}
+        mapa_docentes = {}
         horarios_compilados = []
         
-        with pdfplumber.open(pdf_file) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                # ========== PASO 1: Extraer Licenciatura de forma flexible ==========
-                texto_pagina = page.extract_text() or ""
-                for linea in texto_pagina.split('\n'):
-                    if "Licenciatura en" in linea:
+        # ========== PROCESAR PDF ==========
+        if tipo_archivo == 'application/pdf':
+            pdf_file = BytesIO(contenido)
+            
+            with pdfplumber.open(pdf_file) as pdf:
+                for page_num, page in enumerate(pdf.pages):
+                    texto_pagina = page.extract_text() or ""
+                    for linea in texto_pagina.split('\n'):
+                        if "Licenciatura en" in linea:
+                            licenciatura_extraida = linea.strip()
+                            break
+                    
+                    tables = page.extract_tables()
+                    if not tables:
+                        continue
+                    
+                    tabla_matriz = None
+                    tabla_directorio = None
+                    
+                    for table in tables:
+                        if not table or not table[0]: continue
+                        fila_texto = " ".join([str(c).lower() for c in table[0] if c])
+                        
+                        if "lunes" in fila_texto or "martes" in fila_texto:
+                            tabla_matriz = table
+                        elif "asignatura" in fila_texto or "docente" in fila_texto:
+                            tabla_directorio = table
+
+                    if not tabla_directorio and len(tables) >= 2:
+                        tabla_directorio = tables[-1]
+                    if not tabla_matriz and len(tables) >= 1:
+                        tabla_matriz = tables[0]
+
+                    if not tabla_matriz or not tabla_directorio:
+                        continue
+                    
+                    # Construir mapa de docentes
+                    for row in tabla_directorio:
+                        if not row or len(row) < 3: continue
+                        asignatura_raw = str(row[0] or "").replace('\n', ' ').strip()
+                        docente_raw = str(row[2] or "").replace('\n', ' ').strip()
+                        
+                        asignatura_raw = " ".join(asignatura_raw.split()).lower()
+                        docente_raw = " ".join(docente_raw.split())
+                        
+                        if asignatura_raw and docente_raw and "asignatura" not in asignatura_raw:
+                            mapa_docentes[asignatura_raw] = docente_raw
+                    
+                    # Procesar matriz de horarios
+                    dias_indices = {}
+                    start_row = 0
+                    
+                    for r_idx, row in enumerate(tabla_matriz):
+                        fila_str = " ".join([str(c).lower() for c in row if c])
+                        if "lunes" in fila_str:
+                            start_row = r_idx + 1
+                            for c_idx, cell in enumerate(row):
+                                cell_val = str(cell or "").strip().lower().replace('\n', '')
+                                for d in ["lunes", "martes", "miércoles", "miercoles", "jueves", "viernes"]:
+                                    if d in cell_val:
+                                        dia_oficial = d.replace('miercoles', 'miércoles').capitalize()
+                                        dias_indices[dia_oficial] = c_idx
+                            break
+
+                    for row_num in range(start_row, len(tabla_matriz)):
+                        row = tabla_matriz[row_num]
+                        if not row or not row[0]: continue
+                        
+                        horario_slot = str(row[0] or "").replace('\n', '-').replace(' ', '').strip()
+                        if len(horario_slot) < 5: continue
+                        
+                        for dia_nombre, idx_col in dias_indices.items():
+                            if idx_col < len(row):
+                                asignatura_celda = str(row[idx_col] or "").replace('\n', ' ').strip()
+                                asignatura_celda = " ".join(asignatura_celda.split())
+                                
+                                if asignatura_celda and asignatura_celda.lower() not in ["", "sin especificar", "horario"]:
+                                    key_busqueda = asignatura_celda.lower()
+                                    docente_encontrado = mapa_docentes.get(key_busqueda, "Sin especificar")
+                                    
+                                    if docente_encontrado == "Sin especificar":
+                                        for key_mapa, doc in mapa_docentes.items():
+                                            if key_mapa in key_busqueda or key_busqueda in key_mapa:
+                                                docente_encontrado = doc
+                                                break
+                                    
+                                    horarios_compilados.append({
+                                        "id": f"{page_num}_{row_num}_{idx_col}",
+                                        "docente": docente_encontrado,
+                                        "licenciatura": licenciatura_extraida,
+                                        "asignatura": asignatura_celda.title(),
+                                        "horario_resumen": f"{dia_nombre} {horario_slot}",
+                                        "aula_asignada": ""
+                                    })
+        
+        # ========== PROCESAR IMÁGENES ==========
+        else:
+            try:
+                from PIL import Image
+                try:
+                    import pytesseract
+                except ImportError:
+                    pytesseract = None
+                
+                if pytesseract is None:
+                    raise ImportError("pytesseract no está instalado")
+                
+                imagen = Image.open(BytesIO(contenido))
+                texto_extraido = pytesseract.image_to_string(imagen, lang='spa')
+                
+                # Procesamiento simple: buscar patrones de licenciatura y horarios
+                lineas = texto_extraido.split('\n')
+                for linea in lineas:
+                    if "Licenciatura en" in linea or "Licenciatura de" in linea:
                         licenciatura_extraida = linea.strip()
                         break
                 
-                # ========== PASO 2: Identificar Tablas Dinámicamente ==========
-                tables = page.extract_tables()
-                if not tables:
-                    continue
+                horarios_compilados.append({
+                    "id": "img_0",
+                    "docente": "Extracción de Imagen",
+                    "licenciatura": licenciatura_extraida,
+                    "asignatura": "Asignatura extraída de imagen",
+                    "horario_resumen": "Verificar manualmente",
+                    "aula_asignada": "",
+                    "nota": "La extracción de imágenes es experimental. Verifica los datos extraídos."
+                })
                 
-                tabla_matriz = None
-                tabla_directorio = None
-                
-                for table in tables:
-                    if not table or not table[0]: continue
-                    # Juntar toda la primera fila para ver qué contiene
-                    fila_texto = " ".join([str(c).lower() for c in table[0] if c])
-                    
-                    if "lunes" in fila_texto or "martes" in fila_texto:
-                        tabla_matriz = table
-                    elif "asignatura" in fila_texto or "docente" in fila_texto:
-                        tabla_directorio = table
-
-                # Fallback por si la cabecera no estaba en la fila 0
-                if not tabla_directorio and len(tables) >= 2:
-                    tabla_directorio = tables[-1]
-                if not tabla_matriz and len(tables) >= 1:
-                    tabla_matriz = tables[0]
-
-                if not tabla_matriz or not tabla_directorio:
-                    continue
-                
-                # ========== PASO 3: Construir Mapa de Docentes (Tabla Inferior) ==========
-                for row in tabla_directorio:
-                    if not row or len(row) < 3: continue
-                    # Limpiar saltos de línea y espacios dobles
-                    asignatura_raw = str(row[0] or "").replace('\n', ' ').strip()
-                    docente_raw = str(row[2] or "").replace('\n', ' ').strip()
-                    
-                    asignatura_raw = " ".join(asignatura_raw.split()).lower()
-                    docente_raw = " ".join(docente_raw.split())
-                    
-                    if asignatura_raw and docente_raw and "asignatura" not in asignatura_raw:
-                        mapa_docentes[asignatura_raw] = docente_raw
-                
-                # ========== PASO 4: Procesar Matriz de Horarios (Tabla Superior) ==========
-                dias_indices = {}
-                start_row = 0
-                
-                # Buscar en qué fila están los días realmente
-                for r_idx, row in enumerate(tabla_matriz):
-                    fila_str = " ".join([str(c).lower() for c in row if c])
-                    if "lunes" in fila_str:
-                        start_row = r_idx + 1
-                        for c_idx, cell in enumerate(row):
-                            cell_val = str(cell or "").strip().lower().replace('\n', '')
-                            # Mapear columnas a los días oficiales
-                            for d in ["lunes", "martes", "miércoles", "miercoles", "jueves", "viernes"]:
-                                if d in cell_val:
-                                    dia_oficial = d.replace('miercoles', 'miércoles').capitalize()
-                                    dias_indices[dia_oficial] = c_idx
-                        break
-
-                # Leer las materias por hora
-                for row_num in range(start_row, len(tabla_matriz)):
-                    row = tabla_matriz[row_num]
-                    if not row or not row[0]: continue
-                    
-                    # Formatear la hora (ej. de "13:20 \n 14:10" a "13:20-14:10")
-                    horario_slot = str(row[0] or "").replace('\n', '-').replace(' ', '').strip()
-                    if len(horario_slot) < 5: continue # Ignorar filas basura
-                    
-                    for dia_nombre, idx_col in dias_indices.items():
-                        if idx_col < len(row):
-                            asignatura_celda = str(row[idx_col] or "").replace('\n', ' ').strip()
-                            asignatura_celda = " ".join(asignatura_celda.split()) # Quitar espacios extra
-                            
-                            if asignatura_celda and asignatura_celda.lower() not in ["", "sin especificar", "horario"]:
-                                key_busqueda = asignatura_celda.lower()
-                                docente_encontrado = mapa_docentes.get(key_busqueda, "Sin especificar")
-                                
-                                # Si no coincide exacto, buscar si "contiene" la palabra
-                                if docente_encontrado == "Sin especificar":
-                                    for key_mapa, doc in mapa_docentes.items():
-                                        if key_mapa in key_busqueda or key_busqueda in key_mapa:
-                                            docente_encontrado = doc
-                                            break
-                                
-                                horarios_compilados.append({
-                                    "id": f"{page_num}_{row_num}_{idx_col}",
-                                    "docente": docente_encontrado,
-                                    "licenciatura": licenciatura_extraida,
-                                    "asignatura": asignatura_celda.title(),
-                                    "horario_resumen": f"{dia_nombre} {horario_slot}",
-                                    "aula_asignada": ""
-                                })
+            except ImportError:
+                horarios_compilados.append({
+                    "id": "img_error",
+                    "docente": "Error de Extracción",
+                    "licenciatura": "No disponible",
+                    "asignatura": "pytesseract no configurado",
+                    "horario_resumen": "Contacta al administrador",
+                    "aula_asignada": "",
+                    "nota": "Para procesar imágenes, debe instalarse Tesseract-OCR en el sistema."
+                })
+            except Exception as e:
+                raise ValueError(f"Error procesando imagen: {str(e)}")
         
         if not horarios_compilados:
-            raise ValueError("No se extrajeron horarios. Verifica la estructura del PDF.")
+            raise ValueError("No se extrajeron horarios. Verifica la estructura del archivo.")
         
         return {
-            "message": "PDF procesado exitosamente",
+            "message": "Archivo procesado exitosamente",
             "datos_extraidos": {
                 "lista_horarios": horarios_compilados
             }
         }
     
     except Exception as e:
-        print(f"Error procesando PDF: {str(e)}") # Esto te lo imprimirá en consola para debugear
-        raise HTTPException(status_code=400, detail=f"Error al procesar PDF: {str(e)}")
+        print(f"Error procesando archivo: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error al procesar archivo: {str(e)}")
+
 
 # ---------------------------------------------------------
 # ENDPOINTS PARA GESTIÓN DE HORARIOS
 # ---------------------------------------------------------
 @app.post("/api/guardar-horarios")
 def guardar_horarios(horarios: list[dict]):
-    """
-    Guarda los horarios procesados en la base de datos TiDB
-    """
-    if not horarios:
-        raise HTTPException(status_code=400, detail="La lista de horarios está vacía.")
-    
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            for horario in horarios:
+            for h in horarios:
                 sql = """
-                    INSERT INTO horarios (docente, licenciatura, asignatura, horario, aula_asignada, archivo)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO horarios 
+                    (docente, licenciatura, asignatura, horario, aula_asignada, archivo, fecha_creacion, fecha_clase)
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), CURDATE())
                 """
                 cursor.execute(sql, (
-                    horario.get("docente", ""),
-                    horario.get("licenciatura", ""),
-                    horario.get("asignatura", ""),
-                    horario.get("horario", ""),
-                    horario.get("aulaAsignada", "Por asignar"),
-                    horario.get("archivo", "")
+                    h.get("docente", ""),
+                    h.get("licenciatura", ""),
+                    h.get("asignatura", ""),
+                    h.get("horario", h.get("horario_resumen", "")),
+                    h.get("aulaAsignada", h.get("aula_asignada", "Por asignar")),
+                    h.get("archivo", "")
                 ))
         connection.commit()
-        return {"message": "Horarios guardados exitosamente", "total": len(horarios)}
-    
+        return {"message": "Horarios guardados"}
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al guardar horarios: {str(e)}")
     finally:
@@ -350,12 +395,51 @@ def obtener_horarios():
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM horarios")
+            cursor.execute("SELECT * FROM horarios ORDER BY id DESC")
             horarios = cursor.fetchall()
         return horarios if horarios else []
-    
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener horarios: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.put("/api/asistencia/{id}")
+def actualizar_asistencia(id: int, datos: AsistenciaUpdate):
+    """
+    Endpoint para actualizar el estado de asistencia desde un panel operativo
+    """
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            sql = "UPDATE horarios SET status_asistencia = %s WHERE id = %s"
+            cursor.execute(sql, (datos.status, id))
+        connection.commit()
+        return {"message": "Estado actualizado correctamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al registrar asistencia: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/clases-hoy")
+def obtener_clases_hoy():
+    """
+    Obtiene las clases programadas para hoy
+    """
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT docente, asignatura, horario, aula_asignada 
+                FROM horarios 
+                WHERE DATE(fecha_clase) = CURDATE()
+                ORDER BY horario
+            """)
+            clases = cursor.fetchall()
+        return clases if clases else []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener clases: {str(e)}")
     finally:
         connection.close()
 
@@ -374,7 +458,6 @@ def obtener_aulas():
             cursor.execute("SELECT id, nombre, edificio, capacidad FROM aulas ORDER BY nombre")
             aulas = cursor.fetchall()
         return aulas if aulas else []
-    
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener aulas: {str(e)}")
     finally:
@@ -402,7 +485,6 @@ def crear_aula(aula: Aula):
             ))
         connection.commit()
         return {"message": "Aula creada exitosamente"}
-    
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al crear aula: {str(e)}")
     finally:
@@ -420,32 +502,98 @@ def eliminar_aula(aula_id: int):
             cursor.execute("DELETE FROM aulas WHERE id = %s", (aula_id,))
         connection.commit()
         return {"message": "Aula eliminada exitosamente"}
-    
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar aula: {str(e)}")
     finally:
         connection.close()
 
 
-@app.get("/api/clases-hoy")
-def obtener_clases_hoy():
+# ---------------------------------------------------------
+# ENDPOINTS PARA GESTIÓN DE ARCHIVOS PDF
+# ---------------------------------------------------------
+@app.get("/api/archivos")
+def obtener_archivos():
     """
-    Obtiene las clases programadas para hoy
+    Obtiene lista de archivos únicos y estadísticas de los horarios
     """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Ajusta la consulta según tu estructura de base de datos
             cursor.execute("""
-                SELECT docente, asignatura, horario, aula_asignada 
+                SELECT DISTINCT archivo, 
+                       COUNT(*) as total_horarios,
+                       MIN(fecha_creacion) as fecha_carga,
+                       MAX(fecha_creacion) as ultima_modificacion,
+                       COUNT(CASE WHEN aula_asignada != 'Por asignar' THEN 1 END) as aulas_asignadas
                 FROM horarios 
-                WHERE DATE(fecha_clase) = CURDATE()
-                ORDER BY horario
+                GROUP BY archivo 
+                ORDER BY fecha_carga DESC
             """)
-            clases = cursor.fetchall()
-        return clases if clases else []
-    
+            archivos = cursor.fetchall()
+        return archivos if archivos else []
     except pymysql.Error as e:
-        raise HTTPException(status_code=500, detail=f"Error al obtener clases: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al obtener archivos: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/archivos/{nombre_archivo}/horarios")
+def obtener_horarios_archivo(nombre_archivo: str):
+    """
+    Obtiene todos los horarios de un archivo específico
+    """
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, docente, licenciatura, asignatura, horario, aula_asignada, fecha_creacion
+                FROM horarios 
+                WHERE archivo = %s
+                ORDER BY horario
+            """, (nombre_archivo,))
+            horarios = cursor.fetchall()
+        return horarios if horarios else []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener horarios: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.put("/api/horarios/{horario_id}")
+def actualizar_horario(horario_id: int, datos: dict):
+    """
+    Actualiza un horario específico (para cambiar aula asignada)
+    """
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            sql = "UPDATE horarios SET aula_asignada = %s, docente = %s, asignatura = %s WHERE id = %s"
+            cursor.execute(sql, (
+                datos.get("aula_asignada", "Por asignar"),
+                datos.get("docente", ""),
+                datos.get("asignatura", ""),
+                horario_id
+            ))
+        connection.commit()
+        return {"message": "Horario actualizado exitosamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar horario: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.delete("/api/archivos/{nombre_archivo}")
+def eliminar_archivo(nombre_archivo: str):
+    """
+    Elimina un archivo y todos sus horarios asociados
+    """
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM horarios WHERE archivo = %s", (nombre_archivo,))
+        connection.commit()
+        return {"message": f"Archivo '{nombre_archivo}' y sus horarios eliminados exitosamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar archivo: {str(e)}")
     finally:
         connection.close()

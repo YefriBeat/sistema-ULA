@@ -1,199 +1,404 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// Función auxiliar para darle color automático a las etiquetas según la licenciatura
+// Parser robusto para extraer día y horas
+const parsearHorario = (horarioCompleto) => {
+  const stringSeguro = horarioCompleto || "";
+  const partes = stringSeguro.split(' ');
+  
+  let dia = '';
+  let textoHora = '';
+
+  if (partes.length >= 2 && /[a-zA-Z]/.test(partes[0])) {
+    dia = partes[0].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
+    textoHora = partes.slice(1).join('');
+  } else {
+    textoHora = stringSeguro;
+  }
+  
+  const horasLimpias = textoHora.replace(/-+/g, '-').trim(); 
+  const [strInicio, strFin] = horasLimpias.split('-');
+  
+  const getMinutos = (horaStr) => {
+    if (!horaStr) return 0;
+    const [h, m] = horaStr.trim().split(':').map(Number);
+    return (h * 60) + (m || 0);
+  };
+  
+  return { 
+    dia, 
+    inicio: getMinutos(strInicio), 
+    fin: getMinutos(strFin), 
+    textoHora: horasLimpias 
+  };
+};
+
 const obtenerColorLicenciatura = (licenciatura) => {
-  const lic = licenciatura.toLowerCase();
+  const lic = (licenciatura || '').toLowerCase();
   if (lic.includes('medicina')) return 'bg-blue-50 text-blue-700 border-blue-200/50';
   if (lic.includes('administración') || lic.includes('negocios')) return 'bg-orange-50 text-orange-700 border-orange-200/50';
   if (lic.includes('mecatrónica') || lic.includes('ingeniería')) return 'bg-green-50 text-green-700 border-green-200/50';
-  return 'bg-gray-50 text-gray-700 border-gray-200/50'; // Color por defecto
+  return 'bg-gray-50 text-gray-700 border-gray-200/50';
+};
+
+// Índice jerárquico de días para ordenamiento
+const diasSemanaMap = {
+  'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6
 };
 
 export default function VisualBd() {
   const [asignaturas, setAsignaturas] = useState([]);
+  
+  // ESTADOS DE FILTROS (Por defecto muestra 'en_curso')
   const [busqueda, setBusqueda] = useState('');
+  const [filtroLic, setFiltroLic] = useState('');
+  const [filtroAsignatura, setFiltroAsignatura] = useState('');
+  const [filtroDia, setFiltroDia] = useState('');
+  const [filtroHora, setFiltroHora] = useState('');
+  const [filtroEstado, setFiltroEstado] = useState('en_curso'); 
+  const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false);
+  
   const [cargando, setCargando] = useState(true);
-  const navigate = useNavigate(); // Herramienta para redireccionar
+  const [ahora, setAhora] = useState(new Date('2026-05-25T16:30:00')); // Fecha fija para pruebas, cambiar a new Date() para producción
+  const navigate = useNavigate();
 
-  // Reemplaza tu useEffect actual con este:
+  // Reloj interno del sistema
+  useEffect(() => {
+    const timer = setInterval(() => setAhora(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Conexión constante a la base de datos
   useEffect(() => {
     const fetchDatos = async () => {
       try {
         const response = await fetch('http://localhost:8000/api/horarios');
-        const data = await response.json();
-        setAsignaturas(data);
-        setCargando(false);
+        if (response.ok) {
+          const data = await response.json();
+          setAsignaturas(data);
+        }
       } catch (error) {
-        console.error("Error al cargar la base de datos:", error);
+        console.error("Error al cargar la BD:", error);
+      } finally {
         setCargando(false);
       }
     };
-
     fetchDatos();
+    const interval = setInterval(fetchDatos, 5000);
+    return () => clearInterval(interval);
   }, []);
 
-  // Lógica para filtrar la tabla con el buscador
-  const datosFiltrados = asignaturas.filter(item => 
-    item.docente.toLowerCase().includes(busqueda.toLowerCase()) ||
-    item.asignatura.toLowerCase().includes(busqueda.toLowerCase()) ||
-    item.aula?.toLowerCase().includes(busqueda.toLowerCase()) // El "?" evita errores si no hay aula
-  );
+  // Motor Temporal y de Ordenamiento
+  const asignaturasConEstado = useMemo(() => {
+    const diaActualIndex = ahora.getDay();
+    const minutosActuales = (ahora.getHours() * 60) + ahora.getMinutes();
+
+    return asignaturas.map(clase => {
+      const { dia, inicio, fin, textoHora } = parsearHorario(clase.horario);
+      const diaClaseIndex = dia ? diasSemanaMap[dia] : diaActualIndex;
+      let estadoTiempo = 'proxima';
+
+      if (diaClaseIndex !== undefined) {
+        if (diaClaseIndex < diaActualIndex) {
+          estadoTiempo = 'finalizada';
+        } else if (diaClaseIndex > diaActualIndex) {
+          estadoTiempo = 'proxima';
+        } else {
+          if (minutosActuales > fin) estadoTiempo = 'finalizada';
+          else if (minutosActuales >= inicio && minutosActuales <= fin) estadoTiempo = 'en_curso';
+        }
+      }
+
+      return { ...clase, estadoTiempo, textoHora, diaClaseIndex, inicio, diaOriginal: dia };
+    }).sort((a, b) => {
+      if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex || 0) - (b.diaClaseIndex || 0);
+      return (a.inicio || 0) - (b.inicio || 0);
+    });
+  }, [asignaturas, ahora]);
+
+  // Generar opciones dinámicas para los selectores basados en la BD real
+  const opcionesLicenciatura = useMemo(() => [...new Set(asignaturas.map(a => a.licenciatura).filter(Boolean))].sort(), [asignaturas]);
+  const opcionesAsignatura = useMemo(() => [...new Set(asignaturas.map(a => a.asignatura).filter(Boolean))].sort(), [asignaturas]);
+  const opcionesHora = useMemo(() => [...new Set(asignaturasConEstado.map(a => a.textoHora).filter(Boolean))].sort(), [asignaturasConEstado]);
+
+  // Lógica combinada de filtros
+  const datosFiltrados = useMemo(() => {
+    let resultado = asignaturasConEstado.filter(item => {
+      const coincideBusqueda = 
+        item.docente?.toLowerCase().includes(busqueda.toLowerCase()) || 
+        item.aula_asignada?.toLowerCase().includes(busqueda.toLowerCase());
+        
+      const coincideLic = filtroLic === '' || item.licenciatura === filtroLic;
+      const coincideAsignatura = filtroAsignatura === '' || item.asignatura === filtroAsignatura;
+      const coincideHora = filtroHora === '' || item.textoHora === filtroHora;
+      const coincideDia = filtroDia === '' || item.horario?.toLowerCase().includes(filtroDia.toLowerCase());
+      
+      return coincideBusqueda && coincideLic && coincideAsignatura && coincideHora && coincideDia;
+    });
+
+    if (filtroEstado !== 'todas') {
+      resultado = resultado.filter(item => item.estadoTiempo === filtroEstado);
+    }
+
+    if (!mostrarFinalizadas && filtroEstado === 'todas') {
+      resultado = resultado.filter(item => item.estadoTiempo !== 'finalizada');
+    }
+
+    return resultado;
+  }, [asignaturasConEstado, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, mostrarFinalizadas]);
+
+  // Métricas del Directorio
+  const stats = useMemo(() => {
+    const enCurso = asignaturasConEstado.filter(c => c.estadoTiempo === 'en_curso').length;
+    const proximas = asignaturasConEstado.filter(c => c.estadoTiempo === 'proxima').length;
+    const finalizadas = asignaturasConEstado.filter(c => c.estadoTiempo === 'finalizada').length;
+    const total = asignaturasConEstado.length;
+    return { enCurso, proximas, finalizadas, total };
+  }, [asignaturasConEstado]);
+
+  // Funciones rápidas para cambiar de vistas
+  const verBaseDatosTotal = () => {
+    setFiltroEstado('todas');
+    setMostrarFinalizadas(true);
+    setFiltroLic('');
+    setFiltroAsignatura('');
+    setFiltroHora('');
+    setFiltroDia('');
+    setBusqueda('');
+  };
+
+  const verClasesEnCurso = () => {
+    setFiltroEstado('en_curso');
+    setMostrarFinalizadas(false);
+  };
+
+  const fechaFormateada = ahora.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8 font-manrope">
-      {/* HEADER DE LA SECCIÓN */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+    <div className="max-w-[1280px] mx-auto space-y-8 font-manrope p-6">
+      
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-[#1b1c1e] tracking-tight">Directorio General de Asignaturas</h1>
-          <p className="text-base text-[#44464e] mt-1.5">Gestión y control centralizado de la programación académica institucional.</p>
+          <h1 className="text-3xl font-bold text-[#1b1c1e] tracking-tight">Directorio General de Horarios</h1>
+          <p className="text-base text-[#44464e] mt-1.5">Visualización centralizada con monitoreo en tiempo real.</p>
         </div>
+        <div className="flex gap-3 flex-wrap">
+          <div className="bg-white rounded-xl px-5 py-3 border border-[#c5c6cf]/50 flex items-center gap-3 shadow-sm">
+            <span className="material-symbols-outlined text-green-500 text-sm animate-pulse">sensors</span>
+            <span className="text-xs font-bold text-[#75777f]">EN LÍNEA</span>
+            <span className="text-[#c5c6cf]">•</span>
+            <span className="text-sm font-semibold text-[#1b1c1e] capitalize">{fechaFormateada}</span>
+          </div>
+          <button 
+            onClick={() => navigate('/horarios')}
+            className="bg-[#1c355e] text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-[#152a4a] transition-all flex items-center gap-2 shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[18px]">upload</span> Cargar BD
+          </button>
+        </div>
+      </div>
+
+      {/* MÉTRICAS SUPERIORES */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 lg:gap-6">
+        <div className={`border rounded-2xl p-4 lg:p-6 flex flex-col justify-between shadow-sm cursor-pointer transition-transform hover:scale-[1.02] ${stats.enCurso > 0 ? 'bg-blue-50 border-blue-200' : 'bg-white border-[#c5c6cf]/50'}`} onClick={verClasesEnCurso}>
+          <div>
+            <p className="text-[10px] lg:text-[11px] font-bold text-[#44464e] uppercase tracking-widest mb-2">En Curso</p>
+            <h3 className={`text-3xl lg:text-5xl font-extrabold ${stats.enCurso > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>{stats.enCurso}</h3>
+          </div>
+          <p className="text-[10px] lg:text-xs font-semibold text-[#75777f] mt-2">Click para filtrar</p>
+        </div>
+
+        <div className={`border rounded-2xl p-4 lg:p-6 flex flex-col justify-between shadow-sm ${stats.proximas > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#c5c6cf]/50'}`}>
+          <div>
+            <p className="text-[10px] lg:text-[11px] font-bold text-[#44464e] uppercase tracking-widest mb-2">Próximas</p>
+            <h3 className={`text-3xl lg:text-5xl font-extrabold ${stats.proximas > 0 ? 'text-amber-700' : 'text-[#c5c6cf]'}`}>{stats.proximas}</h3>
+          </div>
+          <p className="text-[10px] lg:text-xs font-semibold text-[#75777f] mt-2">de {stats.total}</p>
+        </div>
+
+        <div className={`border rounded-2xl p-4 lg:p-6 flex flex-col justify-between shadow-sm ${stats.finalizadas > 0 ? 'bg-gray-50 border-gray-200' : 'bg-white border-[#c5c6cf]/50'}`}>
+          <div>
+            <p className="text-[10px] lg:text-[11px] font-bold text-[#44464e] uppercase tracking-widest mb-2">Finalizadas</p>
+            <h3 className={`text-3xl lg:text-5xl font-extrabold ${stats.finalizadas > 0 ? 'text-gray-700' : 'text-[#c5c6cf]'}`}>{stats.finalizadas}</h3>
+          </div>
+          <p className="text-[10px] lg:text-xs font-semibold text-[#75777f] mt-2">de {stats.total}</p>
+        </div>
+
+        <div 
+          onClick={verBaseDatosTotal}
+          className="bg-gradient-to-br from-[#1c355e] to-[#0f1f3a] border border-[#1c355e] rounded-2xl p-4 lg:p-6 shadow-lg text-white flex flex-col justify-between cursor-pointer transition-transform hover:scale-[1.02]"
+        >
+          <div>
+            <p className="text-[10px] lg:text-[11px] font-bold text-white/70 uppercase tracking-widest mb-2">Ver BD Total</p>
+            <h3 className="text-3xl lg:text-5xl font-extrabold text-white">{stats.total}</h3>
+          </div>
+          <p className="text-[10px] lg:text-xs text-white/70 mt-2 font-semibold">Click para mostrar todo</p>
+        </div>
+      </div>
+
+      {/* FILTROS AVANZADOS */}
+      <div className="bg-white p-4 lg:p-6 rounded-2xl border border-[#c5c6cf]/50 shadow-sm space-y-4">
         
-        <div className="flex flex-col md:flex-row items-center gap-4">
-          <div className="flex bg-[#f4f3f6] p-1.5 rounded-full border border-[#c5c6cf]/40 w-fit">
-            
-            {/* BOTÓN CON REDIRECCIÓN A CARGA DE HORARIOS */}
-            <button 
-              onClick={() => navigate('/horarios')}
-              className="px-6 py-2 rounded-full text-xs font-bold text-[#44464e] hover:text-[#1b1c1e] transition-all"
-            >
-              Cargar Nuevos Horarios
-            </button>
-            
-            <button className="px-6 py-2 rounded-full text-xs font-bold bg-[#1c355e] text-white shadow-md transition-all">
-              Base de Datos Actual
-            </button>
+        {/* Fila 1: Búsqueda y Botones de acción rápida */}
+        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
+          <div className="w-full lg:w-1/3 relative">
+            <span className="material-symbols-outlined absolute left-3 top-2.5 text-[#75777f] text-[20px]">search</span>
+            <input 
+              className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#1c355e]" 
+              placeholder="Buscar por docente o aula..." 
+              value={busqueda} 
+              onChange={(e) => setBusqueda(e.target.value)}
+            />
           </div>
           
-          <div className="flex gap-2">
-            <button className="bg-red-50 text-[#ba1a1a] font-bold px-5 py-2 rounded-xl flex items-center gap-2 hover:bg-red-100 transition-all border border-red-200 text-xs shadow-sm">
-              <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
-              <span>Eliminar por Lote</span>
+          <div className="flex gap-2 w-full lg:w-auto">
+             <button 
+              onClick={verClasesEnCurso}
+              className={`flex-1 lg:flex-none px-4 py-2.5 rounded-xl text-xs font-bold transition-all border ${filtroEstado === 'en_curso' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-[#44464e] border-[#c5c6cf]/50 hover:bg-gray-50'}`}
+            >
+              Solo En Curso
             </button>
-            <button className="bg-[#fdbb11] text-[#000924] font-bold px-5 py-2 rounded-xl flex items-center gap-2 hover:brightness-95 transition-all shadow-md text-xs">
-              <span className="material-symbols-outlined text-[18px]">table_view</span>
-              <span>Exportar Excel</span>
+            <button 
+              onClick={verBaseDatosTotal}
+              className={`flex-1 lg:flex-none px-4 py-2.5 rounded-xl text-xs font-bold transition-all border ${filtroEstado === 'todas' && mostrarFinalizadas ? 'bg-[#1c355e] text-white border-[#1c355e]' : 'bg-white text-[#44464e] border-[#c5c6cf]/50 hover:bg-gray-50'}`}
+            >
+              Base de Datos Total
             </button>
           </div>
         </div>
-      </div>
 
-      {/* BARRA DE FILTROS */}
-      <div className="bg-white p-5 rounded-2xl border border-[#c5c6cf]/50 shadow-sm flex flex-wrap items-center gap-4">
-        <div className="flex-1 min-w-[250px] relative">
-          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f]">search</span>
-          <input 
-            className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/30 rounded-xl text-sm focus:bg-white focus:border-[#1c355e] focus:ring-0 outline-none transition-all" 
-            placeholder="Buscar por docente, asignatura o aula..." 
-            type="text"
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-          />
-        </div>
-        
-        {/* Selectores estáticos */}
-        <div className="min-w-[180px]">
-          <select className="w-full bg-[#f4f3f6] border border-[#c5c6cf]/30 rounded-xl py-2.5 text-sm focus:bg-white focus:border-[#1c355e] px-3 outline-none text-[#44464e] font-medium transition-all">
+        <hr className="border-[#c5c6cf]/30" />
+
+        {/* Fila 2: Selectores de Filtro */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <select 
+            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]" 
+            onChange={(e) => setFiltroEstado(e.target.value)}
+            value={filtroEstado}
+          >
+            <option value="todas">Todos los Estados</option>
+            <option value="en_curso">▶ Solo En Curso</option>
+            <option value="proxima">Próximas</option>
+            <option value="finalizada">Finalizadas</option>
+          </select>
+
+          <select 
+            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]" 
+            onChange={(e) => setFiltroLic(e.target.value)}
+            value={filtroLic}
+          >
             <option value="">Todas las Licenciaturas</option>
-            <option>Medicina</option>
-            <option>Administración</option>
-            <option>Mecatrónica</option>
+            {opcionesLicenciatura.map(lic => <option key={lic} value={lic}>{lic}</option>)}
           </select>
-        </div>
-        <div className="min-w-[140px]">
-          <select className="w-full bg-[#f4f3f6] border border-[#c5c6cf]/30 rounded-xl py-2.5 text-sm focus:bg-white focus:border-[#1c355e] px-3 outline-none text-[#44464e] font-medium transition-all">
+
+          <select 
+            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]" 
+            onChange={(e) => setFiltroAsignatura(e.target.value)}
+            value={filtroAsignatura}
+          >
+            <option value="">Todas las Asignaturas</option>
+            {opcionesAsignatura.map(asig => <option key={asig} value={asig}>{asig}</option>)}
+          </select>
+
+          <select 
+            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]" 
+            onChange={(e) => setFiltroHora(e.target.value)}
+            value={filtroHora}
+          >
+            <option value="">Todas las Horas</option>
+            {opcionesHora.map(hora => <option key={hora} value={hora}>{hora}</option>)}
+          </select>
+
+          <select 
+            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]" 
+            onChange={(e) => setFiltroDia(e.target.value)}
+            value={filtroDia}
+          >
             <option value="">Todos los Días</option>
-            <option>Lunes</option>
-            <option>Martes</option>
-            <option>Miércoles</option>
-            <option>Jueves</option>
-            <option>Viernes</option>
+            <option value="Lunes">Lunes</option>
+            <option value="Martes">Martes</option>
+            <option value="Miércoles">Miércoles</option>
+            <option value="Jueves">Jueves</option>
+            <option value="Viernes">Viernes</option>
+            <option value="Sábado">Sábado</option>
           </select>
         </div>
-        
-        <button className="bg-white text-[#1b1c1e] px-6 py-2.5 rounded-xl border border-[#c5c6cf]/50 hover:bg-[#e3e2e5]/20 transition-colors flex items-center space-x-2 font-bold text-sm shadow-sm">
-          <span className="material-symbols-outlined text-xl">filter_alt</span>
-          <span>Más Filtros</span>
-        </button>
+
+        {/* Mostrar finalizadas extra toggle */}
+        {filtroEstado === 'todas' && (
+          <div className="flex justify-end pt-1">
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-[#44464e] select-none hover:text-[#1c355e] transition-colors">
+              <input 
+                type="checkbox" 
+                checked={mostrarFinalizadas} 
+                onChange={(e) => setMostrarFinalizadas(e.target.checked)}
+                className="w-4 h-4 rounded accent-[#1c355e] cursor-pointer"
+              />
+              Incluir clases finalizadas en la vista
+            </label>
+          </div>
+        )}
       </div>
 
-      {/* TABLA DE DATOS MAESTRA */}
+      {/* TABLA DE RESULTADOS */}
       <div className="bg-white border border-[#c5c6cf]/50 rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left border-collapse min-w-[1000px]">
             <thead>
-              <tr className="bg-[#1c355e] text-white">
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest">Docente</th>
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest">Licenciatura</th>
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest">Asignatura</th>
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest">Día</th>
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest">Horario</th>
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest">Aula</th>
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest">Archivo Origen</th>
-                <th className="py-4 px-6 text-[11px] font-bold uppercase tracking-widest text-center">Acciones</th>
+              <tr className="bg-[#1c355e] text-white text-[11px] uppercase font-bold tracking-widest">
+                <th className="py-4 px-6">Día</th>
+                <th className="py-4 px-6">Docente</th>
+                <th className="py-4 px-6">Licenciatura</th>
+                <th className="py-4 px-6">Asignatura</th>
+                <th className="py-4 px-6">Horario</th>
+                <th className="py-4 px-6">Aula</th>
+                <th className="py-4 px-6">Estado</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#c5c6cf]/30 text-sm text-[#1b1c1e]">
-              
+            <tbody className="divide-y divide-[#c5c6cf]/30">
               {cargando ? (
-                <tr>
-                  <td colSpan="8" className="py-12 text-center text-[#75777f]">
-                    <span className="material-symbols-outlined animate-spin text-3xl mb-2">sync</span>
-                    <p className="font-bold">Conectando con la base de datos...</p>
-                  </td>
-                </tr>
+                <tr><td colSpan="7" className="py-12 text-center text-[#75777f] font-bold"><span className="material-symbols-outlined animate-spin text-2xl mb-2">sync</span><p>Sincronizando datos...</p></td></tr>
+              ) : asignaturas.length === 0 ? (
+                <tr><td colSpan="7" className="py-16 text-center text-[#75777f]"><span className="material-symbols-outlined text-5xl mb-3 text-[#c5c6cf]">database</span><p className="font-bold text-lg">Directorio Vacío</p><p className="text-sm mt-1">No hay horarios cargados en la base de datos.</p></td></tr>
               ) : datosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-16 text-center text-[#75777f]">
-                    <span className="material-symbols-outlined text-5xl mb-3 text-[#c5c6cf]">database</span>
-                    <p className="font-bold text-lg text-[#44464e]">La base de datos está vacía</p>
-                    <p className="text-sm mt-1">Sube un archivo PDF en "Gestión de Horarios" para poblar el directorio.</p>
+                  <td colSpan="7" className="py-16 text-center text-[#75777f]">
+                    <span className="material-symbols-outlined text-5xl mb-3 text-[#c5c6cf]">filter_list_off</span>
+                    <p className="font-bold text-lg">No hay clases visibles</p>
+                    <p className="text-sm mt-1">Intenta dar clic en <b>"Base de Datos Total"</b> o limpia los filtros.</p>
                   </td>
                 </tr>
               ) : (
-                datosFiltrados.map((item) => (
-                  <tr key={item.id} className="hover:bg-[#f4f3f6]/50 transition-colors">
-                    <td className="py-5 px-6 font-bold">{item.docente}</td>
+                datosFiltrados.map((item, index) => (
+                  <tr key={item.Id || item.id || index} className="text-sm hover:bg-[#f4f3f6]/50 transition-colors">
+                    <td className="py-5 px-6 font-bold text-[#44464e] capitalize">{item.diaOriginal || "—"}</td>
+                    <td className="py-5 px-6 font-bold text-[#1b1c1e]">{item.docente}</td>
                     <td className="py-5 px-6">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${obtenerColorLicenciatura(item.lic)}`}>
-                        {item.lic}
+                      <span className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase border whitespace-nowrap ${obtenerColorLicenciatura(item.licenciatura)}`}>
+                        {item.licenciatura}
                       </span>
                     </td>
                     <td className="py-5 px-6 font-medium text-[#44464e]">{item.asignatura}</td>
-                    <td className="py-5 px-6 font-medium text-[#44464e]">{item.dia}</td>
-                    <td className="py-5 px-6 font-medium text-[#44464e] whitespace-nowrap">{item.horario}</td>
-                    <td className="py-5 px-6 text-[#44464e] font-mono text-xs whitespace-nowrap font-bold">{item.aula}</td>
+                    <td className="py-5 px-6 font-mono text-[#1c355e] font-bold text-xs whitespace-nowrap">{item.textoHora}</td>
+                    <td className="py-5 px-6 font-bold text-[#1c355e]">{item.aula_asignada || "—"}</td>
                     <td className="py-5 px-6">
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-[#f4f3f6] text-[#44464e] text-[11px] border border-[#c5c6cf]/40 font-medium whitespace-nowrap">
-                        <span className="material-symbols-outlined text-[14px] mr-1">picture_as_pdf</span>
-                        {item.archivo.length > 15 ? item.archivo.substring(0, 15) + '...' : item.archivo}
+                      <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border whitespace-nowrap ${
+                        item.estadoTiempo === 'en_curso' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
+                        item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-gray-200' :
+                        'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                        <span className="material-symbols-outlined text-[14px]">
+                          {item.estadoTiempo === 'en_curso' ? 'play_circle' : item.estadoTiempo === 'finalizada' ? 'stop_circle' : 'schedule'}
+                        </span>
+                        {item.estadoTiempo.replace('_', ' ')}
                       </span>
-                    </td>
-                    <td className="py-5 px-6 text-center">
-                      <div className="flex items-center justify-center space-x-2">
-                        <button className="p-1.5 text-[#75777f] hover:text-[#1c355e] hover:bg-[#e9e7eb] rounded-lg transition-all" title="Editar registro">
-                          <span className="material-symbols-outlined text-[18px]">edit</span>
-                        </button>
-                        <button className="p-1.5 text-[#75777f] hover:text-[#ba1a1a] hover:bg-red-50 rounded-lg transition-all" title="Eliminar registro">
-                          <span className="material-symbols-outlined text-[18px]">delete</span>
-                        </button>
-                      </div>
                     </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
-        </div>
-        
-        {/* ÁREA DE PAGINACIÓN */}
-        <div className="px-8 py-5 border-t border-[#c5c6cf]/30 bg-[#f4f3f6]/20 flex items-center justify-between">
-          <span className="text-[11px] text-[#44464e] font-medium">Mostrando {datosFiltrados.length} registros.</span>
-          <div className="flex items-center gap-1.5">
-            <button className="px-3 h-9 flex items-center justify-center rounded-xl border border-[#c5c6cf]/40 bg-white hover:bg-[#e3e2e5]/30 transition-colors shadow-sm text-xs font-bold disabled:opacity-50" disabled>Anterior</button>
-            <button className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#1c355e] text-white text-xs font-bold shadow-md">1</button>
-            <button className="px-3 h-9 flex items-center justify-center rounded-xl border border-[#c5c6cf]/40 bg-white hover:bg-[#e3e2e5]/30 transition-colors shadow-sm text-xs font-bold disabled:opacity-50" disabled>Siguiente</button>
-          </div>
         </div>
       </div>
     </div>

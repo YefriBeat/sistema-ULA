@@ -38,12 +38,7 @@ export default function Layout() {
             <img src={logo} alt="Universidad Latino Logo" className="h-8 object-contain" />
         </div>
 
-        <div className="flex-1 max-w-xl hidden md:block">
-          <div className="relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f]">search</span>
-            <input className="w-full pl-10 pr-4 py-2 bg-[#f4f3f6] border border-[#c5c6cf]/30 rounded-xl text-sm focus:outline-none focus:border-[#1c355e] transition-colors" placeholder="Buscar docente, aula o licenciatura..." type="text"/>
-          </div>
-        </div>
+       
 
         <div className="flex items-center gap-6 ml-auto">
           <div className="flex items-center gap-4 pl-6 border-l border-[#c5c6cf]/30">
@@ -69,9 +64,9 @@ export default function Layout() {
           </div>
 
           <nav className="flex-1 px-4 mt-2 space-y-1">
-            {/* Inicio */}
+            {/* Inicio - Dashboard con Base de Datos en Vivo */}
             <Link to="/dashboard" className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${location.pathname === '/dashboard' || location.pathname === '/' ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
-              <span className={`material-symbols-outlined text-xl ${location.pathname === '/dashboard' || location.pathname === '/' ? '' : 'opacity-70 group-hover:opacity-100'}`}>grid_view</span>
+              <span className={`material-symbols-outlined text-xl ${location.pathname === '/dashboard' || location.pathname === '/' ? '' : 'opacity-70 group-hover:opacity-100'}`}>dashboard</span>
               <span className="text-sm">Inicio</span>
             </Link>
 
@@ -81,7 +76,7 @@ export default function Layout() {
               <span className="text-sm">Gestión de Horarios</span>
             </Link>
             
-            {/* Gestión de Aulas (Antes Validación) */}
+            {/* Gestión de Aulas */}
             <Link to="/gestion-aulas" className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${isActive('gestion-aulas') ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
               <span className={`material-symbols-outlined text-xl ${isActive('gestion-aulas') ? '' : 'opacity-70 group-hover:opacity-100'}`}>meeting_room</span>
               <span className="text-sm">Gestión de Aulas</span>
