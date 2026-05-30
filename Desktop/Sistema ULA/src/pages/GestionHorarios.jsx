@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useToast } from '../components/useToast';
 
 export default function GestionHorarios() {
-  const navigate = useNavigate();
-  
+  const { toast, ToastContainer } = useToast();
+  const [confirmacion, setConfirmacion] = useState(null);
+
   const [archivo, setArchivo] = useState(null);
   const [datosExtraidos, setDatosExtraidos] = useState(null);
   const [aulas, setAulas] = useState([]);
@@ -20,7 +21,7 @@ export default function GestionHorarios() {
   const [vistaActual, setVistaActual] = useState('gestor'); // 'gestor' o 'cargar'
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/aulas')
+    fetch('/api/aulas')
       .then(res => res.ok ? res.json() : [])
       .then(data => setAulas(data))
       .catch(err => console.error("Error al precargar aulas:", err));
@@ -32,7 +33,7 @@ export default function GestionHorarios() {
   const cargarArchivosGuardados = async () => {
     setCargandoArchivos(true);
     try {
-      const response = await fetch('http://localhost:8000/api/archivos');
+      const response = await fetch('/api/archivos');
       if (response.ok) {
         const data = await response.json();
         setArchivosGuardados(data);
@@ -46,7 +47,7 @@ export default function GestionHorarios() {
 
   const verDetallesArchivo = async (nombreArchivo) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/archivos/${encodeURIComponent(nombreArchivo)}/horarios`);
+      const response = await fetch(`/api/archivos/${encodeURIComponent(nombreArchivo)}/horarios`);
       if (response.ok) {
         const horarios = await response.json();
         setDetallesArchivo(horarios);
@@ -57,27 +58,28 @@ export default function GestionHorarios() {
     }
   };
 
-  const eliminarArchivo = async (nombreArchivo) => {
-    if (!window.confirm(`¿Está seguro de que desea eliminar "${nombreArchivo}" y todos sus horarios?`)) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`http://localhost:8000/api/archivos/${encodeURIComponent(nombreArchivo)}`, {
-        method: 'DELETE'
-      });
-      if (response.ok) {
-        alert("Archivo eliminado exitosamente");
-        cargarArchivosGuardados();
-        setArchivoSeleccionado(null);
-        setDetallesArchivo(null);
-      } else {
-        alert("Error al eliminar el archivo");
+  const eliminarArchivo = (nombreArchivo) => {
+    setConfirmacion({
+      mensaje: `¿Está seguro de que desea eliminar "${nombreArchivo}" y todos sus horarios?`,
+      onConfirmar: async () => {
+        try {
+          const response = await fetch(`/api/archivos/${encodeURIComponent(nombreArchivo)}`, {
+            method: 'DELETE'
+          });
+          if (response.ok) {
+            toast("Archivo eliminado exitosamente", "exito");
+            cargarArchivosGuardados();
+            setArchivoSeleccionado(null);
+            setDetallesArchivo(null);
+          } else {
+            toast("Error al eliminar el archivo", "error");
+          }
+        } catch (err) {
+          console.error("Error al eliminar archivo:", err);
+          toast("Error en la comunicación con el servidor", "error");
+        }
       }
-    } catch (err) {
-      console.error("Error al eliminar archivo:", err);
-      alert("Error en la comunicación con el servidor");
-    }
+    });
   };
 
   const abrirModalEditar = (horario) => {
@@ -89,7 +91,7 @@ export default function GestionHorarios() {
     if (!horarioAEditar) return;
 
     try {
-      const response = await fetch(`http://localhost:8000/api/horarios/${horarioAEditar.id}`, {
+      const response = await fetch(`/api/horarios/${horarioAEditar.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -100,24 +102,24 @@ export default function GestionHorarios() {
       });
 
       if (response.ok) {
-        alert("Horario actualizado exitosamente");
+        toast("Horario actualizado exitosamente", "exito");
         setModalEditarAbierto(false);
         setHorarioAEditar(null);
         if (archivoSeleccionado) {
           verDetallesArchivo(archivoSeleccionado);
         }
       } else {
-        alert("Error al actualizar el horario");
+        toast("Error al actualizar el horario", "error");
       }
     } catch (err) {
       console.error("Error al guardar horario:", err);
-      alert("Error en la comunicación");
+      toast("Error en la comunicación con el servidor", "error");
     }
   };
 
   const handleProcesarYAsignar = async () => {
     if (!archivo) {
-      alert("Por favor, arrastra o selecciona un archivo PDF primero.");
+      toast("Por favor, arrastra o selecciona un archivo (PDF o imagen).", "advertencia");
       return;
     }
 
@@ -128,7 +130,7 @@ export default function GestionHorarios() {
     formData.append("archivo", archivo);
 
     try {
-      const response = await fetch('http://localhost:8000/upload-pdf', {
+      const response = await fetch('/upload-pdf', {
         method: 'POST',
         body: formData,
       });
@@ -141,12 +143,12 @@ export default function GestionHorarios() {
         setAsignaciones({});
       } else {
         const errorJson = JSON.parse(respuestaTexto);
-        alert(errorJson.detail || "Error al analizar el documento.");
+        toast(errorJson.detail || "Error al analizar el documento.", "error");
         setArchivo(null);
       }
     } catch (error) {
       console.error(error);
-      alert("Error en la comunicación con el servidor.");
+      toast("Error en la comunicación con el servidor.", "error");
       setArchivo(null);
     } finally {
       setCargando(false);
@@ -173,7 +175,7 @@ export default function GestionHorarios() {
       if (tiposPermitidos.includes(file.type)) {
         setArchivo(file);
       } else {
-        alert("El archivo debe ser PDF o imagen (PNG, JPG).");
+        toast("El archivo debe ser PDF o imagen (PNG, JPG).", "advertencia");
       }
     }
   };
@@ -190,7 +192,7 @@ export default function GestionHorarios() {
 
   const handleAsignarATodas = (aulaSeleccionada) => {
     if (!aulaSeleccionada) {
-      alert("Por favor selecciona un aula primero.");
+      toast("Por favor selecciona un aula primero.", "advertencia");
       return;
     }
     
@@ -218,24 +220,24 @@ export default function GestionHorarios() {
     }));
 
     try {
-      const response = await fetch('http://localhost:8000/api/guardar-horarios', {
+      const response = await fetch('/api/guardar-horarios', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
       if (response.ok) {
-        alert("¡Horarios validados y publicados con éxito!");
+        toast("¡Horarios validados y publicados con éxito!", "exito");
         setDatosExtraidos(null);
         setArchivo(null);
         setAsignaciones({});
         setVistaActual('gestor');
         cargarArchivosGuardados();
       } else {
-        alert("Error al intentar publicar las asignaciones.");
+        toast("Error al intentar publicar las asignaciones.", "error");
       }
     } catch (error) {
-      alert("Error de red al publicar.");
+      toast("Error de red al publicar.", "error");
     }
   };
 
@@ -690,6 +692,33 @@ export default function GestionHorarios() {
         </div>
       )}
 
+      {/* MODAL DE CONFIRMACIÓN */}
+      {confirmacion && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100]">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-sm shadow-lg">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="material-symbols-outlined text-red-500 text-[28px]">warning</span>
+              <h3 className="text-base font-bold text-[#1b1c1e]">Confirmar acción</h3>
+            </div>
+            <p className="text-sm text-[#44464e] mb-6">{confirmacion.mensaje}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmacion(null)}
+                className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { confirmacion.onConfirmar(); setConfirmacion(null); }}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition-all"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL EDITAR HORARIO */}
       {modalEditarAbierto && horarioAEditar && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -778,6 +807,8 @@ export default function GestionHorarios() {
           </div>
         </div>
       )}
+
+      <ToastContainer />
     </div>
   );
 }

@@ -1,9 +1,17 @@
 import os
+import re
+import unicodedata
 import pymysql
 import bcrypt
 import certifi
 import pdfplumber
 import json
+import smtplib
+import secrets
+from datetime import datetime, timedelta
+from typing import Optional
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -15,6 +23,101 @@ base_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(base_dir, ".env"))
 
 app = FastAPI(title="API Sistema de Prefectura ULA")
+
+
+@app.on_event("startup")
+def migrar_columnas_verificacion():
+    """Agrega las columnas OTP a la tabla usuarios si no existen."""
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            for sentencia in [
+                "ALTER TABLE usuarios ADD COLUMN is_verified BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE usuarios ADD COLUMN verification_code VARCHAR(6) NULL",
+                "ALTER TABLE usuarios ADD COLUMN reset_code VARCHAR(6) NULL",
+                "ALTER TABLE aulas ADD COLUMN en_mantenimiento BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE aulas ADD COLUMN fin_mantenimiento DATETIME NULL",
+                "ALTER TABLE aulas ADD COLUMN aula_temporal VARCHAR(100) NULL",
+                "ALTER TABLE usuarios ADD COLUMN verification_code_expira DATETIME NULL",
+                "ALTER TABLE usuarios ADD COLUMN reset_code_expira DATETIME NULL",
+                """CREATE TABLE IF NOT EXISTS docentes (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    nombre VARCHAR(200) NOT NULL,
+                    especialidad VARCHAR(200) DEFAULT '',
+                    materias TEXT DEFAULT '[]',
+                    correo VARCHAR(200) DEFAULT '',
+                    created_at DATETIME DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS suplencias (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    docente_id INT NOT NULL,
+                    suplente_id INT NOT NULL,
+                    materia VARCHAR(200) DEFAULT '',
+                    dia VARCHAR(50) DEFAULT '',
+                    fecha DATE,
+                    hora_inicio TIME,
+                    hora_fin TIME,
+                    activa BOOLEAN DEFAULT TRUE,
+                    created_at DATETIME DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS suplencias_horarios (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    docente_nombre VARCHAR(200) NOT NULL,
+                    suplente_nombre VARCHAR(200) NOT NULL,
+                    materia VARCHAR(200) DEFAULT '',
+                    dia VARCHAR(50) DEFAULT '',
+                    fecha DATE,
+                    hora_inicio TIME,
+                    hora_fin TIME,
+                    activa BOOLEAN DEFAULT TRUE,
+                    created_at DATETIME DEFAULT NOW()
+                )""",
+            ]:
+                try:
+                    cursor.execute(sentencia)
+                except Exception:
+                    pass
+        connection.commit()
+        connection.close()
+    except Exception as e:
+        print(f"Advertencia en migración: {e}")
+
+
+def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if not smtp_user or not smtp_password or smtp_user == "tu_correo@gmail.com":
+        raise ValueError("Configura SMTP_USER y SMTP_PASSWORD en src/backend/.env")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Código de verificación — Sistema de Prefectura ULA"
+    msg["From"] = smtp_user
+    msg["To"] = correo_destino
+
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;background:#f4f6fb;padding:32px;">
+      <div style="max-width:420px;margin:auto;background:#fff;border-radius:16px;
+                  padding:36px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08);">
+        <h2 style="color:#1c355e;margin-bottom:4px;">Sistema de Prefectura</h2>
+        <p style="color:#75777f;font-size:13px;">Universidad Latino</p>
+        <p style="color:#44464e;">Hola <b>{nombre}</b>, tu código de verificación es:</p>
+        <div style="font-size:38px;font-weight:bold;letter-spacing:10px;color:#1c355e;
+                    background:#f0f4ff;padding:18px;border-radius:10px;margin:24px 0;">
+          {codigo}
+        </div>
+        <p style="color:#75777f;font-size:12px;">Caduca en 15 minutos. No lo compartas con nadie.</p>
+      </div>
+    </body></html>
+    """
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(smtp_user, correo_destino, msg.as_string())
 
 # Configuración de CORS para permitir la conexión desde Vite (React)
 app.add_middleware(
@@ -90,51 +193,181 @@ class Aula(BaseModel):
     equipos: list = []
     estado: str = "Activo"
 
-class AsistenciaUpdate(BaseModel):
-    status: str
+class MantenimientoUpdate(BaseModel):
+    en_mantenimiento: bool
+    fin_mantenimiento: Optional[str] = None  # ISO datetime, ej: "2026-05-25T18:00"
+    aula_temporal: Optional[str] = None
+
+class Docente(BaseModel):
+    nombre: str
+    especialidad: str = ""
+    materias: list = []
+    correo: str = ""
+
+class Suplencia(BaseModel):
+    docente_id: int
+    suplente_id: int
+    materia: str = ""
+    dia: str = ""
+    fecha: str
+    hora_inicio: str
+    hora_fin: str
+
+class SuplenciaHorarios(BaseModel):
+    docente_nombre: str
+    suplente_nombre: str
+    materia: str = ""
+    dia: str = ""
+    fecha: str
+    hora_inicio: str
+    hora_fin: str
+
+class VerificacionCorreo(BaseModel):
+    correo: str
+    codigo: str
+
+class RecuperarContrasena(BaseModel):
+    correo: str
+
+class RestablecerContrasena(BaseModel):
+    correo: str
+    codigo: str
+    nueva_password: str
+
+# ---------------------------------------------------------
+# HELPERS
+# ---------------------------------------------------------
+_DIAS_MAP = {'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6}
+
+def _parse_horario_minutos(horario_str: str):
+    """Convierte 'Lunes 07:00-09:00' → (dia_index, inicio_min, fin_min). Retorna (None,None,None) si no parsea."""
+    if not horario_str:
+        return None, None, None
+    partes = horario_str.strip().split(' ', 1)
+    if len(partes) < 2:
+        return None, None, None
+    dia_raw = unicodedata.normalize('NFD', partes[0].lower())
+    dia_raw = ''.join(c for c in dia_raw if unicodedata.category(c) != 'Mn')
+    dia_index = _DIAS_MAP.get(dia_raw)
+    tiempo = re.sub(r'-+', '-', partes[1].replace(' ', ''))
+    m = re.match(r'(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})', tiempo)
+    if not m:
+        return dia_index, None, None
+    h_i, m_i, h_f, m_f = map(int, m.groups())
+    return dia_index, h_i * 60 + m_i, h_f * 60 + m_f
+
+def _aplicar_mantenimiento(horarios: list) -> list:
+    """Reemplaza aula_asignada por aula_temporal si el aula está en mantenimiento vigente."""
+    ahora = datetime.now()
+    for h in horarios:
+        en_mant = h.pop('en_mantenimiento', None)
+        fin_mant = h.pop('fin_mantenimiento', None)
+        aula_temp = h.pop('aula_temporal', None)
+        if not en_mant or not aula_temp:
+            continue
+        # Sin fecha de fin → mantenimiento indefinido (siempre activo)
+        if fin_mant is None:
+            vigente = True
+        else:
+            if isinstance(fin_mant, datetime):
+                fin_dt = fin_mant
+            else:
+                try:
+                    fin_dt = datetime.fromisoformat(str(fin_mant))
+                except Exception:
+                    fin_dt = None
+            vigente = bool(fin_dt and fin_dt > ahora)
+        if vigente:
+            h['aula_original'] = h['aula_asignada']
+            h['aula_asignada'] = aula_temp
+            h['aula_reasignada'] = True
+    return horarios
+
+def _timedelta_to_str(td):
+    if isinstance(td, timedelta):
+        total = int(td.total_seconds())
+        return f"{total // 3600:02d}:{(total % 3600) // 60:02d}"
+    return str(td)[:5] if td else ""
+
+def _time_to_mins(t):
+    if isinstance(t, timedelta):
+        return int(t.total_seconds() // 60)
+    try:
+        parts = str(t).split(':')
+        return int(parts[0]) * 60 + int(parts[1])
+    except Exception:
+        return 0
 
 # ---------------------------------------------------------
 # ENDPOINTS (RUTAS DE LA API)
 # ---------------------------------------------------------
 
-@app.get("/api/db-check")
-def comprobar_conexion_db():
-    try:
-        connection = get_db_connection()
-        connection.close()
-        return {"message": "Conexión a TiDB Cloud OK"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo conectar a la base de datos: {str(e)}")
-
-
 @app.post("/api/registro")
 def registrar_usuario(datos: RegistroUsuario):
-    # 1. Validación estricta del correo (Regla de la Universidad)
     correo_limpio = datos.correo.strip().lower()
-    if not correo_limpio.endswith(".universidadlatino.edu.mx"):
+    if not correo_limpio.endswith("universidadlatino.edu.mx"):
         raise HTTPException(status_code=400, detail="El correo debe pertenecer a la Universidad Latino.")
-    
-    # 2. Encriptar la contraseña de forma segura
-    password_bytes = datos.password.encode('utf-8')
-    salt = bcrypt.gensalt()
-    password_hasheada = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
-    
-    # 3. Conexión e inserción en la base de datos
+
+    password_hasheada = bcrypt.hashpw(datos.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    codigo = str(secrets.randbelow(900000) + 100000)
+    expira = datetime.now() + timedelta(minutes=15)
+
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Comprobar si el correo ya existe
             cursor.execute("SELECT id FROM usuarios WHERE correo = %s", (correo_limpio,))
             if cursor.fetchone():
                 raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
-            
-            # Guardar el nuevo usuario
-            sql = "INSERT INTO usuarios (nombre, correo, turno, password) VALUES (%s, %s, %s, %s)"
-            cursor.execute(sql, (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada))
-            
+
+            cursor.execute(
+                "INSERT INTO usuarios (nombre, correo, turno, password, is_verified, verification_code, verification_code_expira) VALUES (%s, %s, %s, %s, FALSE, %s, %s)",
+                (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada, codigo, expira)
+            )
         connection.commit()
-        return {"message": "Usuario creado exitosamente"}
-    
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error en la base de datos: {str(e)}")
+    finally:
+        connection.close()
+
+    try:
+        enviar_correo_otp(correo_limpio, codigo, datos.nombre.strip())
+    except Exception as e:
+        print(f"Error SMTP: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Usuario creado pero no se pudo enviar el correo de verificación. Configura SMTP en .env"
+        )
+
+    return {"message": "Código enviado al correo. Revisa tu bandeja de entrada."}
+
+
+@app.post("/api/verificar-correo")
+def verificar_correo(datos: VerificacionCorreo):
+    correo_limpio = datos.correo.strip().lower()
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, verification_code, verification_code_expira, is_verified FROM usuarios WHERE correo = %s",
+                (correo_limpio,)
+            )
+            usuario = cursor.fetchone()
+
+            if not usuario:
+                raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+            if usuario['is_verified']:
+                return {"message": "El correo ya estaba verificado."}
+            if usuario.get('verification_code_expira') and datetime.now() > usuario['verification_code_expira']:
+                raise HTTPException(status_code=400, detail="El código ha expirado. Regístrate de nuevo para recibir un código actualizado.")
+            if usuario['verification_code'] != datos.codigo.strip():
+                raise HTTPException(status_code=400, detail="Código incorrecto. Inténtalo de nuevo.")
+
+            cursor.execute(
+                "UPDATE usuarios SET is_verified = TRUE, verification_code = NULL, verification_code_expira = NULL WHERE id = %s",
+                (usuario['id'],)
+            )
+        connection.commit()
+        return {"message": "Correo verificado correctamente. Ya puedes iniciar sesión."}
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error en la base de datos: {str(e)}")
     finally:
@@ -188,7 +421,7 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
     """
     Parser inteligente que acepta PDF e imágenes (PNG, JPG).
     Para PDF: usa pdfplumber.
-    Para imágenes: intenta usar pytesseract si está disponible.
+    Para imágenes: usa easyocr con detección de tabla por posición.
     """
     try:
         contenido = await archivo.read()
@@ -300,47 +533,190 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
         # ========== PROCESAR IMÁGENES ==========
         else:
             try:
+                import re
+                import numpy as np
+                import easyocr
                 from PIL import Image
-                try:
-                    import pytesseract
-                except ImportError:
-                    pytesseract = None
-                
-                if pytesseract is None:
-                    raise ImportError("pytesseract no está instalado")
-                
+
                 imagen = Image.open(BytesIO(contenido))
-                texto_extraido = pytesseract.image_to_string(imagen, lang='spa')
-                
-                # Procesamiento simple: buscar patrones de licenciatura y horarios
-                lineas = texto_extraido.split('\n')
-                for linea in lineas:
-                    if "Licenciatura en" in linea or "Licenciatura de" in linea:
-                        licenciatura_extraida = linea.strip()
+                imagen_np = np.array(imagen)
+
+                # Usar reader con mejor configuración para imágenes
+                reader = easyocr.Reader(['es', 'en'], gpu=False, verbose=False)
+                resultados = reader.readtext(imagen_np)
+
+                if not resultados:
+                    raise ValueError("No se pudo extraer texto de la imagen. Verifica que sea una imagen clara.")
+
+                # Construir lista de elementos con posición central (umbral de confianza más bajo)
+                elementos = []
+                for bbox, texto, conf in resultados:
+                    if conf > 0.25 and texto.strip():  # Reducido de 0.3 a 0.25 para más tolerancia
+                        y_centro = (bbox[0][1] + bbox[2][1]) / 2
+                        x_centro = (bbox[0][0] + bbox[2][0]) / 2
+                        elementos.append({"texto": texto.strip(), "x": x_centro, "y": y_centro, "conf": conf})
+
+                if not elementos:
+                    raise ValueError("No se extrajo texto suficiente de la imagen.")
+
+                elementos.sort(key=lambda e: e["y"])
+
+                # Extraer licenciatura
+                for elem in elementos:
+                    if "Licenciatura" in elem["texto"] or "licenciatura" in elem["texto"].lower():
+                        licenciatura_extraida = elem["texto"].strip()
                         break
-                
-                horarios_compilados.append({
-                    "id": "img_0",
-                    "docente": "Extracción de Imagen",
-                    "licenciatura": licenciatura_extraida,
-                    "asignatura": "Asignatura extraída de imagen",
-                    "horario_resumen": "Verificar manualmente",
-                    "aula_asignada": "",
-                    "nota": "La extracción de imágenes es experimental. Verifica los datos extraídos."
-                })
-                
+
+                # Agrupar elementos en filas (aumentar tolerancia a 25px para mejor agrupación)
+                filas = []
+                fila_actual = []
+                y_actual = None
+                tolerancia = 25  # Aumentado de 15 a 25px
+                for elem in elementos:
+                    if y_actual is None or abs(elem["y"] - y_actual) <= tolerancia:
+                        fila_actual.append(elem)
+                        y_actual = elem["y"] if y_actual is None else (y_actual + elem["y"]) / 2
+                    else:
+                        if fila_actual:
+                            filas.append(sorted(fila_actual, key=lambda e: e["x"]))
+                        fila_actual = [elem]
+                        y_actual = elem["y"]
+                if fila_actual:
+                    filas.append(sorted(fila_actual, key=lambda e: e["x"]))
+
+                # Detectar columnas de días - MÁS FLEXIBLE
+                dias_keywords = {
+                    "lunes": "Lunes", "l": "Lunes",
+                    "martes": "Martes", "m": "Martes", "ma": "Martes",
+                    "miércoles": "Miércoles", "miercoles": "Miércoles", "x": "Miércoles", "mi": "Miércoles",
+                    "jueves": "Jueves", "j": "Jueves", "ju": "Jueves",
+                    "viernes": "Viernes", "v": "Viernes", "vi": "Viernes"
+                }
+                cols_dias = {}
+                y_fila_dias = None
+
+                for fila in filas:
+                    for elem in fila:
+                        texto_lower = elem["texto"].lower().strip()
+                        # Solo aceptar palabras cortas o que coincidan exactamente para días
+                        if len(texto_lower) <= 10:  # Los días no son textos largos
+                            for d_key, d_val in dias_keywords.items():
+                                if d_key in texto_lower and d_val not in cols_dias:
+                                    cols_dias[d_val] = elem["x"]
+                                    y_fila_dias = elem["y"]
+                                    break
+
+                # Construir mapa asignatura→docente desde la tabla de directorio al pie
+                mapa_docentes_img = {}
+                for fila in filas:
+                    textos = [e["texto"] for e in fila]
+                    tiene_numero = any(re.search(r"\d{1,3}", t) for t in textos)
+                    # Buscar nombres propios (capitalizados)
+                    nombres = [t for t in textos if len(t.split()) >= 2 and t[0].isupper() and not any(c.isdigit() for c in t)]
+                    if tiene_numero and len(nombres) >= 1:
+                        # Mapear el primer elemento con nombres
+                        key = textos[0].lower() if textos else "unknown"
+                        valor = nombres[-1] if nombres else "Sin especificar"
+                        if key and key != "sin especificar":
+                            mapa_docentes_img[key] = valor
+
+                # OPCIÓN 1: Extraer horarios de la tabla de días si se detectaron
+                if y_fila_dias is not None and cols_dias:
+                    for fila in filas:
+                        if not fila or fila[0]["y"] <= y_fila_dias:
+                            continue
+                        primer_texto = fila[0]["texto"]
+                        # Buscar patrón de horario (HH:MM o HH-MM)
+                        if not re.search(r"\d{1,2}[:\-]\d{2}", primer_texto):
+                            continue
+                        horario_slot = primer_texto
+
+                        for elem in fila[1:]:
+                            celda = elem["texto"].strip()
+                            if not celda or len(celda) < 2:
+                                continue
+                            # No procesar si es hora
+                            if re.search(r"\d{1,2}[:\-]\d{2}", celda):
+                                continue
+
+                            # Asignar día basado en la columna X más cercana
+                            dia_asignado = min(cols_dias, key=lambda d: abs(cols_dias[d] - elem["x"]))
+
+                            key_busqueda = celda.lower()
+                            docente_img = mapa_docentes_img.get(key_busqueda, "Sin especificar")
+                            if docente_img == "Sin especificar":
+                                for k, v in mapa_docentes_img.items():
+                                    if k in key_busqueda or key_busqueda in k:
+                                        docente_img = v
+                                        break
+
+                            entrada_id = f"img_{dia_asignado}_{horario_slot}_{celda}"
+                            ya_existe = any(
+                                h["id"] == entrada_id and h["asignatura"].lower() == celda.lower()
+                                for h in horarios_compilados
+                            )
+                            if not ya_existe:
+                                horarios_compilados.append({
+                                    "id": entrada_id,
+                                    "docente": docente_img,
+                                    "licenciatura": licenciatura_extraida,
+                                    "asignatura": celda.title(),
+                                    "horario_resumen": f"{dia_asignado} {horario_slot}",
+                                    "aula_asignada": ""
+                                })
+
+                # OPCIÓN 2: Si no se estructuró bien, generar horarios de texto directo
+                if not horarios_compilados and elementos:
+                    contador = 0
+                    for elem in elementos:
+                        texto = elem["texto"].strip()
+                        # Filtrar elementos muy cortos o que sean números solos
+                        if len(texto) > 2 and not re.fullmatch(r"\d+", texto) and "licenciatura" not in texto.lower():
+                            docente_encontrado = "Sin especificar"
+                            # Buscar en el mapa si existe
+                            for k, v in mapa_docentes_img.items():
+                                if k in texto.lower() or texto.lower() in k:
+                                    docente_encontrado = v
+                                    break
+
+                            horarios_compilados.append({
+                                "id": f"img_fallback_{contador}",
+                                "docente": docente_encontrado,
+                                "licenciatura": licenciatura_extraida,
+                                "asignatura": texto.title(),
+                                "horario_resumen": "Verificar en imagen",
+                                "aula_asignada": ""
+                            })
+                            contador += 1
+                            if contador >= 20:  # Máximo 20 fallback para evitar spam
+                                break
+
+                # OPCIÓN 3: Si aún no hay nada, al menos mostrar que se leyó texto
+                if not horarios_compilados:
+                    horarios_compilados.append({
+                        "id": "img_0",
+                        "docente": "Verificar manualmente",
+                        "licenciatura": licenciatura_extraida,
+                        "asignatura": f"Se detectó imagen. Se extrajeron {len(elementos)} elementos de texto. Verifica que el formato sea correcto.",
+                        "horario_resumen": "Revisar imagen",
+                        "aula_asignada": ""
+                    })
+
             except ImportError:
                 horarios_compilados.append({
                     "id": "img_error",
                     "docente": "Error de Extracción",
                     "licenciatura": "No disponible",
-                    "asignatura": "pytesseract no configurado",
-                    "horario_resumen": "Contacta al administrador",
-                    "aula_asignada": "",
-                    "nota": "Para procesar imágenes, debe instalarse Tesseract-OCR en el sistema."
+                    "asignatura": "easyocr no instalado. Ejecuta: pip install easyocr numpy pillow",
+                    "horario_resumen": "Instala la dependencia",
+                    "aula_asignada": ""
                 })
             except Exception as e:
-                raise ValueError(f"Error procesando imagen: {str(e)}")
+                import traceback
+                error_detail = str(e)
+                print(f"Error procesando imagen: {error_detail}")
+                print(traceback.format_exc())
+                raise ValueError(f"Error procesando imagen: {error_detail}")
         
         if not horarios_compilados:
             raise ValueError("No se extrajeron horarios. Verifica la estructura del archivo.")
@@ -355,6 +731,93 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
     except Exception as e:
         print(f"Error procesando archivo: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Error al procesar archivo: {str(e)}")
+
+
+@app.post("/api/recuperar-contrasena")
+def recuperar_contrasena(datos: RecuperarContrasena):
+    correo_limpio = datos.correo.strip().lower()
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, nombre FROM usuarios WHERE correo = %s", (correo_limpio,))
+            usuario = cursor.fetchone()
+            if not usuario:
+                raise HTTPException(status_code=404, detail="No existe una cuenta con ese correo.")
+
+            codigo = str(secrets.randbelow(900000) + 100000)
+            expira_reset = datetime.now() + timedelta(minutes=15)
+            cursor.execute("UPDATE usuarios SET reset_code = %s, reset_code_expira = %s WHERE id = %s", (codigo, expira_reset, usuario['id']))
+        connection.commit()
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error en la base de datos: {str(e)}")
+    finally:
+        connection.close()
+
+    try:
+        smtp_user = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", 587))
+
+        if not smtp_user or smtp_user == "tu_correo@gmail.com":
+            raise ValueError("SMTP no configurado")
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Restablecer contraseña — Sistema de Prefectura ULA"
+        msg["From"] = smtp_user
+        msg["To"] = correo_limpio
+        html = f"""
+        <html><body style="font-family:Arial,sans-serif;background:#f4f6fb;padding:32px;">
+          <div style="max-width:420px;margin:auto;background:#fff;border-radius:16px;
+                      padding:36px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08);">
+            <h2 style="color:#1c355e;margin-bottom:4px;">Sistema de Prefectura</h2>
+            <p style="color:#75777f;font-size:13px;">Universidad Latino</p>
+            <p style="color:#44464e;">Hola <b>{usuario['nombre']}</b>, tu código para restablecer la contraseña es:</p>
+            <div style="font-size:38px;font-weight:bold;letter-spacing:10px;color:#1c355e;
+                        background:#f0f4ff;padding:18px;border-radius:10px;margin:24px 0;">
+              {codigo}
+            </div>
+            <p style="color:#75777f;font-size:12px;">Caduca en 15 minutos. Si no solicitaste esto, ignora este correo.</p>
+          </div>
+        </body></html>
+        """
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_user, correo_limpio, msg.as_string())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo enviar el correo: {str(e)}")
+
+    return {"message": "Código enviado al correo."}
+
+
+@app.post("/api/restablecer-contrasena")
+def restablecer_contrasena(datos: RestablecerContrasena):
+    correo_limpio = datos.correo.strip().lower()
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, reset_code, reset_code_expira FROM usuarios WHERE correo = %s", (correo_limpio,))
+            usuario = cursor.fetchone()
+            if not usuario:
+                raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+            if usuario.get('reset_code_expira') and datetime.now() > usuario['reset_code_expira']:
+                raise HTTPException(status_code=400, detail="El código ha expirado. Solicita un nuevo correo de recuperación.")
+            if not usuario['reset_code'] or usuario['reset_code'] != datos.codigo.strip():
+                raise HTTPException(status_code=400, detail="Código incorrecto.")
+
+            nueva_hash = bcrypt.hashpw(datos.nueva_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            cursor.execute(
+                "UPDATE usuarios SET password = %s, reset_code = NULL, reset_code_expira = NULL WHERE id = %s",
+                (nueva_hash, usuario['id'])
+            )
+        connection.commit()
+        return {"message": "Contraseña actualizada correctamente."}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error en la base de datos: {str(e)}")
+    finally:
+        connection.close()
 
 
 # ---------------------------------------------------------
@@ -389,55 +852,61 @@ def guardar_horarios(horarios: list[dict]):
 
 @app.get("/api/horarios")
 def obtener_horarios():
-    """
-    Obtiene todos los horarios registrados
-    """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM horarios ORDER BY id DESC")
+            cursor.execute("""
+                SELECT h.*,
+                       a.en_mantenimiento, a.fin_mantenimiento, a.aula_temporal
+                FROM horarios h
+                LEFT JOIN aulas a ON a.nombre = h.aula_asignada
+                WHERE h.fecha_clase >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+                ORDER BY h.id DESC
+                LIMIT 300
+            """)
             horarios = cursor.fetchall()
-        return horarios if horarios else []
+        return _aplicar_mantenimiento(horarios) if horarios else []
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener horarios: {str(e)}")
     finally:
         connection.close()
 
 
-@app.put("/api/asistencia/{id}")
-def actualizar_asistencia(id: int, datos: AsistenciaUpdate):
-    """
-    Endpoint para actualizar el estado de asistencia desde un panel operativo
-    """
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            sql = "UPDATE horarios SET status_asistencia = %s WHERE id = %s"
-            cursor.execute(sql, (datos.status, id))
-        connection.commit()
-        return {"message": "Estado actualizado correctamente"}
-    except pymysql.Error as e:
-        raise HTTPException(status_code=500, detail=f"Error al registrar asistencia: {str(e)}")
-    finally:
-        connection.close()
-
-
 @app.get("/api/clases-hoy")
-def obtener_clases_hoy():
+def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None):
     """
-    Obtiene las clases programadas para hoy
+    Clases EN CURSO ahora mismo.
+    dia  = getDay() JS (0=Dom…6=Sab). Si se omite, usa el día real del servidor.
+    mins = minutos desde medianoche.  Si se omite, usa la hora real del servidor.
     """
+    ahora = datetime.now()
+    dia_hoy   = dia  if dia  is not None else (ahora.isoweekday() % 7)
+    mins_ahora = mins if mins is not None else (ahora.hour * 60 + ahora.minute)
+
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # Sin filtro por fecha: usamos el campo horario (día semana + hora)
             cursor.execute("""
-                SELECT docente, asignatura, horario, aula_asignada 
-                FROM horarios 
-                WHERE DATE(fecha_clase) = CURDATE()
-                ORDER BY horario
+                SELECT h.docente, h.asignatura, h.horario, h.aula_asignada,
+                       a.en_mantenimiento, a.fin_mantenimiento, a.aula_temporal
+                FROM (
+                    SELECT docente, asignatura, horario, aula_asignada
+                    FROM horarios
+                    WHERE docente IS NOT NULL AND TRIM(docente) != ''
+                    GROUP BY docente, asignatura, horario, aula_asignada
+                ) h
+                LEFT JOIN aulas a ON a.nombre = h.aula_asignada
             """)
-            clases = cursor.fetchall()
-        return clases if clases else []
+            todas = cursor.fetchall()
+
+        en_curso = []
+        for clase in (todas or []):
+            dia_idx, inicio, fin = _parse_horario_minutos(clase.get('horario', ''))
+            if dia_idx == dia_hoy and inicio is not None and inicio <= mins_ahora <= fin:
+                en_curso.append(clase)
+
+        return _aplicar_mantenimiento(en_curso)
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener clases: {str(e)}")
     finally:
@@ -449,14 +918,26 @@ def obtener_clases_hoy():
 # ---------------------------------------------------------
 @app.get("/api/aulas")
 def obtener_aulas():
-    """
-    Obtiene todas las aulas disponibles
-    """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id, nombre, edificio, capacidad FROM aulas ORDER BY nombre")
+            cursor.execute("""
+                SELECT id, nombre, edificio, capacidad, equipos, estado,
+                       en_mantenimiento, fin_mantenimiento, aula_temporal
+                FROM aulas ORDER BY nombre
+            """)
             aulas = cursor.fetchall()
+        ahora = datetime.now()
+        for aula in (aulas or []):
+            # Parsear equipos de JSON string a lista
+            if aula.get('equipos'):
+                try:
+                    aula['equipos'] = json.loads(aula['equipos'])
+                except Exception:
+                    aula['equipos'] = []
+            # Serializar datetime para JSON
+            if aula.get('fin_mantenimiento') and isinstance(aula['fin_mantenimiento'], datetime):
+                aula['fin_mantenimiento'] = aula['fin_mantenimiento'].isoformat()
         return aulas if aulas else []
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener aulas: {str(e)}")
@@ -487,6 +968,29 @@ def crear_aula(aula: Aula):
         return {"message": "Aula creada exitosamente"}
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al crear aula: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/aulas/{aula_id}/mantenimiento")
+def actualizar_mantenimiento(aula_id: int, datos: MantenimientoUpdate):
+    fin_dt = None
+    if datos.fin_mantenimiento:
+        try:
+            fin_dt = datetime.fromisoformat(datos.fin_mantenimiento)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa ISO 8601: YYYY-MM-DDTHH:MM")
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE aulas SET en_mantenimiento=%s, fin_mantenimiento=%s, aula_temporal=%s WHERE id=%s",
+                (datos.en_mantenimiento, fin_dt, datos.aula_temporal if datos.en_mantenimiento else None, aula_id)
+            )
+        connection.commit()
+        return {"message": "Estado de mantenimiento actualizado"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar mantenimiento: {str(e)}")
     finally:
         connection.close()
 
@@ -595,5 +1099,333 @@ def eliminar_archivo(nombre_archivo: str):
         return {"message": f"Archivo '{nombre_archivo}' y sus horarios eliminados exitosamente"}
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar archivo: {str(e)}")
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------
+# ENDPOINTS PARA GESTIÓN DE DOCENTES
+# ---------------------------------------------------------
+
+@app.get("/api/docentes")
+def obtener_docentes():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM docentes ORDER BY nombre")
+            docentes = cursor.fetchall()
+
+            ahora = datetime.now()
+            mins_ahora = ahora.hour * 60 + ahora.minute
+
+            cursor.execute("""
+                SELECT s.*, ds.nombre as suplente_nombre
+                FROM suplencias s
+                LEFT JOIN docentes ds ON ds.id = s.suplente_id
+                WHERE s.activa = TRUE AND s.fecha = CURDATE()
+            """)
+            suplencias_hoy = cursor.fetchall()
+
+            cursor.execute("""
+                SELECT docente, horario FROM horarios
+                WHERE DATE(fecha_clase) = CURDATE()
+            """)
+            clases_hoy = cursor.fetchall()
+
+        for doc in (docentes or []):
+            try:
+                doc['materias'] = json.loads(doc.get('materias') or '[]')
+            except Exception:
+                doc['materias'] = []
+
+            suplencia_activa = None
+            for s in (suplencias_hoy or []):
+                if s['docente_id'] != doc['id']:
+                    continue
+                mins_i = _time_to_mins(s['hora_inicio'])
+                mins_f = _time_to_mins(s['hora_fin'])
+                if mins_ahora >= mins_i and mins_ahora <= mins_f:
+                    suplencia_activa = {
+                        **{k: v for k, v in s.items() if k not in ('hora_inicio', 'hora_fin', 'fecha')},
+                        'hora_inicio': _timedelta_to_str(s['hora_inicio']),
+                        'hora_fin': _timedelta_to_str(s['hora_fin']),
+                        'fecha': str(s['fecha']) if s.get('fecha') else ''
+                    }
+                    break
+
+            en_clase = False
+            if not suplencia_activa:
+                for clase in (clases_hoy or []):
+                    if clase['docente'] != doc['nombre']:
+                        continue
+                    _, inicio, fin = _parse_horario_minutos(clase.get('horario', ''))
+                    if inicio is not None and inicio <= mins_ahora <= fin:
+                        en_clase = True
+                        break
+
+            doc['suplencia_activa'] = suplencia_activa
+            if suplencia_activa:
+                doc['estado'] = 'suplente_asignado'
+            elif en_clase:
+                doc['estado'] = 'en_clase'
+            else:
+                doc['estado'] = 'disponible'
+
+        return docentes if docentes else []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener docentes: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/docentes")
+def crear_docente(docente: Docente):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO docentes (nombre, especialidad, materias, correo) VALUES (%s, %s, %s, %s)",
+                (docente.nombre.strip(), docente.especialidad.strip(), json.dumps(docente.materias), docente.correo.strip())
+            )
+        connection.commit()
+        return {"message": "Docente registrado exitosamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al crear docente: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.put("/api/docentes/{docente_id}")
+def actualizar_docente(docente_id: int, docente: Docente):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE docentes SET nombre=%s, especialidad=%s, materias=%s, correo=%s WHERE id=%s",
+                (docente.nombre.strip(), docente.especialidad.strip(), json.dumps(docente.materias), docente.correo.strip(), docente_id)
+            )
+        connection.commit()
+        return {"message": "Docente actualizado exitosamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar docente: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.delete("/api/docentes/{docente_id}")
+def eliminar_docente(docente_id: int):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM suplencias WHERE docente_id = %s OR suplente_id = %s", (docente_id, docente_id))
+            cursor.execute("DELETE FROM docentes WHERE id = %s", (docente_id,))
+        connection.commit()
+        return {"message": "Docente eliminado exitosamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar docente: {str(e)}")
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------
+# ENDPOINTS PARA GESTIÓN DE SUPLENCIAS
+# ---------------------------------------------------------
+
+@app.get("/api/suplencias")
+def obtener_suplencias():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT s.*,
+                       d.nombre  AS docente_nombre,
+                       ds.nombre AS suplente_nombre
+                FROM suplencias s
+                LEFT JOIN docentes d  ON d.id  = s.docente_id
+                LEFT JOIN docentes ds ON ds.id = s.suplente_id
+                WHERE s.activa = TRUE AND s.fecha >= CURDATE()
+                ORDER BY s.fecha, s.hora_inicio
+            """)
+            suplencias = cursor.fetchall()
+        for s in (suplencias or []):
+            s['hora_inicio'] = _timedelta_to_str(s['hora_inicio'])
+            s['hora_fin']    = _timedelta_to_str(s['hora_fin'])
+            if s.get('fecha'):
+                s['fecha'] = str(s['fecha'])
+        return suplencias if suplencias else []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener suplencias: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/suplencias")
+def crear_suplencia(s: Suplencia):
+    if s.docente_id == s.suplente_id:
+        raise HTTPException(status_code=400, detail="El docente no puede ser su propio suplente.")
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id FROM suplencias
+                WHERE suplente_id = %s AND activa = TRUE AND fecha = %s
+                AND NOT (hora_fin <= %s OR hora_inicio >= %s)
+            """, (s.suplente_id, s.fecha, s.hora_inicio, s.hora_fin))
+            if cursor.fetchone():
+                raise HTTPException(status_code=400, detail="El suplente ya tiene una suplencia asignada en ese horario.")
+            cursor.execute("""
+                INSERT INTO suplencias (docente_id, suplente_id, materia, dia, fecha, hora_inicio, hora_fin, activa)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+            """, (s.docente_id, s.suplente_id, s.materia, s.dia, s.fecha, s.hora_inicio, s.hora_fin))
+        connection.commit()
+        return {"message": "Suplencia asignada correctamente."}
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al crear suplencia: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.delete("/api/suplencias/{suplencia_id}")
+def eliminar_suplencia(suplencia_id: int):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE suplencias SET activa = FALSE WHERE id = %s", (suplencia_id,))
+        connection.commit()
+        return {"message": "Suplencia cancelada."}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al cancelar suplencia: {str(e)}")
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------
+# ENDPOINTS PARA DOCENTES DESDE HORARIOS (SIN TABLA PROPIA)
+# ---------------------------------------------------------
+
+@app.get("/api/docentes-horarios")
+def obtener_docentes_horarios():
+    """Docentes únicos de horarios. Incluye horarios_hoy para cálculo en tiempo real en el frontend."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    docente AS nombre,
+                    GROUP_CONCAT(DISTINCT asignatura  ORDER BY asignatura  SEPARATOR '|||') AS materias_raw,
+                    GROUP_CONCAT(DISTINCT licenciatura ORDER BY licenciatura SEPARATOR '|||') AS licenciaturas_raw
+                FROM horarios
+                WHERE docente IS NOT NULL
+                  AND TRIM(docente) != ''
+                  AND TRIM(docente) != 'Sin especificar'
+                GROUP BY docente
+                ORDER BY docente
+            """)
+            filas = cursor.fetchall()
+
+            # Todos los horarios semanales (sin filtro de fecha) para cálculo client-side
+            cursor.execute("""
+                SELECT DISTINCT docente, horario, asignatura
+                FROM horarios
+                WHERE docente IS NOT NULL AND TRIM(docente) != ''
+                  AND TRIM(docente) != 'Sin especificar'
+            """)
+            clases_hoy_raw = cursor.fetchall()
+
+            # Suplencias activas hoy
+            cursor.execute("""
+                SELECT * FROM suplencias_horarios
+                WHERE activa = TRUE AND fecha = CURDATE()
+            """)
+            suplencias_hoy = cursor.fetchall()
+
+        # Agrupar horarios semanales por docente, incluyendo dia_index
+        from collections import defaultdict
+        clases_por_docente = defaultdict(list)
+        for c in (clases_hoy_raw or []):
+            dia_idx, inicio, fin = _parse_horario_minutos(c.get('horario', ''))
+            if inicio is not None and dia_idx is not None:
+                clases_por_docente[c['docente']].append({
+                    'asignatura':  c['asignatura'],
+                    'dia_index':   dia_idx,   # 0=Dom,1=Lun...6=Sab (igual que JS getDay())
+                    'inicio_mins': inicio,
+                    'fin_mins':    fin,
+                })
+
+        # Suplencias hoy por docente (con horas convertidas a string)
+        suplencias_por_docente = defaultdict(list)
+        for s in (suplencias_hoy or []):
+            suplencias_por_docente[s['docente_nombre']].append({
+                'id':              s['id'],
+                'suplente_nombre': s['suplente_nombre'],
+                'materia':         s['materia'],
+                'hora_inicio':     _timedelta_to_str(s['hora_inicio']),
+                'hora_fin':        _timedelta_to_str(s['hora_fin']),
+                'inicio_mins':     _time_to_mins(s['hora_inicio']),
+                'fin_mins':        _time_to_mins(s['hora_fin']),
+            })
+
+        docentes = []
+        for row in (filas or []):
+            nombre        = row['nombre']
+            materias      = [m.strip() for m in (row['materias_raw']      or '').split('|||') if m.strip()]
+            licenciaturas = [l.strip() for l in (row['licenciaturas_raw'] or '').split('|||') if l.strip()]
+
+            docentes.append({
+                'nombre':           nombre,
+                'materias':         materias,
+                'licenciaturas':    licenciaturas,
+                'horarios_semana':  clases_por_docente.get(nombre, []),
+                'suplencias_hoy':   suplencias_por_docente.get(nombre, []),
+            })
+
+        return docentes
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener docentes: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/suplencias-horarios")
+def crear_suplencia_horarios(s: SuplenciaHorarios):
+    if s.docente_nombre.strip() == s.suplente_nombre.strip():
+        raise HTTPException(status_code=400, detail="El docente no puede ser su propio suplente.")
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id FROM suplencias_horarios
+                WHERE suplente_nombre = %s AND activa = TRUE AND fecha = %s
+                AND NOT (hora_fin <= %s OR hora_inicio >= %s)
+            """, (s.suplente_nombre, s.fecha, s.hora_inicio, s.hora_fin))
+            if cursor.fetchone():
+                raise HTTPException(status_code=400, detail="El suplente ya tiene una suplencia asignada en ese horario.")
+            cursor.execute("""
+                INSERT INTO suplencias_horarios
+                (docente_nombre, suplente_nombre, materia, dia, fecha, hora_inicio, hora_fin, activa)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+            """, (s.docente_nombre, s.suplente_nombre, s.materia, s.dia, s.fecha, s.hora_inicio, s.hora_fin))
+        connection.commit()
+        return {"message": "Suplencia asignada correctamente."}
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al crear suplencia: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.delete("/api/suplencias-horarios/{suplencia_id}")
+def cancelar_suplencia_horarios(suplencia_id: int):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE suplencias_horarios SET activa = FALSE WHERE id = %s", (suplencia_id,))
+        connection.commit()
+        return {"message": "Suplencia cancelada."}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al cancelar suplencia: {str(e)}")
     finally:
         connection.close()

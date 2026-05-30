@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTime } from '../components/TimeContext';
 
 // Parser robusto para extraer día y horas
 const parsearHorario = (horarioCompleto) => {
@@ -46,6 +47,56 @@ const diasSemanaMap = {
   'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6
 };
 
+const minToTime = (mins) => {
+  const h = Math.floor(mins / 60).toString().padStart(2, '0');
+  const m = (mins % 60).toString().padStart(2, '0');
+  return `${h}:${m}`;
+};
+
+// Fusiona bloques consecutivos del mismo docente/asignatura/día/aula en una sola fila
+const groupConsecutiveClasses = (clases) => {
+  if (!clases.length) return clases;
+
+  const estadoPrioridad = { en_curso: 0, proxima: 1, finalizada: 2 };
+
+  const mapGrupos = new Map();
+  clases.forEach(clase => {
+    const key = [clase.diaOriginal, clase.docente, clase.licenciatura, clase.asignatura, clase.aula_asignada || ''].join('||');
+    if (!mapGrupos.has(key)) mapGrupos.set(key, []);
+    mapGrupos.get(key).push(clase);
+  });
+
+  const resultado = [];
+
+  mapGrupos.forEach(grupo => {
+    grupo.sort((a, b) => a.inicio - b.inicio);
+
+    let actual = { ...grupo[0], _ids: [String(grupo[0].id)] };
+
+    for (let i = 1; i < grupo.length; i++) {
+      const siguiente = grupo[i];
+      // Bloques consecutivos: gap ≤ 10 minutos (tolerancia para recesos cortos)
+      if (siguiente.inicio - actual.fin <= 10) {
+        actual.fin = Math.max(actual.fin, siguiente.fin);
+        actual.textoHora = `${minToTime(actual.inicio)}-${minToTime(actual.fin)}`;
+        if ((estadoPrioridad[siguiente.estadoTiempo] ?? 2) < (estadoPrioridad[actual.estadoTiempo] ?? 2)) {
+          actual.estadoTiempo = siguiente.estadoTiempo;
+        }
+        actual._ids.push(String(siguiente.id));
+      } else {
+        resultado.push(actual);
+        actual = { ...siguiente, _ids: [String(siguiente.id)] };
+      }
+    }
+    resultado.push(actual);
+  });
+
+  return resultado.sort((a, b) => {
+    if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex || 0) - (b.diaClaseIndex || 0);
+    return (a.inicio || 0) - (b.inicio || 0);
+  });
+};
+
 export default function VisualBd() {
   const [asignaturas, setAsignaturas] = useState([]);
   
@@ -59,32 +110,40 @@ export default function VisualBd() {
   const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false);
   
   const [cargando, setCargando] = useState(true);
-  const [ahora, setAhora] = useState(new Date('2026-05-25T16:30:00')); // Fecha fija para pruebas, cambiar a new Date() para producción
+
+
+
+
+
+  const ahora = useTime();
+  const [errorConexion, setErrorConexion] = useState(false);
+  const [ultimaSync, setUltimaSync] = useState(null);
   const navigate = useNavigate();
 
-  // Reloj interno del sistema
-  useEffect(() => {
-    const timer = setInterval(() => setAhora(new Date()), 60000);
-    return () => clearInterval(timer);
-  }, []);
+
 
   // Conexión constante a la base de datos
   useEffect(() => {
     const fetchDatos = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/horarios');
+        const response = await fetch('/api/horarios');
         if (response.ok) {
           const data = await response.json();
           setAsignaturas(data);
+          setErrorConexion(false);
+          setUltimaSync(new Date());
+        } else {
+          setErrorConexion(true);
         }
       } catch (error) {
         console.error("Error al cargar la BD:", error);
+        setErrorConexion(true);
       } finally {
         setCargando(false);
       }
     };
     fetchDatos();
-    const interval = setInterval(fetchDatos, 5000);
+    const interval = setInterval(fetchDatos, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -109,17 +168,20 @@ export default function VisualBd() {
         }
       }
 
-      return { ...clase, estadoTiempo, textoHora, diaClaseIndex, inicio, diaOriginal: dia };
+      return { ...clase, estadoTiempo, textoHora, diaClaseIndex, inicio, fin, diaOriginal: dia };
     }).sort((a, b) => {
       if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex || 0) - (b.diaClaseIndex || 0);
       return (a.inicio || 0) - (b.inicio || 0);
     });
   }, [asignaturas, ahora]);
 
+  // Versión agrupada de TODOS los datos (sin filtros) — base para stats y opciones de hora
+  const todosAgrupados = useMemo(() => groupConsecutiveClasses(asignaturasConEstado), [asignaturasConEstado]);
+
   // Generar opciones dinámicas para los selectores basados en la BD real
   const opcionesLicenciatura = useMemo(() => [...new Set(asignaturas.map(a => a.licenciatura).filter(Boolean))].sort(), [asignaturas]);
   const opcionesAsignatura = useMemo(() => [...new Set(asignaturas.map(a => a.asignatura).filter(Boolean))].sort(), [asignaturas]);
-  const opcionesHora = useMemo(() => [...new Set(asignaturasConEstado.map(a => a.textoHora).filter(Boolean))].sort(), [asignaturasConEstado]);
+  const opcionesHora = useMemo(() => [...new Set(todosAgrupados.map(a => a.textoHora).filter(Boolean))].sort(), [todosAgrupados]);
 
   // Lógica combinada de filtros
   const datosFiltrados = useMemo(() => {
@@ -147,14 +209,16 @@ export default function VisualBd() {
     return resultado;
   }, [asignaturasConEstado, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, mostrarFinalizadas]);
 
-  // Métricas del Directorio
+  const datosAgrupados = useMemo(() => groupConsecutiveClasses(datosFiltrados), [datosFiltrados]);
+
+  // Métricas del Directorio — calculadas desde datos agrupados para consistencia con la tabla
   const stats = useMemo(() => {
-    const enCurso = asignaturasConEstado.filter(c => c.estadoTiempo === 'en_curso').length;
-    const proximas = asignaturasConEstado.filter(c => c.estadoTiempo === 'proxima').length;
-    const finalizadas = asignaturasConEstado.filter(c => c.estadoTiempo === 'finalizada').length;
-    const total = asignaturasConEstado.length;
+    const enCurso    = todosAgrupados.filter(c => c.estadoTiempo === 'en_curso').length;
+    const proximas   = todosAgrupados.filter(c => c.estadoTiempo === 'proxima').length;
+    const finalizadas = todosAgrupados.filter(c => c.estadoTiempo === 'finalizada').length;
+    const total      = todosAgrupados.length;
     return { enCurso, proximas, finalizadas, total };
-  }, [asignaturasConEstado]);
+  }, [todosAgrupados]);
 
   // Funciones rápidas para cambiar de vistas
   const verBaseDatosTotal = () => {
@@ -184,11 +248,26 @@ export default function VisualBd() {
           <p className="text-base text-[#44464e] mt-1.5">Visualización centralizada con monitoreo en tiempo real.</p>
         </div>
         <div className="flex gap-3 flex-wrap">
-          <div className="bg-white rounded-xl px-5 py-3 border border-[#c5c6cf]/50 flex items-center gap-3 shadow-sm">
-            <span className="material-symbols-outlined text-green-500 text-sm animate-pulse">sensors</span>
-            <span className="text-xs font-bold text-[#75777f]">EN LÍNEA</span>
-            <span className="text-[#c5c6cf]">•</span>
-            <span className="text-sm font-semibold text-[#1b1c1e] capitalize">{fechaFormateada}</span>
+          <div className={`bg-white rounded-xl px-5 py-3 border flex items-center gap-3 shadow-sm ${errorConexion ? 'border-orange-300' : 'border-[#c5c6cf]/50'}`}>
+            {errorConexion ? (
+              <>
+                <span className="material-symbols-outlined text-orange-500 text-sm">wifi_off</span>
+                <span className="text-xs font-bold text-orange-600">SIN CONEXIÓN</span>
+                {ultimaSync && (
+                  <>
+                    <span className="text-[#c5c6cf]">•</span>
+                    <span className="text-xs text-[#75777f]">Última sync: {ultimaSync.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</span>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-green-500 text-sm animate-pulse">sensors</span>
+                <span className="text-xs font-bold text-[#75777f]">EN LÍNEA</span>
+                <span className="text-[#c5c6cf]">•</span>
+                <span className="text-sm font-semibold text-[#1b1c1e] capitalize">{fechaFormateada}</span>
+              </>
+            )}
           </div>
           <button 
             onClick={() => navigate('/horarios')}
@@ -344,16 +423,16 @@ export default function VisualBd() {
       {/* TABLA DE RESULTADOS */}
       <div className="bg-white border border-[#c5c6cf]/50 rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[1000px]">
+          <table className="w-full text-left border-collapse table-fixed min-w-[820px]">
             <thead>
               <tr className="bg-[#1c355e] text-white text-[11px] uppercase font-bold tracking-widest">
-                <th className="py-4 px-6">Día</th>
-                <th className="py-4 px-6">Docente</th>
-                <th className="py-4 px-6">Licenciatura</th>
-                <th className="py-4 px-6">Asignatura</th>
-                <th className="py-4 px-6">Horario</th>
-                <th className="py-4 px-6">Aula</th>
-                <th className="py-4 px-6">Estado</th>
+                <th className="w-[8%]  py-4 px-4">Día</th>
+                <th className="w-[15%] py-4 px-4">Docente</th>
+                <th className="w-[22%] py-4 px-4">Licenciatura</th>
+                <th className="w-[18%] py-4 px-4">Asignatura</th>
+                <th className="w-[12%] py-4 px-4">Horario</th>
+                <th className="w-[12%] py-4 px-4">Aula</th>
+                <th className="w-[13%] py-4 px-4">Estado</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c5c6cf]/30">
@@ -370,19 +449,31 @@ export default function VisualBd() {
                   </td>
                 </tr>
               ) : (
-                datosFiltrados.map((item, index) => (
-                  <tr key={item.Id || item.id || index} className="text-sm hover:bg-[#f4f3f6]/50 transition-colors">
-                    <td className="py-5 px-6 font-bold text-[#44464e] capitalize">{item.diaOriginal || "—"}</td>
-                    <td className="py-5 px-6 font-bold text-[#1b1c1e]">{item.docente}</td>
-                    <td className="py-5 px-6">
-                      <span className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase border whitespace-nowrap ${obtenerColorLicenciatura(item.licenciatura)}`}>
+                datosAgrupados.map((item) => (
+                  <tr key={item._ids.join('-')} className="text-sm hover:bg-[#f4f3f6]/50 transition-colors">
+                    <td className="py-4 px-4 font-bold text-[#44464e] capitalize">{item.diaOriginal || "—"}</td>
+                    <td className="py-4 px-4 font-bold text-[#1b1c1e] break-words">{item.docente}</td>
+                    <td className="py-4 px-4">
+                      <span className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase border break-words inline-block max-w-full ${obtenerColorLicenciatura(item.licenciatura)}`}>
                         {item.licenciatura}
                       </span>
                     </td>
-                    <td className="py-5 px-6 font-medium text-[#44464e]">{item.asignatura}</td>
-                    <td className="py-5 px-6 font-mono text-[#1c355e] font-bold text-xs whitespace-nowrap">{item.textoHora}</td>
-                    <td className="py-5 px-6 font-bold text-[#1c355e]">{item.aula_asignada || "—"}</td>
-                    <td className="py-5 px-6">
+                    <td className="py-4 px-4 font-medium text-[#44464e] break-words">{item.asignatura}</td>
+                    <td className="py-4 px-4 font-mono text-[#1c355e] font-bold text-xs whitespace-nowrap">{item.textoHora}</td>
+                    <td className="py-4 px-4">
+                      {item.aula_reasignada ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-bold text-orange-600 flex items-center gap-1 whitespace-nowrap">
+                            <span className="material-symbols-outlined text-[13px]">construction</span>
+                            {item.aula_asignada}
+                          </span>
+                          <span className="text-[10px] text-[#75777f] line-through">{item.aula_original}</span>
+                        </div>
+                      ) : (
+                        <span className="font-bold text-[#1c355e]">{item.aula_asignada || "—"}</span>
+                      )}
+                    </td>
+                    <td className="py-4 px-4">
                       <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border whitespace-nowrap ${
                         item.estadoTiempo === 'en_curso' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
                         item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-gray-200' :
