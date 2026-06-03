@@ -8,6 +8,8 @@ import pdfplumber
 import json
 import smtplib
 import secrets
+from contextlib import asynccontextmanager
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 from email.mime.text import MIMEText
@@ -22,12 +24,8 @@ from io import BytesIO
 base_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(base_dir, ".env"))
 
-app = FastAPI(title="API Sistema de Prefectura ULA")
-
-
-@app.on_event("startup")
 def migrar_columnas_verificacion():
-    """Agrega las columnas OTP a la tabla usuarios si no existen."""
+    """Agrega las columnas y tablas necesarias si no existen."""
     try:
         connection = get_db_connection()
         with connection.cursor() as cursor:
@@ -40,6 +38,8 @@ def migrar_columnas_verificacion():
                 "ALTER TABLE aulas ADD COLUMN aula_temporal VARCHAR(100) NULL",
                 "ALTER TABLE usuarios ADD COLUMN verification_code_expira DATETIME NULL",
                 "ALTER TABLE usuarios ADD COLUMN reset_code_expira DATETIME NULL",
+                "ALTER TABLE usuarios ADD COLUMN created_at DATETIME DEFAULT NOW()",
+                "ALTER TABLE horarios ADD COLUMN fecha_clase DATE NULL",
                 """CREATE TABLE IF NOT EXISTS docentes (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     nombre VARCHAR(200) NOT NULL,
@@ -83,7 +83,17 @@ def migrar_columnas_verificacion():
         print(f"Advertencia en migración: {e}")
 
 
-def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    migrar_columnas_verificacion()
+    yield
+
+
+app = FastAPI(title="API Sistema de Prefectura ULA", lifespan=lifespan)
+
+
+def _enviar_smtp(correo_destino: str, asunto: str, html: str):
+    """Helper interno para enviar correos HTML via SMTP."""
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", 587))
     smtp_user = os.getenv("SMTP_USER")
@@ -93,10 +103,18 @@ def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
         raise ValueError("Configura SMTP_USER y SMTP_PASSWORD en src/backend/.env")
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Código de verificación — Sistema de Prefectura ULA"
+    msg["Subject"] = asunto
     msg["From"] = smtp_user
     msg["To"] = correo_destino
+    msg.attach(MIMEText(html, "html"))
 
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(smtp_user, correo_destino, msg.as_string())
+
+
+def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
     html = f"""
     <html><body style="font-family:Arial,sans-serif;background:#f4f6fb;padding:32px;">
       <div style="max-width:420px;margin:auto;background:#fff;border-radius:16px;
@@ -112,12 +130,7 @@ def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
       </div>
     </body></html>
     """
-    msg.attach(MIMEText(html, "html"))
-
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.sendmail(smtp_user, correo_destino, msg.as_string())
+    _enviar_smtp(correo_destino, "Código de verificación — Sistema de Prefectura ULA", html)
 
 # Configuración de CORS para permitir la conexión desde Vite (React)
 app.add_middleware(
@@ -222,6 +235,14 @@ class SuplenciaHorarios(BaseModel):
     hora_inicio: str
     hora_fin: str
 
+class ActualizarUsuario(BaseModel):
+    nombre: str
+    turno: str
+
+class CambiarPassword(BaseModel):
+    password_actual: str
+    password_nueva: str
+
 class VerificacionCorreo(BaseModel):
     correo: str
     codigo: str
@@ -309,8 +330,6 @@ def registrar_usuario(datos: RegistroUsuario):
         raise HTTPException(status_code=400, detail="El correo debe pertenecer a la Universidad Latino.")
 
     password_hasheada = bcrypt.hashpw(datos.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    codigo = str(secrets.randbelow(900000) + 100000)
-    expira = datetime.now() + timedelta(minutes=15)
 
     connection = get_db_connection()
     try:
@@ -320,8 +339,8 @@ def registrar_usuario(datos: RegistroUsuario):
                 raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
 
             cursor.execute(
-                "INSERT INTO usuarios (nombre, correo, turno, password, is_verified, verification_code, verification_code_expira) VALUES (%s, %s, %s, %s, FALSE, %s, %s)",
-                (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada, codigo, expira)
+                "INSERT INTO usuarios (nombre, correo, turno, password, is_verified) VALUES (%s, %s, %s, %s, TRUE)",
+                (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada)
             )
         connection.commit()
     except pymysql.Error as e:
@@ -329,16 +348,119 @@ def registrar_usuario(datos: RegistroUsuario):
     finally:
         connection.close()
 
-    try:
-        enviar_correo_otp(correo_limpio, codigo, datos.nombre.strip())
-    except Exception as e:
-        print(f"Error SMTP: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Usuario creado pero no se pudo enviar el correo de verificación. Configura SMTP en .env"
-        )
+    return {"message": "Usuario registrado correctamente. Ya puedes iniciar sesión."}
 
-    return {"message": "Código enviado al correo. Revisa tu bandeja de entrada."}
+
+@app.delete("/api/usuarios/{usuario_id}")
+def eliminar_usuario(usuario_id: int):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM usuarios WHERE id = %s", (usuario_id,))
+        connection.commit()
+        return {"message": "Cuenta eliminada correctamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar la cuenta: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.put("/api/usuarios/{usuario_id}")
+def actualizar_usuario(usuario_id: int, datos: ActualizarUsuario):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE usuarios SET nombre = %s, turno = %s WHERE id = %s",
+                (datos.nombre.strip(), datos.turno, usuario_id)
+            )
+        connection.commit()
+        return {"message": "Perfil actualizado correctamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar perfil: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/usuarios/{usuario_id}")
+def obtener_usuario(usuario_id: int):
+    """Devuelve los datos públicos de un usuario por ID (sin contraseña)."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, nombre, correo, turno, created_at FROM usuarios WHERE id = %s",
+                (usuario_id,)
+            )
+            u = cursor.fetchone()
+        if not u:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+        return {
+            'id':         u['id'],
+            'nombre':     u['nombre'],
+            'correo':     u['correo'],
+            'turno':      u['turno'] or '',
+            'created_at': u['created_at'].isoformat() if u.get('created_at') else None,
+        }
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/usuarios")
+def listar_usuarios():
+    """Lista todos los usuarios registrados (sin datos sensibles)."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, nombre, correo, turno, is_verified, created_at
+                FROM usuarios ORDER BY nombre
+            """)
+            usuarios = cursor.fetchall()
+        result = []
+        for u in (usuarios or []):
+            result.append({
+                'id':          u['id'],
+                'nombre':      u['nombre'],
+                'correo':      u['correo'],
+                'turno':       u['turno'] or '',
+                'is_verified': bool(u.get('is_verified', False)),
+                'created_at':  u['created_at'].isoformat() if u.get('created_at') else None,
+            })
+        return result
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener usuarios: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.put("/api/usuarios/{usuario_id}/cambiar-password")
+def cambiar_password(usuario_id: int, datos: CambiarPassword):
+    if len(datos.password_nueva) < 6:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 6 caracteres.")
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT password FROM usuarios WHERE id = %s", (usuario_id,))
+            usuario = cursor.fetchone()
+            if not usuario:
+                raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+            if not bcrypt.checkpw(datos.password_actual.encode('utf-8'), usuario['password'].encode('utf-8')):
+                raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta.")
+            nueva_hash = bcrypt.hashpw(datos.password_nueva.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            cursor.execute("UPDATE usuarios SET password = %s WHERE id = %s", (nueva_hash, usuario_id))
+        connection.commit()
+        return {"message": "Contraseña actualizada correctamente."}
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al cambiar contraseña: {str(e)}")
+    finally:
+        connection.close()
 
 
 @app.post("/api/verificar-correo")
@@ -377,36 +499,39 @@ def verificar_correo(datos: VerificacionCorreo):
 @app.post("/api/login")
 def login_usuario(datos: LoginUsuario):
     correo_limpio = datos.correo.strip().lower()
-    
+
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Buscar al usuario por correo
-            cursor.execute("SELECT * FROM usuarios WHERE correo = %s", (correo_limpio,))
+            cursor.execute(
+                "SELECT id, nombre, correo, turno, password, is_verified, created_at FROM usuarios WHERE correo = %s",
+                (correo_limpio,)
+            )
             usuario = cursor.fetchone()
-            
-            # Si el usuario no existe
+
             if not usuario:
                 raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
-            
-            # Verificar si la contraseña ingresada coincide con la encriptada en la BD
+
             password_valida = bcrypt.checkpw(
-                datos.password.encode('utf-8'), 
+                datos.password.encode('utf-8'),
                 usuario['password'].encode('utf-8')
             )
-            
+
             if not password_valida:
                 raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
-            
-            # Si todo está correcto, devolvemos el nombre y el turno para Layout.jsx
+
             return {
                 "message": "Login exitoso",
                 "usuario": {
-                    "nombre": usuario['nombre'],
-                    "turno": usuario['turno']
+                    "id":         usuario['id'],
+                    "nombre":     usuario['nombre'],
+                    "correo":     usuario['correo'],
+                    "turno":      usuario['turno'],
+                    "created_at": usuario['created_at'].isoformat() if usuario.get('created_at') else None,
+                    "logged_at":  datetime.now().isoformat(),
                 }
             }
-            
+
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error en la base de datos: {str(e)}")
     finally:
@@ -754,19 +879,7 @@ def recuperar_contrasena(datos: RecuperarContrasena):
         connection.close()
 
     try:
-        smtp_user = os.getenv("SMTP_USER")
-        smtp_password = os.getenv("SMTP_PASSWORD")
-        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-        smtp_port = int(os.getenv("SMTP_PORT", 587))
-
-        if not smtp_user or smtp_user == "tu_correo@gmail.com":
-            raise ValueError("SMTP no configurado")
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "Restablecer contraseña — Sistema de Prefectura ULA"
-        msg["From"] = smtp_user
-        msg["To"] = correo_limpio
-        html = f"""
+        html_reset = f"""
         <html><body style="font-family:Arial,sans-serif;background:#f4f6fb;padding:32px;">
           <div style="max-width:420px;margin:auto;background:#fff;border-radius:16px;
                       padding:36px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08);">
@@ -781,11 +894,7 @@ def recuperar_contrasena(datos: RecuperarContrasena):
           </div>
         </body></html>
         """
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.sendmail(smtp_user, correo_limpio, msg.as_string())
+        _enviar_smtp(correo_limpio, "Restablecer contraseña — Sistema de Prefectura ULA", html_reset)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo enviar el correo: {str(e)}")
 
@@ -807,6 +916,8 @@ def restablecer_contrasena(datos: RestablecerContrasena):
             if not usuario['reset_code'] or usuario['reset_code'] != datos.codigo.strip():
                 raise HTTPException(status_code=400, detail="Código incorrecto.")
 
+            if len(datos.nueva_password) < 6:
+                raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres.")
             nueva_hash = bcrypt.hashpw(datos.nueva_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             cursor.execute(
                 "UPDATE usuarios SET password = %s, reset_code = NULL, reset_code_expira = NULL WHERE id = %s",
@@ -927,7 +1038,6 @@ def obtener_aulas():
                 FROM aulas ORDER BY nombre
             """)
             aulas = cursor.fetchall()
-        ahora = datetime.now()
         for aula in (aulas or []):
             # Parsear equipos de JSON string a lista
             if aula.get('equipos'):
@@ -1117,6 +1227,8 @@ def obtener_docentes():
 
             ahora = datetime.now()
             mins_ahora = ahora.hour * 60 + ahora.minute
+            # isoweekday: Lun=1..Dom=7 → % 7 da Lun=1..Sab=6, Dom=0 (igual que JS getDay())
+            dia_hoy = ahora.isoweekday() % 7
 
             cursor.execute("""
                 SELECT s.*, ds.nombre as suplente_nombre
@@ -1126,11 +1238,12 @@ def obtener_docentes():
             """)
             suplencias_hoy = cursor.fetchall()
 
+            # Sin filtro de fecha: usamos el campo horario (día semana + hora) igual que obtener_clases_hoy
             cursor.execute("""
-                SELECT docente, horario FROM horarios
-                WHERE DATE(fecha_clase) = CURDATE()
+                SELECT DISTINCT docente, horario FROM horarios
+                WHERE docente IS NOT NULL AND TRIM(docente) != ''
             """)
-            clases_hoy = cursor.fetchall()
+            clases_semana = cursor.fetchall()
 
         for doc in (docentes or []):
             try:
@@ -1155,11 +1268,11 @@ def obtener_docentes():
 
             en_clase = False
             if not suplencia_activa:
-                for clase in (clases_hoy or []):
+                for clase in (clases_semana or []):
                     if clase['docente'] != doc['nombre']:
                         continue
-                    _, inicio, fin = _parse_horario_minutos(clase.get('horario', ''))
-                    if inicio is not None and inicio <= mins_ahora <= fin:
+                    dia_clase, inicio, fin = _parse_horario_minutos(clase.get('horario', ''))
+                    if dia_clase == dia_hoy and inicio is not None and inicio <= mins_ahora <= fin:
                         en_clase = True
                         break
 
@@ -1311,6 +1424,7 @@ def obtener_docentes_horarios():
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SET SESSION group_concat_max_len = 65535")
             cursor.execute("""
                 SELECT
                     docente AS nombre,
@@ -1342,7 +1456,6 @@ def obtener_docentes_horarios():
             suplencias_hoy = cursor.fetchall()
 
         # Agrupar horarios semanales por docente, incluyendo dia_index
-        from collections import defaultdict
         clases_por_docente = defaultdict(list)
         for c in (clases_hoy_raw or []):
             dia_idx, inicio, fin = _parse_horario_minutos(c.get('horario', ''))
@@ -1427,5 +1540,47 @@ def cancelar_suplencia_horarios(suplencia_id: int):
         return {"message": "Suplencia cancelada."}
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al cancelar suplencia: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/suplencias-activas")
+def obtener_suplencias_activas():
+    """Todas las suplencias activas hoy con datos enriquecidos (licenciatura y aula del horario original)."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT sh.id, sh.docente_nombre, sh.suplente_nombre, sh.materia,
+                       sh.dia, sh.fecha, sh.hora_inicio, sh.hora_fin,
+                       MIN(h.licenciatura) AS licenciatura,
+                       MIN(h.aula_asignada) AS aula_asignada
+                FROM suplencias_horarios sh
+                LEFT JOIN horarios h
+                    ON h.docente = sh.docente_nombre AND h.asignatura = sh.materia
+                WHERE sh.activa = TRUE AND sh.fecha = CURDATE()
+                GROUP BY sh.id, sh.docente_nombre, sh.suplente_nombre, sh.materia,
+                         sh.dia, sh.fecha, sh.hora_inicio, sh.hora_fin
+            """)
+            suplencias = cursor.fetchall()
+        result = []
+        for s in (suplencias or []):
+            result.append({
+                'id':              s['id'],
+                'docente_nombre':  s['docente_nombre'],
+                'suplente_nombre': s['suplente_nombre'],
+                'materia':         s['materia'],
+                'dia':             s['dia'],
+                'fecha':           str(s['fecha']),
+                'hora_inicio':     _timedelta_to_str(s['hora_inicio']),
+                'hora_fin':        _timedelta_to_str(s['hora_fin']),
+                'inicio_mins':     _time_to_mins(s['hora_inicio']),
+                'fin_mins':        _time_to_mins(s['hora_fin']),
+                'licenciatura':    s.get('licenciatura') or '',
+                'aula_asignada':   s.get('aula_asignada') or '',
+            })
+        return result
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener suplencias activas: {str(e)}")
     finally:
         connection.close()

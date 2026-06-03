@@ -1,17 +1,18 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import logo from '../components/logo.png';
+import { useToast } from '../components/useToast';
 
 export default function Registro() {
+  const navigate = useNavigate();
+  const { toast, ToastContainer } = useToast();
+
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [turno, setTurno] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [emailError, setEmailError] = useState('');
-  const [paso, setPaso] = useState('registro');
-  const [correoRegistrado, setCorreoRegistrado] = useState('');
-  const [codigoOtp, setCodigoOtp] = useState('');
   const [cargando, setCargando] = useState(false);
 
   const passwordsMatch = password.length > 0 && confirmPassword.length > 0 && password === confirmPassword;
@@ -31,8 +32,8 @@ export default function Registro() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    if (!isValidEmail) return alert("El correo debe terminar con universidadlatino.edu.mx");
-    if (!passwordsMatch) return alert("Las contraseñas no coinciden");
+    if (!isValidEmail) { toast("El correo debe terminar con universidadlatino.edu.mx", "advertencia"); return; }
+    if (!passwordsMatch) { toast("Las contraseñas no coinciden.", "advertencia"); return; }
 
     setCargando(true);
     try {
@@ -43,38 +44,13 @@ export default function Registro() {
       });
       const data = await response.json();
       if (response.ok) {
-        setCorreoRegistrado(email.trim().toLowerCase());
-        setPaso('verificacion');
+        toast("¡Cuenta creada! Ya puedes iniciar sesión.", "exito");
+        setTimeout(() => navigate('/login'), 1500);
       } else {
-        alert("Error: " + (data.detail || "No se pudo crear el usuario."));
+        toast(data.detail || "No se pudo crear el usuario.", "error");
       }
     } catch {
-      alert("Error de conexión con el servidor.");
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  const handleVerificar = async (e) => {
-    e.preventDefault();
-    if (codigoOtp.length !== 6) return alert("El código debe tener 6 dígitos.");
-
-    setCargando(true);
-    try {
-      const response = await fetch('/api/verificar-correo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ correo: correoRegistrado, codigo: codigoOtp })
-      });
-      const data = await response.json();
-      if (response.ok) {
-        alert("¡Correo verificado! Ya puedes iniciar sesión.");
-        window.location.href = "/login";
-      } else {
-        alert("Error: " + (data.detail || "Código incorrecto."));
-      }
-    } catch {
-      alert("Error de conexión con el servidor.");
+      toast("Error de conexión con el servidor.", "error");
     } finally {
       setCargando(false);
     }
@@ -90,13 +66,11 @@ export default function Registro() {
           <img src={logo} alt="Logo" className="h-20 w-auto object-contain mb-2" />
           <h2 className="text-[14px] font-semibold text-[#44464e] tracking-widest mb-4 uppercase">Sistema de Prefectura</h2>
           <h1 className="text-[32px] font-bold text-[#1c355e] tracking-tight leading-[1.2]">
-            {paso === 'registro' ? 'REGISTRO DE PERSONAL' : 'VERIFICAR CORREO'}
+            REGISTRO DE PERSONAL
           </h1>
         </div>
 
-        {/* ===== PASO 1: FORMULARIO DE REGISTRO ===== */}
-        {paso === 'registro' && (
-          <form className="px-8 pb-8 space-y-4" onSubmit={handleRegister}>
+        <form className="px-8 pb-8 space-y-4" onSubmit={handleRegister}>
             <div className="space-y-1.5">
               <label className="text-[14px] font-semibold text-[#1b1c1e]">Nombre Completo</label>
               <div className="relative group">
@@ -122,6 +96,7 @@ export default function Registro() {
                   <option value="" disabled>Selecciona un turno</option>
                   <option value="matutino">Turno Matutino</option>
                   <option value="vespertino">Turno Vespertino</option>
+                  <option value="ambos">Ambos Turnos</option>
                 </select>
                 <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-[#75777f] pointer-events-none">expand_more</span>
               </div>
@@ -159,51 +134,13 @@ export default function Registro() {
               <Link to="/login" className="text-[16px] text-[#1c355e] hover:underline">Volver al Inicio de Sesión</Link>
             </div>
           </form>
-        )}
-
-        {/* ===== PASO 2: VERIFICACIÓN OTP ===== */}
-        {paso === 'verificacion' && (
-          <form className="px-8 pb-8 space-y-4" onSubmit={handleVerificar}>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-center">
-              <p className="text-[13px] text-[#44464e]">Enviamos un código de 6 dígitos a:</p>
-              <p className="text-[13px] font-bold text-[#1c355e] mt-1 break-all">{correoRegistrado}</p>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[14px] font-semibold text-[#1b1c1e]">Código de Verificación</label>
-              <div className="relative group">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f]">pin</span>
-                <input
-                  className="w-full pl-10 pr-4 py-3 border border-[#c5c6cf] rounded-lg focus:ring-2 focus:ring-[#1c355e] outline-none text-center text-2xl font-bold tracking-[0.4em] text-[#1c355e]"
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="------"
-                  value={codigoOtp}
-                  onChange={(e) => setCodigoOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  required
-                />
-              </div>
-              <p className="text-[12px] text-[#75777f] text-center">Revisa también tu carpeta de spam.</p>
-            </div>
-
-            <div className="pt-4">
-              <button type="submit" disabled={codigoOtp.length !== 6 || cargando} className={`w-full text-white font-semibold py-4 rounded-lg flex justify-center items-center gap-2 transition-all ${codigoOtp.length === 6 && !cargando ? 'bg-[#1c355e] hover:bg-[#1c355e]/90 cursor-pointer' : 'bg-gray-400 cursor-not-allowed'}`}>
-                {cargando ? 'Verificando...' : 'Verificar y Activar Cuenta'}
-              </button>
-            </div>
-            <div className="pt-2 text-center">
-              <button type="button" onClick={() => setPaso('registro')} className="text-[14px] text-[#75777f] hover:text-[#1c355e] hover:underline">
-                Volver al formulario
-              </button>
-            </div>
-          </form>
-        )}
       </main>
 
       <footer className="mt-8 text-center w-full max-w-md">
         <p className="text-[12px] text-[#75777f] uppercase tracking-widest font-medium">© 2026 Universidad Latino - Gestión Institucional</p>
       </footer>
+
+      <ToastContainer />
     </div>
   );
 }

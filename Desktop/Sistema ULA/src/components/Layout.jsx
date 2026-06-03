@@ -1,28 +1,14 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
-import logo from './logo.png'; 
+import { useState } from 'react';
+import { useUser } from './UserContext';
+import logo from './logo.png';
 
 export default function Layout() {
   const location = useLocation();
-  
-  const [usuario, setUsuario] = useState({ 
-    nombre: 'Usuario Administrador', 
-    turno: 'Prefectura' 
-  });
+  const { usuario } = useUser();
 
   // Estado para controlar el menú en celulares y tablets
   const [menuAbierto, setMenuAbierto] = useState(false);
-
-  useEffect(() => {
-    const datosGuardados = localStorage.getItem('usuarioLogueado');
-    if (datosGuardados) {
-      const userParseado = JSON.parse(datosGuardados);
-      setUsuario({
-        nombre: userParseado.nombre_completo || userParseado.nombre || 'Usuario',
-        turno: userParseado.turno || 'Prefectura'
-      });
-    }
-  }, []);
 
   const cerrarSesion = () => {
     localStorage.removeItem('usuarioLogueado');

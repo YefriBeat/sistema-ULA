@@ -1,11 +1,16 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import logo from '../components/logo.png';
+import { useToast } from '../components/useToast';
 
 export default function Login() {
+  const navigate = useNavigate();
+  const { toast, ToastContainer } = useToast();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [cargandoLogin, setCargandoLogin] = useState(false);
 
   // Estado del modal de recuperación
   const [mostrarModal, setMostrarModal] = useState(false);
@@ -18,7 +23,7 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-
+    setCargandoLogin(true);
     try {
       const response = await fetch('/api/login', {
         method: 'POST',
@@ -28,13 +33,15 @@ export default function Login() {
       const data = await response.json();
       if (response.ok) {
         localStorage.setItem('usuarioLogueado', JSON.stringify(data.usuario));
-        window.location.href = "/dashboard";
+        navigate('/dashboard');
       } else {
-        alert("Error: " + (data.detail || "Credenciales inválidas."));
+        toast(data.detail || "Credenciales inválidas.", "error");
       }
     } catch (error) {
-      alert("Error de conexión con el servidor.");
+      toast("Error de conexión con el servidor.", "error");
       console.error(error);
+    } finally {
+      setCargandoLogin(false);
     }
   };
 
@@ -60,10 +67,10 @@ export default function Login() {
       if (response.ok) {
         setPasoRecuperacion('otp');
       } else {
-        alert("Error: " + (data.detail || "No se pudo enviar el código."));
+        toast(data.detail || "No se pudo enviar el código.", "error");
       }
     } catch {
-      alert("Error de conexión con el servidor.");
+      toast("Error de conexión con el servidor.", "error");
     } finally {
       setCargando(false);
     }
@@ -71,14 +78,14 @@ export default function Login() {
 
   const handleVerificarOtp = (e) => {
     e.preventDefault();
-    if (otpRecuperacion.length !== 6) return alert("El código debe tener 6 dígitos.");
+    if (otpRecuperacion.length !== 6) { toast("El código debe tener 6 dígitos.", "advertencia"); return; }
     setPasoRecuperacion('password');
   };
 
   const handleRestablecerPassword = async (e) => {
     e.preventDefault();
-    if (nuevaPassword !== confirmarPassword) return alert("Las contraseñas no coinciden.");
-    if (nuevaPassword.length < 6) return alert("La contraseña debe tener al menos 6 caracteres.");
+    if (nuevaPassword !== confirmarPassword) { toast("Las contraseñas no coinciden.", "advertencia"); return; }
+    if (nuevaPassword.length < 6) { toast("La contraseña debe tener al menos 6 caracteres.", "advertencia"); return; }
 
     setCargando(true);
     try {
@@ -93,13 +100,13 @@ export default function Login() {
       });
       const data = await response.json();
       if (response.ok) {
-        alert("¡Contraseña actualizada! Ya puedes iniciar sesión.");
+        toast("¡Contraseña actualizada! Ya puedes iniciar sesión.", "exito");
         cerrarModal();
       } else {
-        alert("Error: " + (data.detail || "No se pudo restablecer la contraseña."));
+        toast(data.detail || "No se pudo restablecer la contraseña.", "error");
       }
     } catch {
-      alert("Error de conexión con el servidor.");
+      toast("Error de conexión con el servidor.", "error");
     } finally {
       setCargando(false);
     }
@@ -160,9 +167,9 @@ export default function Login() {
             </div>
 
             <div className="pt-4">
-              <button type="submit" className="w-full bg-[#1c355e] text-white text-sm font-semibold py-4 rounded-xl shadow-md hover:bg-[#1c355e]/90 flex items-center justify-center gap-2 transition-all">
-                <span>Iniciar Sesión</span>
-                <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+              <button type="submit" disabled={cargandoLogin} className={`w-full text-white text-sm font-semibold py-4 rounded-xl shadow-md flex items-center justify-center gap-2 transition-all ${cargandoLogin ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#1c355e] hover:bg-[#1c355e]/90'}`}>
+                <span>{cargandoLogin ? 'Iniciando sesión...' : 'Iniciar Sesión'}</span>
+                {!cargandoLogin && <span className="material-symbols-outlined text-[20px]">arrow_forward</span>}
               </button>
             </div>
 
@@ -176,6 +183,8 @@ export default function Login() {
       <footer className="mt-8 py-2 w-full max-w-md text-center">
         <p className="text-xs text-[#75777f] opacity-60">© 2026 Universidad Latino</p>
       </footer>
+
+      <ToastContainer />
 
       {/* ===== MODAL RECUPERAR CONTRASEÑA ===== */}
       {mostrarModal && (

@@ -45,15 +45,14 @@ export default function GestionAulas() {
     }
   };
 
-  // Carga inicial y refresco periódico
+  // Carga inicial y refresco periódico (solo fetchAulas aquí)
   useEffect(() => {
     fetchAulas();
-    fetchClasesHoy(ahora);
     const intervalo = setInterval(() => { fetchAulas(); fetchClasesHoy(new Date()); }, 30000);
     return () => clearInterval(intervalo);
   }, []);
 
-  // Resincroniza cuando el TimeContext cambia (cada 60 s)
+  // Resincroniza clases cuando el TimeContext cambia (cada 60 s) y en el montaje inicial
   useEffect(() => {
     fetchClasesHoy(ahora);
   }, [ahora]);
@@ -126,7 +125,7 @@ export default function GestionAulas() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.nombre || !formData.edificio || !formData.capacidad) {
+    if (!formData.nombre || !formData.edificio) {
       toast("Por favor llena los campos obligatorios", "advertencia");
       return;
     }
@@ -134,7 +133,7 @@ export default function GestionAulas() {
       const response = await fetch('/api/aulas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre: formData.nombre, edificio: formData.edificio, capacidad: parseInt(formData.capacidad), equipos: formData.equipos, estado: "Activo" })
+        body: JSON.stringify({ nombre: formData.nombre, edificio: formData.edificio, capacidad: 0, equipos: formData.equipos, estado: "Activo" })
       });
       if (response.ok) {
         setFormData({ nombre: '', edificio: '', capacidad: '', equipos: [] });
@@ -194,21 +193,14 @@ export default function GestionAulas() {
                 <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Nombre del Aula</label>
                 <input required value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm" placeholder="Ej. A101" type="text" />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta</label>
-                  <select required value={formData.edificio} onChange={e => setFormData({...formData, edificio: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm">
-                    <option value="">Seleccione</option>
-                    <option>Planta A</option>
-                    <option>Planta B</option>
-                    <option>Planta C</option>
-                    <option>Explanada</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Capacidad</label>
-                  <input required value={formData.capacidad} onChange={e => setFormData({...formData, capacidad: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm" placeholder="Ej. 40" type="number" />
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta</label>
+                <select required value={formData.edificio} onChange={e => setFormData({...formData, edificio: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm">
+                  <option value="">Seleccione</option>
+                  <option>Planta A</option>
+                  <option>Planta B</option>
+                  <option>Planta C</option>
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Equipamiento</label>

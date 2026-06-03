@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useToast } from '../components/useToast';
 
 export default function GestionHorarios() {
@@ -19,6 +19,7 @@ export default function GestionHorarios() {
   const [horarioAEditar, setHorarioAEditar] = useState(null);
   const [cargandoArchivos, setCargandoArchivos] = useState(false);
   const [vistaActual, setVistaActual] = useState('gestor'); // 'gestor' o 'cargar'
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
   useEffect(() => {
     fetch('/api/aulas')
@@ -89,7 +90,7 @@ export default function GestionHorarios() {
 
   const guardarHorarioEditado = async () => {
     if (!horarioAEditar) return;
-
+    setGuardandoEdicion(true);
     try {
       const response = await fetch(`/api/horarios/${horarioAEditar.id}`, {
         method: 'PUT',
@@ -105,15 +106,15 @@ export default function GestionHorarios() {
         toast("Horario actualizado exitosamente", "exito");
         setModalEditarAbierto(false);
         setHorarioAEditar(null);
-        if (archivoSeleccionado) {
-          verDetallesArchivo(archivoSeleccionado);
-        }
+        if (archivoSeleccionado) verDetallesArchivo(archivoSeleccionado);
       } else {
         toast("Error al actualizar el horario", "error");
       }
     } catch (err) {
       console.error("Error al guardar horario:", err);
       toast("Error en la comunicación con el servidor", "error");
+    } finally {
+      setGuardandoEdicion(false);
     }
   };
 
@@ -249,7 +250,7 @@ export default function GestionHorarios() {
         <div>
           <h1 className="text-3xl font-bold text-[#1b1c1e] tracking-tight">Gestión de Horarios</h1>
           <p className="text-base text-[#44464e] mt-1.5">
-            Administración professional de archivos maestros y asignación inteligente de espacios académicos.
+            Administración profesional de archivos maestros y asignación inteligente de espacios académicos.
           </p>
         </div>
         
@@ -278,12 +279,6 @@ export default function GestionHorarios() {
             
           </div>
           
-          <div className="flex gap-2 invisible pointer-events-none select-none" aria-hidden="true">
-            <button className="px-5 py-2 flex items-center gap-2 text-xs border">
-              <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
-              <span>Eliminar por Lote</span>
-            </button>
-          </div>
         </div>
       </div>
 
@@ -326,11 +321,11 @@ export default function GestionHorarios() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {archivosGuardados.map((archivo, idx) => (
-                <div 
+              {archivosGuardados.map((archivoGuardado, idx) => (
+                <div
                   key={idx}
                   className="bg-white border border-[#c5c6cf]/30 rounded-2xl p-5 hover:shadow-lg transition-all cursor-pointer group"
-                  onClick={() => verDetallesArchivo(archivo.archivo)}
+                  onClick={() => verDetallesArchivo(archivoGuardado.archivo)}
                 >
                   {/* Encabezado con icono */}
                   <div className="flex items-start justify-between mb-4">
@@ -345,7 +340,7 @@ export default function GestionHorarios() {
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
-                            verDetallesArchivo(archivo.archivo);
+                            verDetallesArchivo(archivoGuardado.archivo);
                           }}
                           className="w-full text-left px-4 py-2 text-sm text-[#1c355e] font-semibold hover:bg-[#f4f3f6] transition-all flex items-center gap-2"
                         >
@@ -355,7 +350,7 @@ export default function GestionHorarios() {
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
-                            eliminarArchivo(archivo.archivo);
+                            eliminarArchivo(archivoGuardado.archivo);
                           }}
                           className="w-full text-left px-4 py-2 text-sm text-red-600 font-semibold hover:bg-red-50 transition-all flex items-center gap-2 border-t border-[#c5c6cf]/30"
                         >
@@ -367,7 +362,7 @@ export default function GestionHorarios() {
                   </div>
 
                   {/* Nombre del archivo */}
-                  <h3 className="font-bold text-[#1b1c1e] truncate mb-2 text-sm">{archivo.archivo}</h3>
+                  <h3 className="font-bold text-[#1b1c1e] truncate mb-2 text-sm">{archivoGuardado.archivo}</h3>
 
                   {/* Información */}
                   <div className="space-y-2 text-xs text-[#44464e]">
@@ -376,14 +371,14 @@ export default function GestionHorarios() {
                         <span className="material-symbols-outlined text-[16px]">schedule</span>
                         Horarios
                       </span>
-                      <span className="font-bold text-[#1c355e]">{archivo.total_horarios}</span>
+                      <span className="font-bold text-[#1c355e]">{archivoGuardado.total_horarios}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-[16px]">domain</span>
                         Asignadas
                       </span>
-                      <span className="font-bold text-emerald-600">{archivo.aulas_asignadas}</span>
+                      <span className="font-bold text-emerald-600">{archivoGuardado.aulas_asignadas}</span>
                     </div>
                     <div className="flex justify-between pt-2 border-t border-[#c5c6cf]/30">
                       <span className="flex items-center gap-1.5">
@@ -391,7 +386,7 @@ export default function GestionHorarios() {
                         Cargado
                       </span>
                       <span className="font-mono text-xs">
-                        {new Date(archivo.fecha_carga).toLocaleDateString('es-MX')}
+                        {new Date(archivoGuardado.fecha_carga).toLocaleDateString('es-MX')}
                       </span>
                     </div>
                   </div>
@@ -401,13 +396,13 @@ export default function GestionHorarios() {
                     <div className="flex justify-between items-center mb-1.5">
                       <span className="text-xs font-semibold text-[#44464e]">Cobertura de aulas</span>
                       <span className="text-xs font-bold text-[#1c355e]">
-                        {Math.round((archivo.aulas_asignadas / archivo.total_horarios) * 100)}%
+                        {archivoGuardado.total_horarios > 0 ? Math.round((archivoGuardado.aulas_asignadas / archivoGuardado.total_horarios) * 100) : 0}%
                       </span>
                     </div>
                     <div className="w-full bg-[#f4f3f6] rounded-full h-2">
                       <div 
                         className="bg-emerald-500 h-2 rounded-full transition-all"
-                        style={{ width: `${(archivo.aulas_asignadas / archivo.total_horarios) * 100}%` }}
+                        style={{ width: `${archivoGuardado.total_horarios > 0 ? (archivoGuardado.aulas_asignadas / archivoGuardado.total_horarios) * 100 : 0}%` }}
                       ></div>
                     </div>
                   </div>
@@ -797,11 +792,12 @@ export default function GestionHorarios() {
               >
                 Cancelar
               </button>
-              <button 
+              <button
                 onClick={guardarHorarioEditado}
-                className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1c355e] text-white hover:bg-[#152a4a] transition-all"
+                disabled={guardandoEdicion}
+                className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1c355e] text-white hover:bg-[#152a4a] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Guardar Cambios
+                {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
               </button>
             </div>
           </div>

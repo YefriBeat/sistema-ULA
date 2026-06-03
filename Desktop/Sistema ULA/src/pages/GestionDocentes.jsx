@@ -52,34 +52,52 @@ export default function GestionDocentes() {
     const diaHoy    = ahora.getDay(); // 0=Dom,1=Lun,...,6=Sab — igual que dia_index del backend
     const minsAhora = ahora.getHours() * 60 + ahora.getMinutes();
 
+    // Mapa: suplente_nombre → info de la suplencia que está cubriendo ahora
+    const suplentesActivos = new Map();
+    docentes.forEach(doc => {
+      (doc.suplencias_hoy || []).forEach(s => {
+        if (minsAhora >= s.inicio_mins && minsAhora <= s.fin_mins) {
+          suplentesActivos.set(s.suplente_nombre, {
+            ...s,
+            docente_ausente: doc.nombre,
+          });
+        }
+      });
+    });
+
     return docentes.map(doc => {
-      // 1) Suplencia activa en este momento
+      // 1) Este docente está AUSENTE y tiene suplente cubriendo ahora
       const suplencia = (doc.suplencias_hoy || []).find(
         s => minsAhora >= s.inicio_mins && minsAhora <= s.fin_mins
       ) || null;
 
       if (suplencia) {
-        return { ...doc, estado: 'suplente_asignado', suplencia_activa: suplencia };
+        return { ...doc, estado: 'suplente_asignado', suplencia_activa: suplencia, cubriendo_suplencia: null };
       }
 
       // Filtrar solo los horarios del día de hoy
       const horarios_hoy = (doc.horarios_semana || []).filter(h => h.dia_index === diaHoy);
 
-      // 2) En clase ahora mismo
-      const enClase = horarios_hoy.some(
+      // 1b) Este docente está cubriendo la clase de otro ahora mismo
+      const cubriendo = suplentesActivos.get(doc.nombre) || null;
+
+      // 2) En clase ahora mismo (por horario propio o cubriendo suplencia)
+      const enClasePropio = horarios_hoy.some(
         h => minsAhora >= h.inicio_mins && minsAhora <= h.fin_mins
       );
-      if (enClase) return { ...doc, estado: 'en_clase', suplencia_activa: null, horarios_hoy };
+      if (enClasePropio || cubriendo) {
+        return { ...doc, estado: 'en_clase', suplencia_activa: null, cubriendo_suplencia: cubriendo, horarios_hoy };
+      }
 
       // 3) Por entrar (próxima clase en ≤ MINUTOS_AVISO minutos)
       const proxima = horarios_hoy.find(
         h => h.inicio_mins > minsAhora && h.inicio_mins - minsAhora <= MINUTOS_AVISO
       );
       if (proxima) {
-        return { ...doc, estado: 'por_entrar', suplencia_activa: null, proxima_clase: proxima, horarios_hoy };
+        return { ...doc, estado: 'por_entrar', suplencia_activa: null, cubriendo_suplencia: null, proxima_clase: proxima, horarios_hoy };
       }
 
-      return { ...doc, estado: 'disponible', suplencia_activa: null, horarios_hoy };
+      return { ...doc, estado: 'disponible', suplencia_activa: null, cubriendo_suplencia: null, horarios_hoy };
     });
   }, [docentes, ahora]);
 
@@ -540,6 +558,20 @@ export default function GestionDocentes() {
                     <span>
                       Entra en <span className="font-bold">{docente.proxima_clase.inicio_mins - minsAhora} min</span>
                       {docente.proxima_clase.asignatura ? ` · ${docente.proxima_clase.asignatura}` : ''}
+                    </span>
+                  </div>
+                )}
+
+                {/* ── Banner cubriendo suplencia ── */}
+                {docente.cubriendo_suplencia && (
+                  <div className="flex items-center gap-1.5 text-xs text-blue-700 font-semibold bg-blue-50 border border-blue-100 px-3 py-2 rounded-xl">
+                    <span className="material-symbols-outlined text-[14px] flex-shrink-0">swap_horiz</span>
+                    <span className="truncate">
+                      Cubriendo a <span className="font-bold">{docente.cubriendo_suplencia.docente_ausente}</span>
+                      {docente.cubriendo_suplencia.materia ? ` · ${docente.cubriendo_suplencia.materia}` : ''}
+                    </span>
+                    <span className="font-mono opacity-70 flex-shrink-0 ml-auto">
+                      {docente.cubriendo_suplencia.hora_inicio}–{docente.cubriendo_suplencia.hora_fin}
                     </span>
                   </div>
                 )}

@@ -6,8 +6,8 @@ export default defineConfig({
   server: {
     host: true,
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/upload-pdf': 'http://localhost:8000',
+      '/api':        { target: 'http://localhost:8000', changeOrigin: true },
+      '/upload-pdf': { target: 'http://localhost:8000', changeOrigin: true },
     }
   }
 })

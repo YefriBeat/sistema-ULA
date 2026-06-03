@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { TimeProvider } from './components/TimeContext';
+import { UserProvider } from './components/UserContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Registro from './pages/Registro';
@@ -18,6 +19,7 @@ function RutaProtegida({ children }) {
 export default function App() {
   return (
     <TimeProvider>
+    <UserProvider>
     <BrowserRouter>
       <Routes>
         {/* Rutas Públicas */}
@@ -38,6 +40,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
+    </UserProvider>
     </TimeProvider>
   );
 }
