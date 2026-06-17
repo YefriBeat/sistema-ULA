@@ -1,9 +1,9 @@
-/* Importación de Fuentes e Íconos */
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+/* ── Directivas Tailwind CSS (procesadas por PostCSS) ──────────────────────── */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-/* NOTA: Eliminamos las directivas @tailwind porque usas CDN en tu HTML */
-
+/* ── Estilos base globales ─────────────────────────────────────────────────── */
 @layer base {
   body {
     font-family: 'Manrope', sans-serif;
@@ -12,12 +12,12 @@
   }
 }
 
-/* Configuración global para los íconos de Google (Material Symbols) */
+/* ── Configuración global de iconos Material Symbols ───────────────────────── */
 .material-symbols-outlined {
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-/* Estilos personalizados para el Scrollbar (Barra de desplazamiento) */
+/* ── Scrollbar personalizado ───────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 8px;
 }

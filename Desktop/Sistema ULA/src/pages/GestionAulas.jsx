@@ -1,229 +1,672 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { useToast, ToastContainer } from '../components/useToast';
+import { useTime } from '../components/TimeContext';
 
 export default function GestionAulas() {
-  const [aulas, setAulas] = useState([]);
-  const [cargando, setCargando] = useState(true);
+  const { toast, toasts } = useToast();
+  const ahora = useTime();
+  const [confirmacion, setConfirmacion] = useState(null);
 
-  const [formData, setFormData] = useState({
-    nombre: '',
-    edificio: '',
-    capacidad: '',
-    equipos: []
-  });
+  const [aulas, setAulas] = useState([]);
+  // ocupacion por horario programado: { "A24": { matutino: true, vespertino: true } }
+  const [ocupacion, setOcupacion] = useState({});
+  // clases: clases que están en sesión AHORA MISMO
+  const [clases, setClases] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [filtro, setFiltro] = useState('todos');
+
+  // Estado para el modal de mantenimiento
+  const [modalMantAula, setModalMantAula] = useState(null);
+  const [formMant, setFormMant] = useState({ en_mantenimiento: false, fin_mantenimiento: '', aula_temporal: '' });
+  const [guardandoMant, setGuardandoMant] = useState(false);
+
+  // Estado para el modal de edición
+  const [aulaAEditar, setAulaAEditar] = useState(null);
+  const [formEditar, setFormEditar] = useState({ nombre: '', edificio: '', capacidad: '', equipos: [] });
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+
+  const [formData, setFormData] = useState({ nombre: '', edificio: '', capacidad: '', equipos: [] });
 
   const fetchAulas = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/aulas');
-      const data = await response.json();
-      setAulas(data);
-    } catch (error) {
-      console.error("Error al cargar aulas:", error);
-    } finally {
-      setCargando(false);
-    }
+      const r = await fetch('/api/aulas');
+      if (r.ok) setAulas(await r.json());
+    } catch (e) { console.error("Error al cargar aulas:", e); }
   };
 
+  const fetchOcupacion = async () => {
+    try {
+      const r = await fetch('/api/aulas/ocupacion');
+      if (r.ok) setOcupacion(await r.json());
+    } catch (e) { console.error("Error al cargar ocupación:", e); }
+    finally { setCargando(false); }
+  };
+
+  const fetchClasesAhora = async (t) => {
+    const ref = t || new Date();
+    const dia  = ref.getDay();
+    const mins = ref.getHours() * 60 + ref.getMinutes();
+    try {
+      const r = await fetch(`/api/clases-hoy?dia=${dia}&mins=${mins}`);
+      if (r.ok) setClases(await r.json());
+    } catch (e) { console.error("Error al cargar clases en tiempo real:", e); }
+  };
+
+  // Carga inicial + refresco cada 30 s
   useEffect(() => {
     fetchAulas();
+    fetchOcupacion();
+    fetchClasesAhora(new Date());
+    const intervalo = setInterval(() => {
+      fetchAulas();
+      fetchOcupacion();
+      fetchClasesAhora(new Date());
+    }, 30000);
+    return () => clearInterval(intervalo);
   }, []);
 
-  // --- NUEVA FUNCIÓN PARA ELIMINAR ---
-  const handleEliminar = async (id) => {
-    if (window.confirm("¿Estás seguro de que deseas eliminar esta aula? Esta acción no se puede deshacer.")) {
-      try {
-        const response = await fetch(`http://localhost:8000/api/aulas/${id}`, {
-          method: 'DELETE',
-        });
+  // Re-evalúa clases en tiempo real cuando el reloj del contexto avanza (cada 60 s)
+  useEffect(() => { fetchClasesAhora(ahora); }, [ahora]);
 
-        if (response.ok) {
-          // Opción A: Volver a pedir los datos a la API
-          fetchAulas(); 
-          // Opción B: Filtrar el estado local (más rápido visualmente)
-          // setAulas(aulas.filter(aula => aula.id !== id));
-          alert("Aula eliminada con éxito");
-        } else {
-          alert("Hubo un error al intentar eliminar el aula");
-        }
-      } catch (error) {
-        console.error("Error al eliminar:", error);
-      }
-    }
+  /** Clase activa en este momento para un aula específica (puede ser null). */
+  const obtenerClaseEnCurso = (nombreAula) =>
+    clases.find(c => c.aula_asignada === nombreAula) || null;
+
+  /**
+   * Estado de ocupación basado en horarios programados (semana completa).
+   * 'disponible' | 'matutino' | 'vespertino' | 'bloqueada'
+   */
+  const obtenerEstadoAula = (nombreAula) => {
+    const datos = ocupacion[nombreAula];
+    if (!datos) return 'disponible';
+    if (datos.matutino && datos.vespertino) return 'bloqueada';
+    if (datos.matutino)   return 'matutino';
+    if (datos.vespertino) return 'vespertino';
+    return 'disponible';
   };
 
-  const handleCheckboxChange = (equipo) => {
-    setFormData(prev => {
-      if (prev.equipos.includes(equipo)) {
-        return { ...prev, equipos: prev.equipos.filter(e => e !== equipo) };
-      } else {
-        return { ...prev, equipos: [...prev.equipos, equipo] };
+  // Mantenimiento vigente = flag true Y fecha futura
+  const estaEnMantenimiento = (aula) => {
+    if (!aula.en_mantenimiento) return false;
+    if (!aula.fin_mantenimiento) return aula.en_mantenimiento;
+    return new Date(aula.fin_mantenimiento) > new Date();
+  };
+
+  const handleEliminar = (id) => {
+    setConfirmacion({
+      mensaje: "¿Estás seguro de que deseas eliminar esta aula?",
+      onConfirmar: async () => {
+        try {
+          const response = await fetch(`/api/aulas/${id}`, { method: 'DELETE' });
+          if (response.ok) { fetchAulas(); toast("Aula eliminada con éxito", "exito"); }
+          else toast("Error al eliminar el aula", "error");
+        } catch { toast("Error de conexión con el servidor", "error"); }
       }
     });
   };
 
-  const handleSubmit = async (e) => {
+  const abrirModalEditar = (aula) => {
+    setAulaAEditar(aula);
+    setFormEditar({
+      nombre: aula.nombre,
+      edificio: aula.edificio || '',
+      capacidad: aula.capacidad || '',
+      equipos: Array.isArray(aula.equipos) ? [...aula.equipos] : [],
+    });
+  };
+
+  const handleCheckboxEditarChange = (equipo) => {
+    setFormEditar(prev => ({
+      ...prev,
+      equipos: prev.equipos.includes(equipo)
+        ? prev.equipos.filter(e => e !== equipo)
+        : [...prev.equipos, equipo],
+    }));
+  };
+
+  const handleGuardarEdicion = async (e) => {
     e.preventDefault();
-    if (!formData.nombre || !formData.edificio || !formData.capacidad) {
-      alert("Por favor llena los campos obligatorios");
+    if (!formEditar.nombre.trim()) {
+      toast("El nombre del aula es obligatorio", "advertencia");
       return;
     }
-
+    setGuardandoEdicion(true);
     try {
-      const response = await fetch('http://localhost:8000/api/aulas', {
-        method: 'POST',
+      const response = await fetch(`/api/aulas/${aulaAEditar.id}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify({
-  nombre: formData.nombre,
-  edificio: formData.edificio,
-  capacidad: parseInt(formData.capacidad),
-  equipos: formData.equipos,
-  estado: "Activo" // 🔥 IMPORTANTE
-        })
+        body: JSON.stringify({
+          nombre: formEditar.nombre.trim(),
+          edificio: formEditar.edificio,
+          capacidad: Number(formEditar.capacidad) || 0,
+          equipos: formEditar.equipos,
+          estado: aulaAEditar.estado || 'Activo',
+        }),
       });
-
       if (response.ok) {
-        setFormData({ nombre: '', edificio: '', capacidad: '', equipos: [] });
+        setAulaAEditar(null);
         fetchAulas();
-        alert("Aula registrada con éxito");
+        toast("Aula actualizada con éxito", "exito");
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast(err.detail || "Error al actualizar el aula", "error");
       }
-    } catch (error) {
-      console.error("Error al guardar el aula", error);
+    } catch {
+      toast("Error de conexión con el servidor", "error");
+    } finally {
+      setGuardandoEdicion(false);
     }
   };
 
-  const totalAulas = aulas.length;
-  const espaciosHabilitados = aulas.filter(aula => aula.estado === 'Activo').length;
-  const capacidadInstalada = aulas.reduce((total, aula) => total + (Number(aula.capacidad) || 0), 0);
+  const abrirModalMant = (aula) => {
+    setModalMantAula(aula);
+    setFormMant({
+      en_mantenimiento: aula.en_mantenimiento || false,
+      fin_mantenimiento: aula.fin_mantenimiento ? aula.fin_mantenimiento.slice(0, 16) : '',
+      aula_temporal: aula.aula_temporal || ''
+    });
+  };
+
+  const handleGuardarMant = async () => {
+    if (!modalMantAula) return;
+    setGuardandoMant(true);
+    try {
+      const response = await fetch(`/api/aulas/${modalMantAula.id}/mantenimiento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formMant)
+      });
+      if (response.ok) {
+        setModalMantAula(null);
+        fetchAulas();
+        toast("Estado de mantenimiento actualizado", "exito");
+      } else {
+        const err = await response.json();
+        toast(err.detail || "Error al guardar mantenimiento", "error");
+      }
+    } catch (error) {
+      console.error("Error al guardar mantenimiento:", error);
+      toast("Error de conexión con el servidor", "error");
+    } finally {
+      setGuardandoMant(false);
+    }
+  };
+
+  const handleCheckboxChange = (equipo) => {
+    setFormData(prev => ({
+      ...prev,
+      equipos: prev.equipos.includes(equipo)
+        ? prev.equipos.filter(e => e !== equipo)
+        : [...prev.equipos, equipo]
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!formData.nombre) {
+      toast("El nombre del aula es obligatorio", "advertencia");
+      return;
+    }
+    try {
+      const response = await fetch('/api/aulas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre: formData.nombre, edificio: formData.edificio, capacidad: 0, equipos: formData.equipos, estado: "Activo" })
+      });
+      if (response.ok) {
+        setFormData({ nombre: '', edificio: '', capacidad: '', equipos: [] });
+        setMostrarFormulario(false);
+        fetchAulas();
+        toast("Aula registrada con éxito", "exito");
+      }
+    } catch (error) {
+      console.error("Error al guardar el aula", error);
+      toast("Error al registrar el aula", "error");
+    }
+  };
+
+  const aulasFiltradas = aulas.filter(aula => {
+    if (filtro === 'mantenimiento') return estaEnMantenimiento(aula);
+    const estado = obtenerEstadoAula(aula.nombre);
+    if (filtro === 'disponible')  return !estaEnMantenimiento(aula) && estado === 'disponible';
+    if (filtro === 'matutino')    return !estaEnMantenimiento(aula) && estado === 'matutino';
+    if (filtro === 'vespertino')  return !estaEnMantenimiento(aula) && estado === 'vespertino';
+    if (filtro === 'bloqueada')   return !estaEnMantenimiento(aula) && estado === 'bloqueada';
+    return true;
+  }).sort((a, b) => {
+    // En "Todos": aulas con clase activa ahora van primero
+    const aActiva = !!obtenerClaseEnCurso(a.nombre);
+    const bActiva = !!obtenerClaseEnCurso(b.nombre);
+    if (aActiva && !bActiva) return -1;
+    if (!aActiva && bActiva) return 1;
+    return a.nombre.localeCompare(b.nombre);
+  });
+
+  const totalAulas         = aulas.length;
+  const capacidadInstalada = aulas.reduce((t, a) => t + (Number(a.capacidad) || 0), 0);
+  const aulasEnClaseAhora  = aulas.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
+  const aulasDisponibles   = aulas.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
+  const aulasEnMant        = aulas.filter(a => estaEnMantenimiento(a)).length;
+
+  // Nombres de aulas disponibles para el dropdown de aula temporal
+  const nombresAulas = aulas.map(a => a.nombre).filter(n => n !== modalMantAula?.nombre);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 font-manrope p-4">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-[#1c355e] tracking-tight">Registro Global de Aulas</h1>
-          <p className="text-base text-[#44464e] mt-1.5">Consulte y gestione todos los espacios.</p>
+          <p className="text-base text-[#44464e] mt-1.5">Consulte y gestione todos los espacios en tiempo real.</p>
+        </div>
+        <button
+          onClick={() => setMostrarFormulario(!mostrarFormulario)}
+          className="bg-[#1c355e] text-white px-6 py-3 rounded-xl font-bold hover:bg-[#152a4a] transition-all flex items-center gap-2 w-fit"
+        >
+          <span className="material-symbols-outlined">add_circle</span> Nueva Aula
+        </button>
+      </div>
+
+      {/* RESUMEN ESTADÍSTICO */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Total */}
+        <div className="bg-[#1c355e] text-white p-5 rounded-2xl shadow-lg flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined text-[22px]">meeting_room</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">Total de Aulas</p>
+            <p className="text-3xl font-extrabold leading-tight">{totalAulas}</p>
+          </div>
+        </div>
+        {/* En Clase Ahora — tiempo real con prioridad */}
+        <div className={`p-5 rounded-2xl shadow-sm flex items-center gap-4 border transition-all ${aulasEnClaseAhora > 0 ? 'bg-blue-50 border-blue-200' : 'bg-white border-[#c5c6cf]/30'}`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${aulasEnClaseAhora > 0 ? 'bg-blue-100' : 'bg-[#f4f3f6]'}`}>
+            <span className={`material-symbols-outlined text-[22px] ${aulasEnClaseAhora > 0 ? 'text-blue-600' : 'text-[#c5c6cf]'}`}>play_circle</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">En Clase Ahora</p>
+            <div className="flex items-center gap-2">
+              <p className={`text-3xl font-extrabold leading-tight ${aulasEnClaseAhora > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>{aulasEnClaseAhora}</p>
+              {aulasEnClaseAhora > 0 && <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping" />}
+            </div>
+            <p className="text-[9px] text-[#75777f] font-semibold mt-0.5">{aulasDisponibles} disponibles</p>
+          </div>
+        </div>
+        {/* Mantenimiento */}
+        <div className="bg-white border border-orange-200 p-5 rounded-2xl shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined text-[22px] text-orange-500">construction</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">En Mantenimiento</p>
+            <p className="text-3xl font-extrabold text-orange-500 leading-tight">{aulasEnMant}</p>
+          </div>
+        </div>
+        {/* Capacidad */}
+        <div className="bg-white border border-[#c5c6cf]/30 p-5 rounded-2xl shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-[#1c355e]/8 flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined text-[22px] text-[#1c355e]">group</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">Capacidad Total</p>
+            <p className="text-3xl font-extrabold text-[#1c355e] leading-tight">{capacidadInstalada}</p>
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8">
-        {/* FORMULARIO */}
-        <aside className="w-full lg:w-[40%] space-y-6">
-          <div className="bg-white border border-[#c5c6cf]/30 rounded-2xl p-6 shadow-sm">
-            <h3 className="text-lg font-bold text-[#1c355e] mb-6 flex items-center gap-2">
-              <span className="material-symbols-outlined">add_circle</span>
-              Nueva Aula / Espacio
-            </h3>
+      {/* MODAL NUEVA AULA */}
+      {mostrarFormulario && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-[#1c355e]">Nueva Aula / Espacio</h3>
+              <button onClick={() => setMostrarFormulario(false)} className="text-[#44464e] hover:text-[#1c355e]">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
             <form className="space-y-5" onSubmit={handleSubmit}>
               <div>
                 <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Nombre del Aula</label>
-                <input 
-                  required 
-                  value={formData.nombre} 
-                  onChange={e => setFormData({...formData, nombre: e.target.value})} 
-                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm" placeholder="Ej. A101" type="text"/>
+                <input required value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm" placeholder="Ej. A101" type="text" />
               </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Edificio</label>
-                  <select required value={formData.edificio} onChange={e => setFormData({...formData, edificio: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm">
-                    <option value="">Seleccione</option>
-                    <option>Edificio A</option>
-                    <option>Edificio B</option>
-                    <option>Edificio C</option>
-                    <option>Explanada</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Capacidad</label>
-                  <input required value={formData.capacidad} onChange={e => setFormData({...formData, capacidad: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm" placeholder="Ej. 40" type="number"/>
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
+                <select value={formData.edificio} onChange={e => setFormData({...formData, edificio: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm">
+                  <option value="">Sin planta asignada</option>
+                  <option>Planta A</option>
+                  <option>Planta B</option>
+                  <option>Planta C</option>
+                </select>
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Equipamiento</label>
-                <div className="grid grid-cols-2 gap-3 mt-1">
+                <div className="grid grid-cols-2 gap-3">
                   {['Proyector', 'Aire Acond.', 'PCs', 'Smart Board'].map((item) => (
                     <label key={item} className="flex items-center gap-3 p-3 border border-[#c5c6cf]/30 rounded-xl cursor-pointer hover:bg-[#f4f3f6]">
-                      <input 
-                        type="checkbox" 
-                        checked={formData.equipos.includes(item)}
-                        onChange={() => handleCheckboxChange(item)}
-                        className="rounded text-[#1c355e] focus:ring-[#1c355e]"/>
+                      <input type="checkbox" checked={formData.equipos.includes(item)} onChange={() => handleCheckboxChange(item)} className="rounded text-[#1c355e]" />
                       <span className="text-sm font-medium">{item}</span>
                     </label>
                   ))}
                 </div>
               </div>
-
-              <button type="submit" className="w-full bg-[#1c355e] text-white py-3 rounded-xl font-bold hover:bg-[#152a4a] transition-all shadow-md active:scale-[0.98] mt-4 flex items-center justify-center gap-2">
-                <span className="material-symbols-outlined text-[20px]">save</span> Registrar Espacio
-              </button>
+              <button type="submit" className="w-full bg-[#1c355e] text-white py-3 rounded-xl font-bold hover:bg-[#152a4a] transition-all">Registrar Espacio</button>
             </form>
           </div>
-        </aside>
+        </div>
+      )}
 
-        {/* LISTA DE AULAS */}
-        <main className="flex-1">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {cargando ? (
-              <p className="col-span-full text-center">Cargando datos...</p>
-            ) : aulas.length === 0 ? (
-              <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30">Sin Aulas Registradas</div>
-            ) : (
-              aulas.map((aula) => (
-                <div key={aula.id} className="bg-white border border-[#c5c6cf]/30 rounded-2xl p-6 shadow-sm group hover:border-[#1c355e]/30 transition-colors">
-                  <div className="flex justify-between items-start mb-4">
-                    <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
-                    <div className="flex flex-col items-end gap-2">
-                        <span className="bg-[#1c9c72]/10 text-[#1c9c72] px-3 py-1 rounded-full text-[10px] font-bold uppercase">Activo</span>
-                        {/* BOTÓN ELIMINAR */}
-                        <button 
-                          onClick={() => handleEliminar(aula.id)}
-                          className="p-1.5 text-[#44464e] hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Eliminar aula"
-                        >
-                          <span className="material-symbols-outlined text-[20px]">delete</span>
-                        </button>
-                    </div>
+      {/* MODAL EDITAR AULA */}
+      {aulaAEditar && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-[#1c355e]">Editar Aula</h3>
+              <button onClick={() => setAulaAEditar(null)} className="text-[#44464e] hover:text-[#1c355e]">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <form className="space-y-5" onSubmit={handleGuardarEdicion}>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Nombre del Aula</label>
+                <input
+                  required
+                  type="text"
+                  value={formEditar.nombre}
+                  onChange={e => setFormEditar({ ...formEditar, nombre: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                  placeholder="Ej. A101"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
+                <select
+                  value={formEditar.edificio}
+                  onChange={e => setFormEditar({ ...formEditar, edificio: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                >
+                  <option value="">Sin planta asignada</option>
+                  <option>Planta A</option>
+                  <option>Planta B</option>
+                  <option>Planta C</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Capacidad</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={formEditar.capacidad}
+                  onChange={e => setFormEditar({ ...formEditar, capacidad: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                  placeholder="Ej. 30"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Equipamiento</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {['Proyector', 'Aire Acond.', 'PCs', 'Smart Board'].map((item) => (
+                    <label key={item} className="flex items-center gap-3 p-3 border border-[#c5c6cf]/30 rounded-xl cursor-pointer hover:bg-[#f4f3f6]">
+                      <input
+                        type="checkbox"
+                        checked={formEditar.equipos.includes(item)}
+                        onChange={() => handleCheckboxEditarChange(item)}
+                        className="rounded text-[#1c355e]"
+                      />
+                      <span className="text-sm font-medium">{item}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setAulaAEditar(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoEdicion}
+                  className="flex-1 py-2.5 rounded-xl bg-[#1c355e] text-white text-sm font-bold hover:bg-[#152a4a] transition-all disabled:opacity-50"
+                >
+                  {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL MANTENIMIENTO */}
+      {modalMantAula && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-lg font-bold text-[#1c355e]">Modo Mantenimiento</h3>
+                <p className="text-sm text-[#75777f] mt-0.5">Aula: <span className="font-bold text-[#44464e]">{modalMantAula.nombre}</span></p>
+              </div>
+              <button onClick={() => setModalMantAula(null)} className="text-[#44464e] hover:text-[#1c355e]">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              {/* Toggle mantenimiento */}
+              <label className="flex items-center justify-between p-4 bg-orange-50 border border-orange-200 rounded-xl cursor-pointer">
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-orange-500">construction</span>
+                  <div>
+                    <p className="text-sm font-bold text-[#1b1c1e]">Activar Mantenimiento</p>
+                    <p className="text-xs text-[#75777f]">Las clases se redirigirán al aula temporal</p>
                   </div>
-                  <div className="space-y-3 mb-2">
-                    <div>
-                      <p className="text-[10px] text-[#44464e] font-bold uppercase">Edificio</p>
-                      <p className="text-sm font-medium">{aula.edificio}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium">Capacidad: <span className="text-[#1c355e] font-bold">{aula.capacidad}</span></p>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {aula.equipos?.map((equipo, index) => (
-                        <div key={index} className="flex items-center gap-1.5 px-2 py-1 bg-[#f4f3f6] rounded-lg text-[11px] font-medium text-[#44464e]">
-                           {equipo}
-                        </div>
-                      ))}
+                </div>
+                <input
+                  type="checkbox"
+                  checked={formMant.en_mantenimiento}
+                  onChange={e => setFormMant(prev => ({ ...prev, en_mantenimiento: e.target.checked }))}
+                  className="w-5 h-5 rounded accent-orange-500 cursor-pointer"
+                />
+              </label>
+
+              {formMant.en_mantenimiento && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Fecha y Hora de Fin</label>
+                    <input
+                      type="datetime-local"
+                      value={formMant.fin_mantenimiento}
+                      onChange={e => setFormMant(prev => ({ ...prev, fin_mantenimiento: e.target.value }))}
+                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Aula Temporal / Alterna</label>
+                    <select
+                      value={formMant.aula_temporal}
+                      onChange={e => setFormMant(prev => ({ ...prev, aula_temporal: e.target.value }))}
+                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                    >
+                      <option value="">Sin aula alterna</option>
+                      {nombresAulas.map(nombre => <option key={nombre} value={nombre}>{nombre}</option>)}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setModalMantAula(null)} className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all">
+                  Cancelar
+                </button>
+                <button onClick={handleGuardarMant} disabled={guardandoMant} className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition-all disabled:opacity-50">
+                  {guardandoMant ? 'Guardando...' : 'Guardar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FILTROS */}
+      <div className="flex gap-3 flex-wrap">
+        {[
+          { id: 'todos',         label: 'Todos'         },
+          { id: 'disponible',    label: 'Disponibles'   },
+          { id: 'matutino',      label: 'Matutino'      },
+          { id: 'vespertino',    label: 'Vespertino'    },
+          { id: 'bloqueada',     label: 'Bloqueadas'    },
+          { id: 'mantenimiento', label: 'Mantenimiento' },
+        ].map(btn => (
+          <button
+            key={btn.id}
+            onClick={() => setFiltro(btn.id)}
+            className={`px-6 py-2.5 rounded-xl font-bold transition-all ${
+              filtro === btn.id
+                ? 'bg-[#1c355e] text-white'
+                : 'bg-white border border-[#c5c6cf]/30 text-[#44464e] hover:border-[#1c355e]/50'
+            }`}
+          >
+            {btn.label}
+          </button>
+        ))}
+      </div>
+
+      {/* LISTA DE AULAS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {cargando ? (
+          <p className="col-span-full text-center">Cargando datos...</p>
+        ) : aulasFiltradas.length === 0 ? (
+          <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30">Sin Aulas en esta categoría</div>
+        ) : (
+          aulasFiltradas.map((aula) => {
+            const enMant        = estaEnMantenimiento(aula);
+            const claseActiva   = !enMant ? obtenerClaseEnCurso(aula.nombre) : null;
+            const estadoHorario = enMant ? 'mantenimiento' : obtenerEstadoAula(aula.nombre);
+
+            // Prioridad visual: mantenimiento > en_clase > estado por horario
+            const BADGE = {
+              mantenimiento: { cls: 'bg-orange-100 text-orange-600',  icon: 'construction', label: 'Mantenimiento' },
+              en_clase:      { cls: 'bg-blue-100 text-blue-700',      icon: 'play_circle',  label: 'En Clase'      },
+              disponible:    { cls: 'bg-[#1c9c72]/10 text-[#1c9c72]', icon: 'check_circle', label: 'Disponible'    },
+              matutino:      { cls: 'bg-amber-100 text-amber-700',    icon: 'wb_sunny',     label: 'Mat. Ocupada'  },
+              vespertino:    { cls: 'bg-orange-100 text-orange-700',  icon: 'nights_stay',  label: 'Vesp. Ocupada' },
+              bloqueada:     { cls: 'bg-red-100 text-red-600',        icon: 'block',        label: 'Bloqueada'     },
+            };
+            const badgeKey = enMant ? 'mantenimiento' : claseActiva ? 'en_clase' : estadoHorario;
+            const badge    = BADGE[badgeKey] || BADGE.disponible;
+
+            const borderClass = enMant        ? 'border-orange-200'
+                              : claseActiva   ? 'border-blue-300'
+                              : estadoHorario === 'bloqueada' ? 'border-red-200'
+                              : 'border-[#c5c6cf]/30';
+
+            return (
+              <div key={aula.id} className={`bg-white border rounded-2xl p-6 shadow-sm transition-all ${borderClass}`}>
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
+                    {claseActiva && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping flex-shrink-0" />}
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    {/* Badge con prioridad: tiempo real > horario programado */}
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${badge.cls}`}>
+                      <span className="material-symbols-outlined text-[12px]">{badge.icon}</span>
+                      {badge.label}
+                    </span>
+                    {/* Botones de acción */}
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => abrirModalEditar(aula)}
+                        title="Editar aula"
+                        className="p-1.5 text-[#44464e] hover:text-[#1c355e] hover:bg-[#1c355e]/10 rounded-lg transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[20px]">edit</span>
+                      </button>
+                      <button
+                        onClick={() => abrirModalMant(aula)}
+                        title="Modo mantenimiento"
+                        className={`p-1.5 rounded-lg transition-colors ${enMant ? 'text-orange-500 bg-orange-50 hover:bg-orange-100' : 'text-[#44464e] hover:text-orange-500 hover:bg-orange-50'}`}
+                      >
+                        <span className="material-symbols-outlined text-[20px]">construction</span>
+                      </button>
+                      <button onClick={() => handleEliminar(aula.id)} className="p-1.5 text-[#44464e] hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <span className="material-symbols-outlined text-[20px]">delete</span>
+                      </button>
                     </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </main>
+
+                <div className="space-y-3">
+                  {/* Panel docente en tiempo real — solo visible cuando hay clase activa */}
+                  {claseActiva && (
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 space-y-1">
+                      <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        Docente en clase ahora
+                      </p>
+                      <p className="text-sm font-black text-[#1b1c1e] leading-tight">{claseActiva.docente}</p>
+                      <p className="text-[10px] text-[#75777f] font-semibold">{claseActiva.asignatura}</p>
+                      <p className="text-[10px] font-mono font-bold text-blue-600">
+                        {(claseActiva.horario || '').split(' ').slice(1).join(' ')}
+                      </p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[10px] text-[#44464e] font-bold uppercase">Edificio</p>
+                    <p className="text-sm font-medium">{aula.edificio || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Capacidad: <span className="text-[#1c355e] font-bold">{aula.capacidad || '—'}</span></p>
+                  </div>
+                  {enMant && aula.aula_temporal && (
+                    <div className="flex items-center gap-1.5 text-xs text-orange-600 font-semibold bg-orange-50 px-3 py-1.5 rounded-lg">
+                      <span className="material-symbols-outlined text-[14px]">swap_horiz</span>
+                      Clases redirigidas a: <span className="font-bold">{aula.aula_temporal}</span>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {aula.equipos?.map((equipo, index) => (
+                      <div key={index} className="px-2 py-1 bg-[#f4f3f6] rounded-lg text-[11px] font-medium text-[#44464e]">{equipo}</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
-      {/* TARJETAS INFERIORES */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-         <div className="bg-[#1c355e] text-white p-6 rounded-2xl shadow-lg">
-            <p className="text-xs font-bold uppercase opacity-80">Total de Aulas</p>
-            <p className="text-3xl font-extrabold">{totalAulas}</p>
-         </div>
-         <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm">
-            <p className="text-xs font-bold uppercase text-[#44464e]">Espacios Habilitados</p>
-            <p className="text-3xl font-extrabold text-[#1c355e]">{espaciosHabilitados}</p>
-         </div>
-         <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm">
-            <p className="text-xs font-bold uppercase text-[#44464e]">Capacidad Instalada</p>
-            <p className="text-3xl font-extrabold text-[#1c355e]">{capacidadInstalada}</p>
-         </div>
-      </div>
+      {/* MODAL DE CONFIRMACIÓN */}
+      {confirmacion && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100]">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-sm shadow-lg">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="material-symbols-outlined text-red-500 text-[28px]">warning</span>
+              <h3 className="text-base font-bold text-[#1b1c1e]">Confirmar acción</h3>
+            </div>
+            <p className="text-sm text-[#44464e] mb-6">{confirmacion.mensaje}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmacion(null)}
+                className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { confirmacion.onConfirmar(); setConfirmacion(null); }}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition-all"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }
