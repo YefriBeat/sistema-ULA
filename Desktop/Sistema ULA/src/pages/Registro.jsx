@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import logo from '../components/logo.png';
-import { useToast } from '../components/useToast';
+import { useToast, ToastContainer } from '../components/useToast';
 
 export default function Registro() {
   const navigate = useNavigate();
-  const { toast, ToastContainer } = useToast();
+  const { toast, toasts } = useToast();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -140,7 +140,7 @@ export default function Registro() {
         <p className="text-[12px] text-[#75777f] uppercase tracking-widest font-medium">© 2026 Universidad Latino - Gestión Institucional</p>
       </footer>
 
-      <ToastContainer />
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

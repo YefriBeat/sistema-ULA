@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useToast } from '../components/useToast';
+import { useToast, ToastContainer } from '../components/useToast';
 import { useTime } from '../components/TimeContext';
 
 const MINUTOS_AVISO = 30; // mostrar "Por entrar" si faltan ≤ 30 min
@@ -7,7 +7,7 @@ const DIAS_NOMBRES = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes'
 const minsToHora = m => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
 
 export default function GestionDocentes() {
-  const { toast, ToastContainer } = useToast();
+  const { toast, toasts } = useToast();
   const [confirmacion, setConfirmacion] = useState(null);
   const [docentes, setDocentes] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -672,7 +672,7 @@ export default function GestionDocentes() {
         </div>
       </div>
 
-      <ToastContainer />
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

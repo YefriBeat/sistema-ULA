@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import logo from '../components/logo.png';
-import { useToast } from '../components/useToast';
+import { useToast, ToastContainer } from '../components/useToast';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { toast, ToastContainer } = useToast();
+  const { toast, toasts } = useToast();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -184,7 +184,7 @@ export default function Login() {
         <p className="text-xs text-[#75777f] opacity-60">© 2026 Universidad Latino</p>
       </footer>
 
-      <ToastContainer />
+      <ToastContainer toasts={toasts} />
 
       {/* ===== MODAL RECUPERAR CONTRASEÑA ===== */}
       {mostrarModal && (

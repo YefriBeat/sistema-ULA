@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
-import { useToast } from '../components/useToast';
+import { useToast, ToastContainer } from '../components/useToast';
 import { useTime } from '../components/TimeContext';
 
 export default function GestionAulas() {
-  const { toast, ToastContainer } = useToast();
+  const { toast, toasts } = useToast();
   const ahora = useTime();
   const [confirmacion, setConfirmacion] = useState(null);
 
   const [aulas, setAulas] = useState([]);
+  // ocupacion por horario programado: { "A24": { matutino: true, vespertino: true } }
+  const [ocupacion, setOcupacion] = useState({});
+  // clases: clases que están en sesión AHORA MISMO
   const [clases, setClases] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
@@ -18,47 +21,70 @@ export default function GestionAulas() {
   const [formMant, setFormMant] = useState({ en_mantenimiento: false, fin_mantenimiento: '', aula_temporal: '' });
   const [guardandoMant, setGuardandoMant] = useState(false);
 
+  // Estado para el modal de edición
+  const [aulaAEditar, setAulaAEditar] = useState(null);
+  const [formEditar, setFormEditar] = useState({ nombre: '', edificio: '', capacidad: '', equipos: [] });
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+
   const [formData, setFormData] = useState({ nombre: '', edificio: '', capacidad: '', equipos: [] });
 
   const fetchAulas = async () => {
     try {
-      const response = await fetch('/api/aulas');
-      const data = await response.json();
-      setAulas(data);
-    } catch (error) {
-      console.error("Error al cargar aulas:", error);
-    }
+      const r = await fetch('/api/aulas');
+      if (r.ok) setAulas(await r.json());
+    } catch (e) { console.error("Error al cargar aulas:", e); }
   };
 
-  const fetchClasesHoy = async (t) => {
+  const fetchOcupacion = async () => {
+    try {
+      const r = await fetch('/api/aulas/ocupacion');
+      if (r.ok) setOcupacion(await r.json());
+    } catch (e) { console.error("Error al cargar ocupación:", e); }
+    finally { setCargando(false); }
+  };
+
+  const fetchClasesAhora = async (t) => {
     const ref = t || new Date();
     const dia  = ref.getDay();
     const mins = ref.getHours() * 60 + ref.getMinutes();
     try {
-      const response = await fetch(`/api/clases-hoy?dia=${dia}&mins=${mins}`);
-      const data = await response.json();
-      setClases(data);
-    } catch (error) {
-      console.error("Error al cargar clases:", error);
-    } finally {
-      setCargando(false);
-    }
+      const r = await fetch(`/api/clases-hoy?dia=${dia}&mins=${mins}`);
+      if (r.ok) setClases(await r.json());
+    } catch (e) { console.error("Error al cargar clases en tiempo real:", e); }
   };
 
-  // Carga inicial y refresco periódico (solo fetchAulas aquí)
+  // Carga inicial + refresco cada 30 s
   useEffect(() => {
     fetchAulas();
-    const intervalo = setInterval(() => { fetchAulas(); fetchClasesHoy(new Date()); }, 30000);
+    fetchOcupacion();
+    fetchClasesAhora(new Date());
+    const intervalo = setInterval(() => {
+      fetchAulas();
+      fetchOcupacion();
+      fetchClasesAhora(new Date());
+    }, 30000);
     return () => clearInterval(intervalo);
   }, []);
 
-  // Resincroniza clases cuando el TimeContext cambia (cada 60 s) y en el montaje inicial
-  useEffect(() => {
-    fetchClasesHoy(ahora);
-  }, [ahora]);
+  // Re-evalúa clases en tiempo real cuando el reloj del contexto avanza (cada 60 s)
+  useEffect(() => { fetchClasesAhora(ahora); }, [ahora]);
 
-  // Compara por nombre de aula (el backend ya aplica reasignación de mantenimiento)
-  const esAulaOcupada = (nombreAula) => clases.some(c => c.aula_asignada === nombreAula);
+  /** Clase activa en este momento para un aula específica (puede ser null). */
+  const obtenerClaseEnCurso = (nombreAula) =>
+    clases.find(c => c.aula_asignada === nombreAula) || null;
+
+  /**
+   * Estado de ocupación basado en horarios programados (semana completa).
+   * 'disponible' | 'matutino' | 'vespertino' | 'bloqueada'
+   */
+  const obtenerEstadoAula = (nombreAula) => {
+    const datos = ocupacion[nombreAula];
+    if (!datos) return 'disponible';
+    if (datos.matutino && datos.vespertino) return 'bloqueada';
+    if (datos.matutino)   return 'matutino';
+    if (datos.vespertino) return 'vespertino';
+    return 'disponible';
+  };
 
   // Mantenimiento vigente = flag true Y fecha futura
   const estaEnMantenimiento = (aula) => {
@@ -78,6 +104,59 @@ export default function GestionAulas() {
         } catch { toast("Error de conexión con el servidor", "error"); }
       }
     });
+  };
+
+  const abrirModalEditar = (aula) => {
+    setAulaAEditar(aula);
+    setFormEditar({
+      nombre: aula.nombre,
+      edificio: aula.edificio || '',
+      capacidad: aula.capacidad || '',
+      equipos: Array.isArray(aula.equipos) ? [...aula.equipos] : [],
+    });
+  };
+
+  const handleCheckboxEditarChange = (equipo) => {
+    setFormEditar(prev => ({
+      ...prev,
+      equipos: prev.equipos.includes(equipo)
+        ? prev.equipos.filter(e => e !== equipo)
+        : [...prev.equipos, equipo],
+    }));
+  };
+
+  const handleGuardarEdicion = async (e) => {
+    e.preventDefault();
+    if (!formEditar.nombre.trim()) {
+      toast("El nombre del aula es obligatorio", "advertencia");
+      return;
+    }
+    setGuardandoEdicion(true);
+    try {
+      const response = await fetch(`/api/aulas/${aulaAEditar.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre: formEditar.nombre.trim(),
+          edificio: formEditar.edificio,
+          capacidad: Number(formEditar.capacidad) || 0,
+          equipos: formEditar.equipos,
+          estado: aulaAEditar.estado || 'Activo',
+        }),
+      });
+      if (response.ok) {
+        setAulaAEditar(null);
+        fetchAulas();
+        toast("Aula actualizada con éxito", "exito");
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast(err.detail || "Error al actualizar el aula", "error");
+      }
+    } catch {
+      toast("Error de conexión con el servidor", "error");
+    } finally {
+      setGuardandoEdicion(false);
+    }
   };
 
   const abrirModalMant = (aula) => {
@@ -125,8 +204,8 @@ export default function GestionAulas() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.nombre || !formData.edificio) {
-      toast("Por favor llena los campos obligatorios", "advertencia");
+    if (!formData.nombre) {
+      toast("El nombre del aula es obligatorio", "advertencia");
       return;
     }
     try {
@@ -148,16 +227,27 @@ export default function GestionAulas() {
   };
 
   const aulasFiltradas = aulas.filter(aula => {
-    if (filtro === 'ocupadas') return esAulaOcupada(aula.nombre);
-    if (filtro === 'vacias') return !esAulaOcupada(aula.nombre);
     if (filtro === 'mantenimiento') return estaEnMantenimiento(aula);
+    const estado = obtenerEstadoAula(aula.nombre);
+    if (filtro === 'disponible')  return !estaEnMantenimiento(aula) && estado === 'disponible';
+    if (filtro === 'matutino')    return !estaEnMantenimiento(aula) && estado === 'matutino';
+    if (filtro === 'vespertino')  return !estaEnMantenimiento(aula) && estado === 'vespertino';
+    if (filtro === 'bloqueada')   return !estaEnMantenimiento(aula) && estado === 'bloqueada';
     return true;
+  }).sort((a, b) => {
+    // En "Todos": aulas con clase activa ahora van primero
+    const aActiva = !!obtenerClaseEnCurso(a.nombre);
+    const bActiva = !!obtenerClaseEnCurso(b.nombre);
+    if (aActiva && !bActiva) return -1;
+    if (!aActiva && bActiva) return 1;
+    return a.nombre.localeCompare(b.nombre);
   });
 
-  const totalAulas = aulas.length;
+  const totalAulas         = aulas.length;
   const capacidadInstalada = aulas.reduce((t, a) => t + (Number(a.capacidad) || 0), 0);
-  const aulasOcupadas = aulas.filter(a => esAulaOcupada(a.nombre)).length;
-  const aulasEnMant = aulas.filter(a => estaEnMantenimiento(a)).length;
+  const aulasEnClaseAhora  = aulas.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
+  const aulasDisponibles   = aulas.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
+  const aulasEnMant        = aulas.filter(a => estaEnMantenimiento(a)).length;
 
   // Nombres de aulas disponibles para el dropdown de aula temporal
   const nombresAulas = aulas.map(a => a.nombre).filter(n => n !== modalMantAula?.nombre);
@@ -178,6 +268,54 @@ export default function GestionAulas() {
         </button>
       </div>
 
+      {/* RESUMEN ESTADÍSTICO */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Total */}
+        <div className="bg-[#1c355e] text-white p-5 rounded-2xl shadow-lg flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined text-[22px]">meeting_room</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">Total de Aulas</p>
+            <p className="text-3xl font-extrabold leading-tight">{totalAulas}</p>
+          </div>
+        </div>
+        {/* En Clase Ahora — tiempo real con prioridad */}
+        <div className={`p-5 rounded-2xl shadow-sm flex items-center gap-4 border transition-all ${aulasEnClaseAhora > 0 ? 'bg-blue-50 border-blue-200' : 'bg-white border-[#c5c6cf]/30'}`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${aulasEnClaseAhora > 0 ? 'bg-blue-100' : 'bg-[#f4f3f6]'}`}>
+            <span className={`material-symbols-outlined text-[22px] ${aulasEnClaseAhora > 0 ? 'text-blue-600' : 'text-[#c5c6cf]'}`}>play_circle</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">En Clase Ahora</p>
+            <div className="flex items-center gap-2">
+              <p className={`text-3xl font-extrabold leading-tight ${aulasEnClaseAhora > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>{aulasEnClaseAhora}</p>
+              {aulasEnClaseAhora > 0 && <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping" />}
+            </div>
+            <p className="text-[9px] text-[#75777f] font-semibold mt-0.5">{aulasDisponibles} disponibles</p>
+          </div>
+        </div>
+        {/* Mantenimiento */}
+        <div className="bg-white border border-orange-200 p-5 rounded-2xl shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined text-[22px] text-orange-500">construction</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">En Mantenimiento</p>
+            <p className="text-3xl font-extrabold text-orange-500 leading-tight">{aulasEnMant}</p>
+          </div>
+        </div>
+        {/* Capacidad */}
+        <div className="bg-white border border-[#c5c6cf]/30 p-5 rounded-2xl shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-[#1c355e]/8 flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined text-[22px] text-[#1c355e]">group</span>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">Capacidad Total</p>
+            <p className="text-3xl font-extrabold text-[#1c355e] leading-tight">{capacidadInstalada}</p>
+          </div>
+        </div>
+      </div>
+
       {/* MODAL NUEVA AULA */}
       {mostrarFormulario && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
@@ -194,9 +332,9 @@ export default function GestionAulas() {
                 <input required value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm" placeholder="Ej. A101" type="text" />
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta</label>
-                <select required value={formData.edificio} onChange={e => setFormData({...formData, edificio: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm">
-                  <option value="">Seleccione</option>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
+                <select value={formData.edificio} onChange={e => setFormData({...formData, edificio: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm">
+                  <option value="">Sin planta asignada</option>
                   <option>Planta A</option>
                   <option>Planta B</option>
                   <option>Planta C</option>
@@ -214,6 +352,89 @@ export default function GestionAulas() {
                 </div>
               </div>
               <button type="submit" className="w-full bg-[#1c355e] text-white py-3 rounded-xl font-bold hover:bg-[#152a4a] transition-all">Registrar Espacio</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDITAR AULA */}
+      {aulaAEditar && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-[#1c355e]">Editar Aula</h3>
+              <button onClick={() => setAulaAEditar(null)} className="text-[#44464e] hover:text-[#1c355e]">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <form className="space-y-5" onSubmit={handleGuardarEdicion}>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Nombre del Aula</label>
+                <input
+                  required
+                  type="text"
+                  value={formEditar.nombre}
+                  onChange={e => setFormEditar({ ...formEditar, nombre: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                  placeholder="Ej. A101"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
+                <select
+                  value={formEditar.edificio}
+                  onChange={e => setFormEditar({ ...formEditar, edificio: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                >
+                  <option value="">Sin planta asignada</option>
+                  <option>Planta A</option>
+                  <option>Planta B</option>
+                  <option>Planta C</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Capacidad</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={formEditar.capacidad}
+                  onChange={e => setFormEditar({ ...formEditar, capacidad: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                  placeholder="Ej. 30"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Equipamiento</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {['Proyector', 'Aire Acond.', 'PCs', 'Smart Board'].map((item) => (
+                    <label key={item} className="flex items-center gap-3 p-3 border border-[#c5c6cf]/30 rounded-xl cursor-pointer hover:bg-[#f4f3f6]">
+                      <input
+                        type="checkbox"
+                        checked={formEditar.equipos.includes(item)}
+                        onChange={() => handleCheckboxEditarChange(item)}
+                        className="rounded text-[#1c355e]"
+                      />
+                      <span className="text-sm font-medium">{item}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setAulaAEditar(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoEdicion}
+                  className="flex-1 py-2.5 rounded-xl bg-[#1c355e] text-white text-sm font-bold hover:bg-[#152a4a] transition-all disabled:opacity-50"
+                >
+                  {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -292,10 +513,12 @@ export default function GestionAulas() {
       {/* FILTROS */}
       <div className="flex gap-3 flex-wrap">
         {[
-          { id: 'todos', label: 'Todos' },
-          { id: 'ocupadas', label: 'Ocupadas' },
-          { id: 'vacias', label: 'Vacías' },
-          { id: 'mantenimiento', label: 'Mantenimiento' }
+          { id: 'todos',         label: 'Todos'         },
+          { id: 'disponible',    label: 'Disponibles'   },
+          { id: 'matutino',      label: 'Matutino'      },
+          { id: 'vespertino',    label: 'Vespertino'    },
+          { id: 'bloqueada',     label: 'Bloqueadas'    },
+          { id: 'mantenimiento', label: 'Mantenimiento' },
         ].map(btn => (
           <button
             key={btn.id}
@@ -319,27 +542,49 @@ export default function GestionAulas() {
           <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30">Sin Aulas en esta categoría</div>
         ) : (
           aulasFiltradas.map((aula) => {
-            const enMant = estaEnMantenimiento(aula);
-            const ocupada = !enMant && esAulaOcupada(aula.nombre);
+            const enMant        = estaEnMantenimiento(aula);
+            const claseActiva   = !enMant ? obtenerClaseEnCurso(aula.nombre) : null;
+            const estadoHorario = enMant ? 'mantenimiento' : obtenerEstadoAula(aula.nombre);
+
+            // Prioridad visual: mantenimiento > en_clase > estado por horario
+            const BADGE = {
+              mantenimiento: { cls: 'bg-orange-100 text-orange-600',  icon: 'construction', label: 'Mantenimiento' },
+              en_clase:      { cls: 'bg-blue-100 text-blue-700',      icon: 'play_circle',  label: 'En Clase'      },
+              disponible:    { cls: 'bg-[#1c9c72]/10 text-[#1c9c72]', icon: 'check_circle', label: 'Disponible'    },
+              matutino:      { cls: 'bg-amber-100 text-amber-700',    icon: 'wb_sunny',     label: 'Mat. Ocupada'  },
+              vespertino:    { cls: 'bg-orange-100 text-orange-700',  icon: 'nights_stay',  label: 'Vesp. Ocupada' },
+              bloqueada:     { cls: 'bg-red-100 text-red-600',        icon: 'block',        label: 'Bloqueada'     },
+            };
+            const badgeKey = enMant ? 'mantenimiento' : claseActiva ? 'en_clase' : estadoHorario;
+            const badge    = BADGE[badgeKey] || BADGE.disponible;
+
+            const borderClass = enMant        ? 'border-orange-200'
+                              : claseActiva   ? 'border-blue-300'
+                              : estadoHorario === 'bloqueada' ? 'border-red-200'
+                              : 'border-[#c5c6cf]/30';
 
             return (
-              <div key={aula.id} className={`bg-white border rounded-2xl p-6 shadow-sm transition-all ${enMant ? 'border-orange-200' : 'border-[#c5c6cf]/30'}`}>
+              <div key={aula.id} className={`bg-white border rounded-2xl p-6 shadow-sm transition-all ${borderClass}`}>
                 <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
+                    {claseActiva && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping flex-shrink-0" />}
+                  </div>
                   <div className="flex flex-col items-end gap-2">
-                    {/* Etiqueta de estado */}
-                    {enMant ? (
-                      <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase bg-orange-100 text-orange-600 flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[12px]">construction</span>
-                        Mantenimiento
-                      </span>
-                    ) : (
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${ocupada ? 'bg-red-100 text-red-600' : 'bg-[#1c9c72]/10 text-[#1c9c72]'}`}>
-                        {ocupada ? 'Ocupada' : 'Disponible'}
-                      </span>
-                    )}
+                    {/* Badge con prioridad: tiempo real > horario programado */}
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${badge.cls}`}>
+                      <span className="material-symbols-outlined text-[12px]">{badge.icon}</span>
+                      {badge.label}
+                    </span>
                     {/* Botones de acción */}
                     <div className="flex gap-1">
+                      <button
+                        onClick={() => abrirModalEditar(aula)}
+                        title="Editar aula"
+                        className="p-1.5 text-[#44464e] hover:text-[#1c355e] hover:bg-[#1c355e]/10 rounded-lg transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[20px]">edit</span>
+                      </button>
                       <button
                         onClick={() => abrirModalMant(aula)}
                         title="Modo mantenimiento"
@@ -355,12 +600,26 @@ export default function GestionAulas() {
                 </div>
 
                 <div className="space-y-3">
+                  {/* Panel docente en tiempo real — solo visible cuando hay clase activa */}
+                  {claseActiva && (
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 space-y-1">
+                      <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        Docente en clase ahora
+                      </p>
+                      <p className="text-sm font-black text-[#1b1c1e] leading-tight">{claseActiva.docente}</p>
+                      <p className="text-[10px] text-[#75777f] font-semibold">{claseActiva.asignatura}</p>
+                      <p className="text-[10px] font-mono font-bold text-blue-600">
+                        {(claseActiva.horario || '').split(' ').slice(1).join(' ')}
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <p className="text-[10px] text-[#44464e] font-bold uppercase">Edificio</p>
-                    <p className="text-sm font-medium">{aula.edificio}</p>
+                    <p className="text-sm font-medium">{aula.edificio || '—'}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-medium">Capacidad: <span className="text-[#1c355e] font-bold">{aula.capacidad}</span></p>
+                    <p className="text-sm font-medium">Capacidad: <span className="text-[#1c355e] font-bold">{aula.capacidad || '—'}</span></p>
                   </div>
                   {enMant && aula.aula_temporal && (
                     <div className="flex items-center gap-1.5 text-xs text-orange-600 font-semibold bg-orange-50 px-3 py-1.5 rounded-lg">
@@ -407,27 +666,7 @@ export default function GestionAulas() {
         </div>
       )}
 
-      {/* ESTADÍSTICAS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-[#1c355e] text-white p-6 rounded-2xl shadow-lg">
-          <p className="text-xs font-bold uppercase opacity-80">Total de Aulas</p>
-          <p className="text-3xl font-extrabold">{totalAulas}</p>
-        </div>
-        <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm">
-          <p className="text-xs font-bold uppercase text-[#44464e]">Aulas Ocupadas</p>
-          <p className="text-3xl font-extrabold text-red-600">{aulasOcupadas}</p>
-        </div>
-        <div className="bg-white border border-orange-200 p-6 rounded-2xl shadow-sm">
-          <p className="text-xs font-bold uppercase text-[#44464e]">En Mantenimiento</p>
-          <p className="text-3xl font-extrabold text-orange-500">{aulasEnMant}</p>
-        </div>
-        <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm">
-          <p className="text-xs font-bold uppercase text-[#44464e]">Capacidad Total</p>
-          <p className="text-3xl font-extrabold text-[#1c355e]">{capacidadInstalada}</p>
-        </div>
-      </div>
-
-      <ToastContainer />
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

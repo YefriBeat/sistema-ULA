@@ -201,8 +201,8 @@ class Horario(BaseModel):
 
 class Aula(BaseModel):
     nombre: str
-    edificio: str
-    capacidad: int
+    edificio: str = ""
+    capacidad: int = 0
     equipos: list = []
     estado: str = "Activo"
 
@@ -309,6 +309,17 @@ def _timedelta_to_str(td):
         total = int(td.total_seconds())
         return f"{total // 3600:02d}:{(total % 3600) // 60:02d}"
     return str(td)[:5] if td else ""
+
+def _normalizar_licenciatura(texto: str) -> str:
+    """Elimina duplicación de palabras en el nombre de licenciatura extraído del PDF."""
+    if not texto:
+        return texto
+    # Palabras pegadas repetidas: "LICENCIATURALICENCIATURA" → "LICENCIATURA"
+    texto = re.sub(r'([A-Za-záéíóúÁÉÍÓÚñÑ]{5,})\1', r'\1', texto)
+    # Palabras separadas repetidas: "Licenciatura Licenciatura" → "Licenciatura"
+    texto = re.sub(r'\b(\w+)\s+\1\b', r'\1', texto, flags=re.IGNORECASE)
+    return ' '.join(texto.split()).strip()
+
 
 def _time_to_mins(t):
     if isinstance(t, timedelta):
@@ -568,8 +579,8 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                 for page_num, page in enumerate(pdf.pages):
                     texto_pagina = page.extract_text() or ""
                     for linea in texto_pagina.split('\n'):
-                        if "Licenciatura en" in linea:
-                            licenciatura_extraida = linea.strip()
+                        if "Licenciatura en" in linea or "LICENCIATURA" in linea.upper():
+                            licenciatura_extraida = _normalizar_licenciatura(linea.strip())
                             break
                     
                     tables = page.extract_tables()
@@ -689,7 +700,7 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                 # Extraer licenciatura
                 for elem in elementos:
                     if "Licenciatura" in elem["texto"] or "licenciatura" in elem["texto"].lower():
-                        licenciatura_extraida = elem["texto"].strip()
+                        licenciatura_extraida = _normalizar_licenciatura(elem["texto"].strip())
                         break
 
                 # Agrupar elementos en filas (aumentar tolerancia a 25px para mejor agrupación)
@@ -934,14 +945,50 @@ def restablecer_contrasena(datos: RestablecerContrasena):
 # ---------------------------------------------------------
 # ENDPOINTS PARA GESTIÓN DE HORARIOS
 # ---------------------------------------------------------
+def _verificar_conflicto_aula(cursor, aula: str, horario_str: str, excluir_id: int = None) -> str | None:
+    """Retorna mensaje de conflicto si el aula ya está ocupada en ese rango horario, o None si no hay conflicto."""
+    if not aula or aula in ("Por asignar", ""):
+        return None
+    dia_idx, inicio, fin = _parse_horario_minutos(horario_str)
+    if dia_idx is None or inicio is None or fin is None:
+        return None
+    query = "SELECT horario, asignatura, docente FROM horarios WHERE aula_asignada = %s AND TRIM(aula_asignada) != '' AND TRIM(aula_asignada) != 'Por asignar'"
+    params = [aula]
+    if excluir_id is not None:
+        query += " AND id != %s"
+        params.append(excluir_id)
+    cursor.execute(query, params)
+    existentes = cursor.fetchall()
+    for ex in (existentes or []):
+        e_dia, e_inicio, e_fin = _parse_horario_minutos(ex.get('horario', ''))
+        if e_dia != dia_idx or e_inicio is None or e_fin is None:
+            continue
+        # Hay solapamiento si NO se cumple: e_fin <= inicio OR e_inicio >= fin
+        if not (e_fin <= inicio or e_inicio >= fin):
+            return (f"El aula '{aula}' ya está ocupada en ese horario: "
+                    f"{ex['asignatura']} con {ex['docente']} ({ex['horario']})")
+    return None
+
+
 @app.post("/api/guardar-horarios")
 def guardar_horarios(horarios: list[dict]):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # Verificar conflictos antes de insertar
+            conflictos = []
+            for h in horarios:
+                aula = h.get("aulaAsignada", h.get("aula_asignada", "Por asignar"))
+                horario_str = h.get("horario", h.get("horario_resumen", ""))
+                msg = _verificar_conflicto_aula(cursor, aula, horario_str)
+                if msg and msg not in conflictos:
+                    conflictos.append(msg)
+            if conflictos:
+                raise HTTPException(status_code=409, detail=conflictos[0])
+
             for h in horarios:
                 sql = """
-                    INSERT INTO horarios 
+                    INSERT INTO horarios
                     (docente, licenciatura, asignatura, horario, aula_asignada, archivo, fecha_creacion, fecha_clase)
                     VALUES (%s, %s, %s, %s, %s, %s, NOW(), CURDATE())
                 """
@@ -955,6 +1002,8 @@ def guardar_horarios(horarios: list[dict]):
                 ))
         connection.commit()
         return {"message": "Horarios guardados"}
+    except HTTPException:
+        raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al guardar horarios: {str(e)}")
     finally:
@@ -963,17 +1012,39 @@ def guardar_horarios(horarios: list[dict]):
 
 @app.get("/api/horarios")
 def obtener_horarios():
+    """
+    Devuelve el catálogo completo de horarios programados (semana recurrente).
+    Usa GROUP BY para deduplicar entradas idénticas sin filtrar por fecha de carga,
+    igual que /api/clases-hoy, para que el dashboard muestre exactamente los mismos
+    registros que Gestión de Docentes.
+    """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT h.*,
-                       a.en_mantenimiento, a.fin_mantenimiento, a.aula_temporal
+                SELECT
+                    MIN(h.id)           AS id,
+                    h.docente,
+                    h.licenciatura,
+                    h.asignatura,
+                    h.horario,
+                    h.aula_asignada,
+                    MIN(h.archivo)      AS archivo,
+                    MAX(h.fecha_creacion) AS fecha_creacion,
+                    a.en_mantenimiento,
+                    a.fin_mantenimiento,
+                    a.aula_temporal
                 FROM horarios h
                 LEFT JOIN aulas a ON a.nombre = h.aula_asignada
-                WHERE h.fecha_clase >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-                ORDER BY h.id DESC
-                LIMIT 300
+                WHERE h.docente IS NOT NULL
+                  AND TRIM(h.docente) != ''
+                  AND TRIM(h.docente) != 'Sin especificar'
+                GROUP BY
+                    h.docente, h.licenciatura, h.asignatura,
+                    h.horario, h.aula_asignada,
+                    a.en_mantenimiento, a.fin_mantenimiento, a.aula_temporal
+                ORDER BY h.horario
+                LIMIT 1000
             """)
             horarios = cursor.fetchall()
         return _aplicar_mantenimiento(horarios) if horarios else []
@@ -1027,6 +1098,47 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None):
 # ---------------------------------------------------------
 # ENDPOINTS PARA GESTIÓN DE AULAS
 # ---------------------------------------------------------
+@app.get("/api/aulas/ocupacion")
+def obtener_ocupacion_aulas():
+    """
+    Calcula ocupación de cada aula basándose en sus horarios asignados en la BD.
+    Matutino  : inicio < 14:00 (840 min).
+    Vespertino: inicio >= 14:00.
+    No depende de la hora actual — refleja la semana completa.
+    """
+    LIMITE_VESPERTINO = 14 * 60  # 840 min = 14:00
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT aula_asignada, horario
+                FROM horarios
+                WHERE aula_asignada IS NOT NULL
+                  AND TRIM(aula_asignada) != ''
+                  AND TRIM(aula_asignada) != 'Por asignar'
+            """)
+            registros = cursor.fetchall()
+
+        ocupacion: dict[str, dict] = {}
+        for r in (registros or []):
+            aula = r['aula_asignada']
+            _, inicio, _ = _parse_horario_minutos(r.get('horario', ''))
+            if inicio is None:
+                continue
+            if aula not in ocupacion:
+                ocupacion[aula] = {'matutino': False, 'vespertino': False}
+            if inicio < LIMITE_VESPERTINO:
+                ocupacion[aula]['matutino'] = True
+            else:
+                ocupacion[aula]['vespertino'] = True
+
+        return ocupacion
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener ocupación: {str(e)}")
+    finally:
+        connection.close()
+
+
 @app.get("/api/aulas")
 def obtener_aulas():
     connection = get_db_connection()
@@ -1078,6 +1190,25 @@ def crear_aula(aula: Aula):
         return {"message": "Aula creada exitosamente"}
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al crear aula: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.put("/api/aulas/{aula_id}")
+def actualizar_aula(aula_id: int, aula: Aula):
+    """Actualiza los datos de un aula existente."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            equipos_json = json.dumps(aula.equipos)
+            cursor.execute(
+                "UPDATE aulas SET nombre=%s, edificio=%s, capacidad=%s, equipos=%s, estado=%s WHERE id=%s",
+                (aula.nombre, aula.edificio, aula.capacidad, equipos_json, aula.estado, aula_id)
+            )
+        connection.commit()
+        return {"message": "Aula actualizada exitosamente"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar aula: {str(e)}")
     finally:
         connection.close()
 
@@ -1175,21 +1306,29 @@ def obtener_horarios_archivo(nombre_archivo: str):
 
 @app.put("/api/horarios/{horario_id}")
 def actualizar_horario(horario_id: int, datos: dict):
-    """
-    Actualiza un horario específico (para cambiar aula asignada)
-    """
+    """Actualiza un horario específico (aula, docente, asignatura). Valida conflictos de aula."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            nueva_aula = datos.get("aula_asignada", "Por asignar")
+            # Obtener el horario original para parsear día y hora
+            cursor.execute("SELECT horario FROM horarios WHERE id = %s", (horario_id,))
+            actual = cursor.fetchone()
+            if actual:
+                msg = _verificar_conflicto_aula(cursor, nueva_aula, actual.get('horario', ''), excluir_id=horario_id)
+                if msg:
+                    raise HTTPException(status_code=409, detail=msg)
             sql = "UPDATE horarios SET aula_asignada = %s, docente = %s, asignatura = %s WHERE id = %s"
             cursor.execute(sql, (
-                datos.get("aula_asignada", "Por asignar"),
+                nueva_aula,
                 datos.get("docente", ""),
                 datos.get("asignatura", ""),
                 horario_id
             ))
         connection.commit()
         return {"message": "Horario actualizado exitosamente"}
+    except HTTPException:
+        raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al actualizar horario: {str(e)}")
     finally:

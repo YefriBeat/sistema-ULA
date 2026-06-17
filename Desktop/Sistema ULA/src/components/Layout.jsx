@@ -14,7 +14,8 @@ export default function Layout() {
     localStorage.removeItem('usuarioLogueado');
   };
 
-  const isActive = (path) => location.pathname.includes(path);
+  const isActive = (path) =>
+    location.pathname === `/${path}` || location.pathname.startsWith(`/${path}/`);
 
   // Cierra el menú al hacer clic en un enlace en versión móvil
   const cerrarMenu = () => setMenuAbierto(false);
@@ -35,7 +36,7 @@ export default function Layout() {
         
         {/* Botón Menú y Logo (Izquierda - Solo Móvil) */}
         <div className="flex items-center gap-3 lg:hidden">
-          <button onClick={() => setMenuAbierto(true)} className="p-1 hover:bg-slate-100 rounded-md">
+          <button onClick={() => setMenuAbierto(true)} aria-label="Abrir menú de navegación" className="p-1 hover:bg-slate-100 rounded-md">
             <span className="material-symbols-outlined text-2xl text-[#1c355e]">menu</span>
           </button>
           <img src={logo} alt="Universidad Latino Logo" className="h-8 object-contain" />
@@ -43,9 +44,8 @@ export default function Layout() {
 
         {/* Información del Usuario (Derecha - Siempre visible) */}
         <div className="flex items-center gap-3 ml-auto pl-4 lg:border-l lg:border-[#c5c6cf]/30">
-          <div className="flex flex-col items-end justify-center">
-            {/* Nombre con límite de ancho para que no rompa en celulares */}
-            <p className="text-xs sm:text-sm font-bold text-[#1b1c1e] leading-tight capitalize max-w-[110px] sm:max-w-[200px] truncate">
+          <div className="flex flex-col items-end justify-center min-w-0">
+            <p className="text-xs sm:text-sm font-bold text-[#1b1c1e] leading-tight capitalize truncate max-w-[200px]">
               {usuario.nombre}
             </p>
             <p className="text-[10px] sm:text-xs text-slate-500 font-semibold uppercase tracking-wider">
@@ -67,8 +67,9 @@ export default function Layout() {
           } lg:translate-x-0`}
         >
           {/* Botón de cerrar (Solo móvil) */}
-          <button 
-            onClick={cerrarMenu} 
+          <button
+            onClick={cerrarMenu}
+            aria-label="Cerrar menú de navegación"
             className="absolute top-4 right-4 text-white/50 hover:text-white lg:hidden"
           >
             <span className="material-symbols-outlined text-2xl">close</span>
@@ -128,11 +129,9 @@ export default function Layout() {
             © 2026 UNIVERSIDAD LATINO - SISTEMA DE GESTIÓN INSTITUCIONAL
         </div>
         <nav className="flex flex-wrap justify-center items-center gap-4 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
-          <a className="hover:text-white transition-colors" href="#">SOPORTE TÉCNICO</a>
+          <Link to="/soporte" className="hover:text-white transition-colors">SOPORTE TÉCNICO</Link>
           <span className="w-1 h-1 rounded-full bg-slate-700 hidden sm:block"></span>
-          <a className="hover:text-white transition-colors" href="#">AVISO DE PRIVACIDAD</a>
-          <span className="w-1 h-1 rounded-full bg-slate-700 hidden sm:block"></span>
-          <a className="hover:text-white transition-colors" href="#">MANUAL DE USUARIO</a>
+          <Link to="/manual" className="hover:text-white transition-colors">MANUAL DE USUARIO</Link>
         </nav>
       </footer>
     </div>

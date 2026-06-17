@@ -9,5 +9,14 @@ export default defineConfig({
       '/api':        { target: 'http://localhost:8000', changeOrigin: true },
       '/upload-pdf': { target: 'http://localhost:8000', changeOrigin: true },
     }
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+        },
+      },
+    },
+  },
 })

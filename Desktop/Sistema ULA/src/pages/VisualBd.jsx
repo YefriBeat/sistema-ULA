@@ -34,10 +34,34 @@ const obtenerColorLicenciatura = (licenciatura) => {
   return 'bg-gray-50 text-gray-700 border-gray-200/50';
 };
 
+const normalizarNombreLic = (nombre) => {
+  if (!nombre) return '';
+  // Eliminar palabras pegadas repetidas: "LICENCIATURALICENCIATURA" → "LICENCIATURA"
+  let limpio = nombre.replace(/([A-Za-záéíóúÁÉÍÓÚñÑ]{5,})\1/g, '$1');
+  // Eliminar palabras separadas repetidas: "Licenciatura Licenciatura" → "Licenciatura"
+  limpio = limpio.replace(/\b(\w+)\s+\1\b/gi, '$1');
+  return limpio.replace(/\s+/g, ' ').trim();
+};
+
 const extraerClaveLic = (licenciatura) => {
   if (!licenciatura) return '';
-  const match = licenciatura.match(/\(([A-Z]{2,6})/);
-  return match ? match[1] : licenciatura;
+  const norm = normalizarNombreLic(licenciatura);
+  // Patrón explícito: (ENF), (ADM), etc.
+  const mParens = norm.match(/\(([A-Z]{2,6})\)/);
+  if (mParens) return mParens[1];
+  // Mapa de palabras clave → abreviatura
+  const mapas = [
+    [/enferm/i, 'ENF'], [/administrac/i, 'ADM'], [/negocios/i, 'NEG'],
+    [/mercadotecnia|marketing/i, 'VMK'], [/derecho/i, 'DER'],
+    [/nutrici/i, 'NUT'], [/contabilidad/i, 'CONT'], [/psicolog/i, 'PSI'],
+    [/gastronom/i, 'GAS'], [/inform[áa]tica|sistemas/i, 'SIS'],
+    [/medicina/i, 'MED'], [/odontolog/i, 'ODO'], [/turismo/i, 'TUR'],
+  ];
+  for (const [re, abr] of mapas) if (re.test(norm)) return abr;
+  // Fallback: iniciales de palabras significativas (sin "Licenciatura en")
+  const palabras = norm.replace(/licenciatura\s*(en\s*)?/gi, '').trim().split(/\s+/).filter(Boolean);
+  if (palabras.length > 0) return palabras.map(p => p[0]?.toUpperCase() || '').join('').slice(0, 5) || norm.slice(0, 10);
+  return norm.slice(0, 10);
 };
 
 const diasSemanaMap = {
@@ -205,13 +229,22 @@ export default function VisualBd() {
   const todosAgrupados = useMemo(() => groupConsecutiveClasses(asignaturasConEstado), [asignaturasConEstado]);
 
   const opcionesLicenciatura = useMemo(() => {
-    const unicas = [...new Set(asignaturas.map(a => a.licenciatura).filter(Boolean))].sort();
-    return unicas.map(lic => ({ valor: lic, etiqueta: extraerClaveLic(lic) }));
+    // Deduplicar por abreviatura, no por nombre completo.
+    // Dos licenciaturas distintas en BD (e.g. "DER Plan 2020" y "DER Plan 2025")
+    // generan la misma abreviatura → deben aparecer como una sola opción.
+    const mapaAbr = new Map(); // abreviatura → primer nombre completo encontrado
+    asignaturas.forEach(a => {
+      if (!a.licenciatura) return;
+      const abr = extraerClaveLic(a.licenciatura);
+      if (!mapaAbr.has(abr)) mapaAbr.set(abr, abr);
+    });
+    return [...mapaAbr.keys()].sort().map(abr => ({ valor: abr, etiqueta: abr }));
   }, [asignaturas]);
 
   const datosPorLic = useMemo(() => {
     if (!filtroLic) return asignaturasConEstado;
-    return asignaturasConEstado.filter(a => a.licenciatura === filtroLic);
+    // filtroLic ahora es la abreviatura → comparar con la abreviatura de cada clase
+    return asignaturasConEstado.filter(a => extraerClaveLic(a.licenciatura) === filtroLic);
   }, [asignaturasConEstado, filtroLic]);
 
   const opcionesAsignatura = useMemo(() => (
@@ -230,14 +263,20 @@ export default function VisualBd() {
       const coincideBusqueda =
         item.docente?.toLowerCase().includes(busqueda.toLowerCase()) ||
         item.aula_asignada?.toLowerCase().includes(busqueda.toLowerCase());
-      const coincideLic       = filtroLic       === '' || item.licenciatura === filtroLic;
+      const coincideLic       = filtroLic       === '' || extraerClaveLic(item.licenciatura) === filtroLic;
       const coincideAsignatura = filtroAsignatura === '' || item.asignatura  === filtroAsignatura;
       const coincideHora      = filtroHora      === '' || item.textoHora    === filtroHora;
       const coincideDia       = filtroDia       === '' || item.diaOriginal  === filtroDia;
       return coincideBusqueda && coincideLic && coincideAsignatura && coincideHora && coincideDia;
     });
     if (filtroEstado !== 'todas') {
-      resultado = resultado.filter(item => item.estadoTiempo === filtroEstado);
+      const diaHoy = ahora.getDay();
+      resultado = resultado.filter(item => {
+        if (item.estadoTiempo !== filtroEstado) return false;
+        // "Finalizadas" → solo clases del día actual; las de días anteriores van a BD Total
+        if (filtroEstado === 'finalizada') return item.diaClaseIndex === diaHoy;
+        return true;
+      });
     }
     // Agregar filas de suplencias (filtradas por estado y criterios de búsqueda)
     const suplFiltradas = filasSuplencias.filter(s => {
@@ -245,24 +284,26 @@ export default function VisualBd() {
       const coincideBusqueda   = !busqueda ||
         s.docente?.toLowerCase().includes(busqueda.toLowerCase()) ||
         s.aula_asignada?.toLowerCase().includes(busqueda.toLowerCase());
-      const coincideLic        = filtroLic       === '' || s.licenciatura === filtroLic;
+      const coincideLic        = filtroLic       === '' || extraerClaveLic(s.licenciatura) === filtroLic;
       const coincideAsignatura = filtroAsignatura === '' || s.asignatura  === filtroAsignatura;
       return coincideEstado && coincideBusqueda && coincideLic && coincideAsignatura;
     });
     resultado = [...resultado, ...suplFiltradas];
     return resultado;
-  }, [asignaturasConEstado, filasSuplencias, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado]);
+  }, [asignaturasConEstado, filasSuplencias, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, ahora]);
 
   const datosAgrupados = useMemo(() => groupConsecutiveClasses(datosFiltrados), [datosFiltrados]);
 
   const stats = useMemo(() => {
+    const diaHoy      = ahora.getDay();
     const enCurso     = todosAgrupados.filter(c => c.estadoTiempo === 'en_curso').length;
     const proximas    = todosAgrupados.filter(c => c.estadoTiempo === 'proxima').length;
-    const finalizadas = todosAgrupados.filter(c => c.estadoTiempo === 'finalizada').length;
+    // Solo clases del día actual que ya concluyeron (no días anteriores de la semana)
+    const finalizadas = todosAgrupados.filter(c => c.estadoTiempo === 'finalizada' && c.diaClaseIndex === diaHoy).length;
     const programadas = todosAgrupados.filter(c => c.estadoTiempo === 'programada').length;
     const total       = todosAgrupados.length;
     return { enCurso, proximas, finalizadas, programadas, total };
-  }, [todosAgrupados]);
+  }, [todosAgrupados, ahora]);
 
   // Donut chart — datos de ocupación de aulas
   const donutStats = useMemo(() => {
@@ -290,18 +331,18 @@ export default function VisualBd() {
 
   const fechaFormateada = ahora.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-  // ─── JSX ─────────────────────────────────────────────────────────────────────
+
   return (
     <div className="max-w-[1400px] mx-auto space-y-5 font-manrope">
 
-      {/* ══ ENCABEZADO ══════════════════════════════════════════════════════════ */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-[#1b1c1e] tracking-tight">Directorio General de Horarios</h1>
-          <p className="text-sm text-[#75777f] mt-1 font-medium">Visualización centralizada con monitoreo en tiempo real.</p>
-        </div>
+      
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-3xl font-black text-[#1b1c1e] tracking-tight">Panel de Control</h1>
+            <p className="text-sm text-[#75777f] mt-1 font-medium">Gestión y seguimiento de horarios en tiempo real.</p>
+          </div>
 
-        {/* Indicador de estado */}
+          {/* Indicador de estado */}
         <div className={`flex items-center gap-3 bg-white rounded-2xl px-5 py-3 border shadow-sm ${errorConexion ? 'border-orange-300' : 'border-[#c5c6cf]/40'}`}>
           {errorConexion ? (
             <>
@@ -362,19 +403,21 @@ export default function VisualBd() {
 
           {/* Próximas Hoy */}
           <div className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 ${
-            stats.proximas > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#c5c6cf]/40'
+            (stats.proximas + stats.programadas) > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#c5c6cf]/40'
           }`}>
             <div className="flex items-start justify-between mb-3">
-              <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">Próximas Hoy</p>
-              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${stats.proximas > 0 ? 'bg-amber-100' : 'bg-[#f4f3f6]'}`}>
-                <span className={`material-symbols-outlined text-[16px] ${stats.proximas > 0 ? 'text-amber-600' : 'text-[#c5c6cf]'}`}>schedule</span>
+              <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">Próximas</p>
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${(stats.proximas + stats.programadas) > 0 ? 'bg-amber-100' : 'bg-[#f4f3f6]'}`}>
+                <span className={`material-symbols-outlined text-[16px] ${(stats.proximas + stats.programadas) > 0 ? 'text-amber-600' : 'text-[#c5c6cf]'}`}>schedule</span>
               </div>
             </div>
-            <h3 className={`text-4xl lg:text-5xl font-black leading-none ${stats.proximas > 0 ? 'text-amber-700' : 'text-[#c5c6cf]'}`}>
-              {stats.proximas}
+            <h3 className={`text-4xl lg:text-5xl font-black leading-none ${(stats.proximas + stats.programadas) > 0 ? 'text-amber-700' : 'text-[#c5c6cf]'}`}>
+              {stats.proximas + stats.programadas}
             </h3>
             <p className="text-[10px] text-[#75777f] font-semibold mt-3">
-              {stats.programadas > 0 ? `+ ${stats.programadas} esta semana` : 'Sin clases pendientes hoy'}
+              {(stats.proximas + stats.programadas) === 0
+                ? 'Sin clases pendientes'
+                : `${stats.proximas} hoy · ${stats.programadas} semana`}
             </p>
           </div>
 
@@ -592,7 +635,97 @@ export default function VisualBd() {
 
       {/* ══ TABLA DE RESULTADOS ══════════════════════════════════════════════════ */}
       <div className="bg-white border border-[#c5c6cf]/40 rounded-2xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+        {/* ── VISTA MÓVIL: tarjetas (< lg) ────────────────────────────────────── */}
+        <div className="lg:hidden">
+          {cargando ? (
+            <div className="py-16 text-center">
+              <span className="material-symbols-outlined animate-spin text-3xl text-[#1c355e] block mx-auto mb-3">sync</span>
+              <p className="text-sm font-bold text-[#44464e]">Sincronizando datos...</p>
+              <p className="text-xs text-[#75777f] mt-1">Conectando con la base de datos</p>
+            </div>
+          ) : asignaturas.length === 0 ? (
+            <div className="py-20 text-center">
+              <span className="material-symbols-outlined text-6xl text-[#e0e0e8] block mx-auto mb-4">table_chart</span>
+              <p className="font-black text-lg text-[#1b1c1e]">Directorio Vacío</p>
+              <p className="text-sm text-[#75777f] mt-2">No hay horarios cargados en la base de datos.</p>
+            </div>
+          ) : datosFiltrados.length === 0 ? (
+            <div className="py-20 text-center px-4">
+              <span className="material-symbols-outlined text-6xl text-[#e0e0e8] block mx-auto mb-4">filter_list_off</span>
+              <p className="font-black text-lg text-[#1b1c1e]">Sin resultados para este filtro</p>
+              <p className="text-sm text-[#75777f] mt-2">
+                Prueba con <button onClick={verBaseDatosTotal} className="text-[#1c355e] font-bold hover:underline">Base de Datos Total</button> o limpia los filtros.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#f0f0f4]">
+              {datosAgrupados.map((item) => (
+                <div key={item._ids.join('-')} className={`px-4 py-3.5 transition-colors ${item.es_suplencia ? 'bg-blue-50/30' : 'hover:bg-[#faf9fc]'}`}>
+                  {/* Día + badge de estado */}
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <span className="text-xs font-black text-[#44464e] uppercase tracking-wider capitalize">{item.diaOriginal || '—'}</span>
+                    {item.es_suplencia ? (
+                      <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap flex-shrink-0 ${
+                        item.estadoTiempo === 'en_curso'   ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                        item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-gray-200' :
+                        'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                        <span className="material-symbols-outlined text-[11px]">swap_horiz</span>
+                        {item.estadoTiempo === 'en_curso' ? 'Suplencia' : item.estadoTiempo === 'finalizada' ? 'Finalizada' : 'Próxima'}
+                      </span>
+                    ) : (
+                      <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap flex-shrink-0 ${
+                        item.estadoTiempo === 'en_curso'   ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                        item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-blue-200' :
+                        item.estadoTiempo === 'proxima'    ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                        'bg-slate-50 text-slate-500 border-slate-200'
+                      }`}>
+                        <span className="material-symbols-outlined text-[11px]">
+                          {item.estadoTiempo === 'en_curso'   ? 'play_circle' :
+                           item.estadoTiempo === 'finalizada' ? 'stop_circle' :
+                           item.estadoTiempo === 'proxima'    ? 'schedule' : 'event'}
+                        </span>
+                        {item.estadoTiempo === 'programada' ? 'Programada' : item.estadoTiempo.replace('_', ' ')}
+                      </span>
+                    )}
+                  </div>
+                  {/* Docente */}
+                  <p className="text-sm font-semibold text-[#1b1c1e] leading-tight">{item.docente || '—'}</p>
+                  {item.es_suplencia && (
+                    <span className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5 mt-0.5">
+                      <span className="material-symbols-outlined text-[10px]">swap_horiz</span>
+                      Cubre a {item.docente_ausente}
+                    </span>
+                  )}
+                  {/* Licenciatura */}
+                  <span className={`mt-1.5 px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase border inline-block break-words max-w-full ${obtenerColorLicenciatura(item.licenciatura)}`}>
+                    {item.licenciatura}
+                  </span>
+                  {/* Asignatura */}
+                  <p className="text-xs font-medium text-[#44464e] mt-1 leading-snug">{item.asignatura}</p>
+                  {/* Horario + Aula */}
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#f0f0f4]">
+                    <span className="font-mono text-xs font-bold text-[#1c355e]">{item.textoHora}</span>
+                    {item.aula_reasignada ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="font-bold text-orange-600 flex items-center gap-1 text-xs">
+                          <span className="material-symbols-outlined text-[12px]">construction</span>
+                          {item.aula_asignada}
+                        </span>
+                        <span className="text-[9px] text-[#75777f] line-through">{item.aula_original}</span>
+                      </div>
+                    ) : (
+                      <span className="font-bold text-[#1c355e] text-xs">{item.aula_asignada || '—'}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── VISTA ESCRITORIO: tabla (≥ lg) ──────────────────────────────────── */}
+        <div className="hidden lg:block overflow-x-auto">
           <table className="w-full text-left border-collapse table-fixed min-w-[820px]">
             <thead>
               <tr style={{ background: 'linear-gradient(135deg, #1c355e 0%, #162c50 100%)' }} className="text-white text-[10px] uppercase font-bold tracking-widest">

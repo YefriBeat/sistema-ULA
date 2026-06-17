@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useToast } from '../components/useToast';
+import { useToast, ToastContainer } from '../components/useToast';
 import { useUser } from '../components/UserContext';
 
 const TURNO_LABEL = { matutino: 'Matutino', vespertino: 'Vespertino', ambos: 'Ambos Turnos' };
@@ -19,7 +19,7 @@ const fmtFechaHora = (iso) => {
 
 export default function ConfiguracionPerfil() {
   const navigate = useNavigate();
-  const { toast, ToastContainer } = useToast();
+  const { toast, toasts } = useToast();
   const { usuario: usuarioCtx, actualizarUsuario } = useUser();
 
   // ── Estado local del formulario (draft editable, separado del contexto) ────
@@ -586,7 +586,7 @@ export default function ConfiguracionPerfil() {
         </div>
       )}
 
-      <ToastContainer />
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

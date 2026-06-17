@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useToast } from '../components/useToast';
+import { useToast, ToastContainer } from '../components/useToast';
 
 export default function GestionHorarios() {
-  const { toast, ToastContainer } = useToast();
+  const { toast, toasts } = useToast();
   const [confirmacion, setConfirmacion] = useState(null);
 
   const [archivo, setArchivo] = useState(null);
@@ -20,13 +20,25 @@ export default function GestionHorarios() {
   const [cargandoArchivos, setCargandoArchivos] = useState(false);
   const [vistaActual, setVistaActual] = useState('gestor'); // 'gestor' o 'cargar'
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+  // ocupacion: { "A24": { matutino: true, vespertino: true }, ... }
+  const [ocupacion, setOcupacion] = useState({});
+
+  const esBloqueada = (nombreAula) => {
+    const d = ocupacion[nombreAula];
+    return d ? (d.matutino && d.vespertino) : false;
+  };
 
   useEffect(() => {
     fetch('/api/aulas')
       .then(res => res.ok ? res.json() : [])
       .then(data => setAulas(data))
       .catch(err => console.error("Error al precargar aulas:", err));
-    
+
+    fetch('/api/aulas/ocupacion')
+      .then(res => res.ok ? res.json() : {})
+      .then(data => setOcupacion(data))
+      .catch(() => {});
+
     // Cargar archivos guardados
     cargarArchivosGuardados();
   }, []);
@@ -108,7 +120,8 @@ export default function GestionHorarios() {
         setHorarioAEditar(null);
         if (archivoSeleccionado) verDetallesArchivo(archivoSeleccionado);
       } else {
-        toast("Error al actualizar el horario", "error");
+        const err = await response.json().catch(() => ({}));
+        toast(err.detail || "Error al actualizar el horario", "error");
       }
     } catch (err) {
       console.error("Error al guardar horario:", err);
@@ -235,7 +248,8 @@ export default function GestionHorarios() {
         setVistaActual('gestor');
         cargarArchivosGuardados();
       } else {
-        toast("Error al intentar publicar las asignaciones.", "error");
+        const err = await response.json().catch(() => ({}));
+        toast(err.detail || "Error al intentar publicar las asignaciones.", "error");
       }
     } catch (error) {
       toast("Error de red al publicar.", "error");
@@ -525,86 +539,147 @@ export default function GestionHorarios() {
           </div>
 
           {/* CONTROL DE ASIGNACIÓN AUTOMÁTICA */}
-          <div className="p-4 bg-blue-50 border-b border-blue-200 flex flex-col sm:flex-row gap-3 sm:items-center">
-            <div className="flex-1 flex flex-col sm:flex-row gap-2 sm:items-center">
-              <label className="text-xs font-bold text-[#44464e] uppercase">Asignar la misma aula a todas:</label>
-              <select 
-                value={aulaAsignacionAutomatica}
-                onChange={(e) => setAulaAsignacionAutomatica(e.target.value)}
-                className="flex-1 px-3.5 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value="">-- Selecciona un aula --</option>
-                {aulas.map((aula) => (
-                  <option key={aula.id} value={aula.nombre}>
-                    {aula.nombre} ({aula.edificio})
-                  </option>
-                ))}
-              </select>
+          <div className="px-5 py-4 border-b border-[#c5c6cf]/30 bg-[#faf9fc]">
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="w-7 h-7 rounded-lg bg-[#1c355e]/10 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[16px] text-[#1c355e]">auto_awesome</span>
+                </div>
+                <span className="text-xs font-bold text-[#44464e] uppercase tracking-wider whitespace-nowrap">Asignar aula a todas las filas</span>
+              </div>
+              <div className="flex flex-1 gap-2">
+                <select
+                  value={aulaAsignacionAutomatica}
+                  onChange={(e) => setAulaAsignacionAutomatica(e.target.value)}
+                  className="flex-1 px-3.5 py-2.5 bg-white border border-[#c5c6cf]/60 rounded-xl text-sm font-semibold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e] cursor-pointer transition-all"
+                >
+                  <option value="">— Seleccionar aula —</option>
+                  {aulas.map((aula) => {
+                    const bloqueada = esBloqueada(aula.nombre);
+                    return (
+                      <option key={aula.id} value={aula.nombre} disabled={bloqueada}>
+                        {bloqueada ? '🔴 ' : ''}{aula.nombre}{aula.edificio ? ` · ${aula.edificio}` : ''}{bloqueada ? ' (Bloqueada)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+                <button
+                  onClick={() => handleAsignarATodas(aulaAsignacionAutomatica)}
+                  disabled={!aulaAsignacionAutomatica}
+                  className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    aulaAsignacionAutomatica
+                      ? 'bg-[#1c355e] text-white hover:bg-[#152a4a] shadow-sm'
+                      : 'bg-[#e8e8ef] text-[#c5c6cf] cursor-not-allowed'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">done_all</span>
+                  Aplicar a todas
+                </button>
+              </div>
             </div>
-            <button 
-              onClick={() => handleAsignarATodas(aulaAsignacionAutomatica)}
-              disabled={!aulaAsignacionAutomatica}
-              className={`px-4 py-2.5 rounded-lg font-bold text-xs uppercase transition-all whitespace-nowrap ${
-                aulaAsignacionAutomatica 
-                  ? 'bg-blue-600 text-white hover:bg-blue-700 cursor-pointer' 
-                  : 'bg-gray-300 text-gray-600 cursor-not-allowed'
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[16px]">auto_awesome</span>
-                Aplicar a todas
-              </span>
-            </button>
+            {aulaAsignacionAutomatica && (
+              <p className="text-[10px] text-[#1c355e] font-semibold mt-2 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">info</span>
+                Se asignará <span className="font-black">{aulaAsignacionAutomatica}</span> a los {datosExtraidos.lista_horarios.length} horarios extraídos.
+              </p>
+            )}
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-[#1c355e] text-white text-xs font-bold uppercase tracking-wider">
-                  <th className="px-6 py-4.5">Docente</th>
-                  <th className="px-6 py-4.5">Licenciatura</th>
-                  <th className="px-6 py-4.5">Asignatura</th>
-                  <th className="px-6 py-4.5">Horario</th>
-                  <th className="px-6 py-4.5">Asignar Aula</th>
+                <tr style={{ background: 'linear-gradient(135deg, #1c355e 0%, #162c50 100%)' }} className="text-white text-[10px] uppercase font-bold tracking-widest">
+                  <th className="px-5 py-4">Docente</th>
+                  <th className="px-5 py-4">Licenciatura</th>
+                  <th className="px-5 py-4">Asignatura</th>
+                  <th className="px-5 py-4">Horario</th>
+                  <th className="px-5 py-4 w-[220px]">Aula Asignada</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {datosExtraidos.lista_horarios.map((item, index) => (
-                  <tr key={index} className="hover:bg-[#f4f3f6]/30 transition-colors">
-                    <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{item.docente}</td>
-                    <td className="px-6 py-4 text-xs font-bold">
-                      <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
-                        {item.licenciatura}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-sm font-bold text-[#1b1c1e]">{item.asignatura}</td>
-                    <td className="px-6 py-4 text-sm font-mono font-bold text-gray-500 italic">{item.horario_resumen}</td>
-                    <td className="px-6 py-4">
-                      <select 
-                        value={asignaciones[index] || ""}
-                        onChange={(e) => handleAulaChange(index, e.target.value)}
-                        className="w-full max-w-[220px] px-3.5 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e] hover:bg-[#eaeaee] cursor-pointer transition-all"
-                      >
-                        <option value="">Seleccione un aula</option>
-                        {aulas.map((aula) => (
-                          <option key={aula.id} value={aula.nombre}>
-                            {aula.nombre} ({aula.edificio})
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-[#f0f0f4]">
+                {datosExtraidos.lista_horarios.map((item, index) => {
+                  const aulaSeleccionada = asignaciones[index] || '';
+                  const aulaObj = aulas.find(a => a.nombre === aulaSeleccionada);
+                  return (
+                    <tr key={index} className={`hover:bg-[#faf9fc] transition-colors ${aulaSeleccionada ? 'bg-emerald-50/30' : ''}`}>
+                      <td className="px-5 py-3.5 text-sm font-semibold text-[#44464e]">{item.docente}</td>
+                      <td className="px-5 py-3.5 text-xs font-bold">
+                        <span className="bg-[#1c355e]/8 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
+                          {item.licenciatura}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-sm font-bold text-[#1b1c1e]">{item.asignatura}</td>
+                      <td className="px-5 py-3.5">
+                        <span className="text-xs font-mono font-bold text-[#1c355e] bg-[#1c355e]/6 px-2 py-1 rounded-lg whitespace-nowrap">{item.horario_resumen}</span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        {aulaSeleccionada ? (
+                          <div className="flex items-center gap-2 group">
+                            <div className="flex-1 flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-black text-emerald-700 truncate">{aulaSeleccionada}</p>
+                                {aulaObj?.edificio && <p className="text-[9px] text-emerald-500 font-semibold">{aulaObj.edificio}</p>}
+                              </div>
+                              <button
+                                onClick={() => handleAulaChange(index, '')}
+                                className="text-emerald-400 hover:text-emerald-700 transition-colors flex-shrink-0"
+                                title="Quitar aula"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">close</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <select
+                            value=""
+                            onChange={(e) => handleAulaChange(index, e.target.value)}
+                            className="w-full px-3 py-2 bg-[#f4f3f6] border border-[#c5c6cf]/40 border-dashed rounded-xl text-xs font-semibold text-[#75777f] focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e] hover:border-[#1c355e]/40 cursor-pointer transition-all"
+                          >
+                            <option value="">Seleccionar aula...</option>
+                            {aulas.map((aula) => {
+                              const bloqueada = esBloqueada(aula.nombre);
+                              return (
+                                <option key={aula.id} value={aula.nombre} disabled={bloqueada}>
+                                  {bloqueada ? '🔴 ' : ''}{aula.nombre}{aula.edificio ? ` · ${aula.edificio}` : ''}{bloqueada ? ' (Bloqueada)' : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
-          <div className="p-5 bg-[#f4f3f6]/40 border-t border-[#c5c6cf]/30 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <span className="text-xs text-[#44464e] font-semibold flex items-center gap-2 text-gray-400">
-              <span className="material-symbols-outlined text-base">shield_with_heart</span>
-              Las asignaciones ingresadas actualizarán de inmediato la base de datos de la prefectura.
-            </span>
-            <button 
+          <div className="p-5 bg-[#faf9fc] border-t border-[#c5c6cf]/30 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              {(() => {
+                const total = datosExtraidos.lista_horarios.length;
+                const asignadas = Object.values(asignaciones).filter(Boolean).length;
+                const pct = total > 0 ? Math.round((asignadas / total) * 100) : 0;
+                return (
+                  <>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-[#44464e] uppercase tracking-wider">Cobertura de aulas</span>
+                      <span className="text-xs font-semibold text-[#75777f]">
+                        <span className={`font-black ${asignadas === total ? 'text-emerald-600' : 'text-[#1c355e]'}`}>{asignadas}</span> de {total} asignadas
+                      </span>
+                    </div>
+                    <div className="w-24 h-1.5 bg-[#e8e8ef] rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${asignadas === total ? 'bg-emerald-500' : 'bg-[#1c355e]'}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className={`text-xs font-black ${asignadas === total ? 'text-emerald-600' : 'text-[#1c355e]'}`}>{pct}%</span>
+                  </>
+                );
+              })()}
+            </div>
+            <button
               onClick={handleGuardarHorarios}
               className="w-full sm:w-auto bg-[#1c355e] text-white px-7 py-3.5 rounded-xl font-bold shadow-md hover:bg-[#152a4a] transition-all active:scale-[0.97] flex items-center justify-center gap-2 text-sm"
             >
@@ -767,17 +842,20 @@ export default function GestionHorarios() {
 
               <div>
                 <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Aula Asignada</label>
-                <select 
+                <select
                   value={horarioAEditar.aula_asignada || ''}
                   onChange={(e) => setHorarioAEditar({ ...horarioAEditar, aula_asignada: e.target.value })}
                   className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e] cursor-pointer"
                 >
                   <option value="Por asignar">Por asignar</option>
-                  {aulas.map((aula) => (
-                    <option key={aula.id} value={aula.nombre}>
-                      {aula.nombre} ({aula.edificio})
-                    </option>
-                  ))}
+                  {aulas.map((aula) => {
+                    const bloqueada = esBloqueada(aula.nombre);
+                    return (
+                      <option key={aula.id} value={aula.nombre} disabled={bloqueada}>
+                        {bloqueada ? '🔴 ' : ''}{aula.nombre}{aula.edificio ? ` · ${aula.edificio}` : ''}{bloqueada ? ' (Bloqueada)' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             </div>
@@ -804,7 +882,7 @@ export default function GestionHorarios() {
         </div>
       )}
 
-      <ToastContainer />
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }
