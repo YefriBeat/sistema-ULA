@@ -444,7 +444,7 @@ export default function VisualBd() {
             style={{ background: 'linear-gradient(145deg, #1c355e 0%, #0e1f3d 100%)' }}
           >
             <div className="flex items-start justify-between mb-3">
-              <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Ver BD Total</p>
+              <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Clases Totales</p>
               <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center">
                 <span className="material-symbols-outlined text-[16px] text-white/80">database</span>
               </div>

@@ -6,7 +6,7 @@ export function TimeProvider({ children }) {
   const [ahora, setAhora] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => setAhora(new Date()), 60000);
+    const timer = setInterval(() => setAhora(new Date()), 30000);
     return () => clearInterval(timer);
   }, []);
 
