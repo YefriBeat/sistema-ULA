@@ -8,5 +8,9 @@
       "source": "/upload-pdf",
       "destination": "https://sistema-ula-backend.onrender.com/upload-pdf"
     }
+    ,{
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }
