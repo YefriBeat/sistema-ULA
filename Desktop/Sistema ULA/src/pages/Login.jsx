@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import logo from '../components/logo.png';
 import { useToast, ToastContainer } from '../components/useToast';
+import { useUser } from '../components/UserContext';
 
 export default function Login() {
   const navigate = useNavigate();
   const { toast, toasts } = useToast();
+  const { actualizarUsuario } = useUser();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,6 +35,7 @@ export default function Login() {
       const data = await response.json();
       if (response.ok) {
         localStorage.setItem('usuarioLogueado', JSON.stringify(data.usuario));
+        actualizarUsuario(data.usuario);
         navigate('/dashboard');
       } else {
         toast(data.detail || "Credenciales inválidas.", "error");
