@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "REEMPLAZA_CON_TU_URL_DE_RENDER/api/:path*"
+    },
+    {
+      "source": "/upload-pdf",
+      "destination": "REEMPLAZA_CON_TU_URL_DE_RENDER/upload-pdf"
+    }
+  ]
+}
