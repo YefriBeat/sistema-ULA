@@ -92,34 +92,46 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="API Sistema de Prefectura ULA", lifespan=lifespan)
 
 
+import urllib.request
+import urllib.error
+
 def _enviar_smtp(correo_destino: str, asunto: str, html: str):
-    """Helper interno para enviar correos HTML via SMTP."""
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.getenv("SMTP_PORT", 587))
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_password = os.getenv("SMTP_PASSWORD")
+    """Envía correos usando la API de EmailJS (vía HTTP) para evadir el bloqueo de puertos de Render."""
+    service_id = os.getenv("EMAILJS_SERVICE_ID")
+    template_id = os.getenv("EMAILJS_TEMPLATE_ID")
+    public_key = os.getenv("EMAILJS_PUBLIC_KEY")
+    private_key = os.getenv("EMAILJS_PRIVATE_KEY")
 
-    if not smtp_user or not smtp_password or smtp_user == "tu_correo@gmail.com":
-        raise ValueError("Configura SMTP_USER y SMTP_PASSWORD en src/backend/.env")
+    if not service_id or not template_id or not public_key:
+        raise ValueError("Faltan las credenciales de EmailJS en las variables de entorno.")
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = asunto
-    msg["From"] = smtp_user
-    msg["To"] = correo_destino
-    msg.attach(MIMEText(html, "html"))
+    payload = {
+        "service_id": service_id,
+        "template_id": template_id,
+        "user_id": public_key,
+        "accessToken": private_key,
+        "template_params": {
+            "to_email": correo_destino,
+            "asunto": asunto,
+            "html_content": html
+        }
+    }
+
+    req = urllib.request.Request(
+        'https://api.emailjs.com/api/v1.0/email/send',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
 
     try:
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_user, correo_destino, msg.as_string())
-        else:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                server.starttls()
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_user, correo_destino, msg.as_string())
-    except TimeoutError:
-        raise ValueError("La conexión al servidor de correo tardó demasiado. Verifica los puertos y que Render permita la salida SMTP.")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            pass # Si es 200 OK, el correo se envió correctamente
+    except urllib.error.HTTPError as e:
+        error_msg = e.read().decode('utf-8')
+        raise ValueError(f"Error de EmailJS ({e.code}): {error_msg}")
+    except Exception as e:
+        raise ValueError(f"Error de conexión con EmailJS: {str(e)}")
 
 
 def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
