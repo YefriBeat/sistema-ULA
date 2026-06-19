@@ -120,7 +120,10 @@ def _enviar_smtp(correo_destino: str, asunto: str, html: str):
     req = urllib.request.Request(
         'https://api.emailjs.com/api/v1.0/email/send',
         data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
+        headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
         method='POST'
     )
 
