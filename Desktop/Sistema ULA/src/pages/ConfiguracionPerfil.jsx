@@ -34,6 +34,11 @@ export default function ConfiguracionPerfil() {
   const [guardando, setGuardando] = useState(false);
   const [mostrarConfirmacion, setMostrarConfirmacion] = useState(false);
   const [eliminando, setEliminando] = useState(false);
+  
+  // ── Eliminar otros usuarios (Solo admin) ───────────────────────────────────
+  const [usuarioAEliminar, setUsuarioAEliminar] = useState(null);
+  
+  // ── Cambio de contraseña ───────────────────────────────────────────────────
 
   // ── Cambio de contraseña ───────────────────────────────────────────────────
   const [pass, setPass] = useState({ actual: '', nueva: '', confirmar: '' });
@@ -42,6 +47,10 @@ export default function ConfiguracionPerfil() {
 
   // ── Panel lateral de usuarios ──────────────────────────────────────────────
   const [usuarios, setUsuarios] = useState([]);
+
+  // Determinamos si es admin buscando su correo en la lista fresca de usuarios o en el contexto
+  const correoActual = (usuarios.find(u => u.id === usuario.id)?.correo || usuario?.correo || '')?.trim().toLowerCase();
+  const esAdmin = correoActual === 'yenri.moo@alumno.universidadlatino.edu.mx';
 
 
   // ── Última actualización de perfil (localStorage) ─────────────────────────
@@ -117,12 +126,12 @@ export default function ConfiguracionPerfil() {
     finally { setCambiandoPass(false); }
   };
 
-  // ── Eliminar cuenta ───────────────────────────────────────────────────────
+  // ── Eliminar cuenta (Propia) ──────────────────────────────────────────────
   const handleEliminarCuenta = async () => {
     if (!usuario.id) { toast('No se puede identificar al usuario.', 'error'); return; }
     setEliminando(true);
     try {
-      const res = await fetch(`/api/usuarios/${usuario.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/usuarios/${usuario.id}?admin_correo=${encodeURIComponent(usuario.correo)}`, { method: 'DELETE' });
       if (res.ok) {
         localStorage.removeItem('usuarioLogueado');
         localStorage.removeItem('perfil_actualizado_en');
@@ -134,6 +143,24 @@ export default function ConfiguracionPerfil() {
         setMostrarConfirmacion(false);
       }
     } catch { toast('Error de conexión con el servidor.', 'error'); setMostrarConfirmacion(false); }
+    finally { setEliminando(false); }
+  };
+
+  // ── Eliminar otro usuario (Admin) ─────────────────────────────────────────
+  const handleEliminarOtroUsuario = async () => {
+    if (!usuarioAEliminar) return;
+    setEliminando(true);
+    try {
+      const res = await fetch(`/api/usuarios/${usuarioAEliminar.id}?admin_correo=${encodeURIComponent(usuario.correo)}`, { method: 'DELETE' });
+      if (res.ok) {
+        setUsuarios(prev => prev.filter(u => u.id !== usuarioAEliminar.id));
+        toast(`Usuario eliminado correctamente.`, 'exito');
+        setUsuarioAEliminar(null);
+      } else {
+        const data = await res.json();
+        toast(data.detail || 'Error al eliminar usuario.', 'error');
+      }
+    } catch { toast('Error de conexión con el servidor.', 'error'); }
     finally { setEliminando(false); }
   };
 
@@ -492,15 +519,26 @@ export default function ConfiguracionPerfil() {
                         <p className="text-[10px] text-[#75777f] truncate">{u.correo}</p>
                       </div>
 
-                      {/* Estado */}
-                      <div className="flex-shrink-0 text-right space-y-1">
-                        <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                          esMismo ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-[#f4f3f6] text-[#75777f] border border-[#c5c6cf]/30'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${esMismo ? 'bg-green-400 animate-pulse' : 'bg-[#c5c6cf]'}`} />
-                          {esMismo ? 'En línea' : 'Desconectado'}
-                        </span>
-                        {u.turno && <p className="text-[9px] text-[#75777f] font-medium">{turnoU}</p>}
+                      {/* Estado / Acciones */}
+                      <div className="flex-shrink-0 flex items-center gap-3">
+                        <div className="text-right space-y-1">
+                          <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                            esMismo ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-[#f4f3f6] text-[#75777f] border border-[#c5c6cf]/30'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${esMismo ? 'bg-green-400 animate-pulse' : 'bg-[#c5c6cf]'}`} />
+                            {esMismo ? 'En línea' : 'Desconectado'}
+                          </span>
+                          {u.turno && <p className="text-[9px] text-[#75777f] font-medium">{turnoU}</p>}
+                        </div>
+                        {esAdmin && !esMismo && (
+                          <button
+                            onClick={() => setUsuarioAEliminar(u)}
+                            title="Eliminar usuario del sistema"
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-red-400 hover:text-white hover:bg-red-500 transition-colors border border-transparent hover:border-red-600"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">delete</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -554,29 +592,38 @@ export default function ConfiguracionPerfil() {
       </div>
 
       {/* ══ MODAL DE CONFIRMACIÓN ══════════════════════════════════════════════ */}
-      {mostrarConfirmacion && (
+      {(mostrarConfirmacion || usuarioAEliminar) && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
             <div className="px-8 pt-8 pb-4 text-center">
               <div className="w-16 h-16 rounded-2xl bg-red-100 flex items-center justify-center mx-auto mb-4 border border-red-200">
                 <span className="material-symbols-outlined text-red-600 text-3xl">warning</span>
               </div>
-              <h2 className="text-lg font-black text-[#1b1c1e]">¿Eliminar tu cuenta?</h2>
+              <h2 className="text-lg font-black text-[#1b1c1e]">
+                {mostrarConfirmacion ? '¿Eliminar tu cuenta?' : `¿Eliminar a ${usuarioAEliminar?.nombre}?`}
+              </h2>
               <p className="text-sm text-[#75777f] mt-2 leading-relaxed">
-                Esta acción es <span className="font-bold text-red-600">permanente e irreversible</span>. No podrás recuperar tu cuenta ni tus datos.
+                Esta acción es <span className="font-bold text-red-600">permanente e irreversible</span>. 
+                {mostrarConfirmacion 
+                  ? ' No podrás recuperar tu cuenta ni tus datos.' 
+                  : ' El usuario perderá su acceso al sistema inmediatamente.'}
               </p>
             </div>
             <div className="mx-8 mb-6 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
               <p className="text-[11px] text-red-600 font-semibold text-center">
-                Esta acción eliminará tu acceso al sistema de inmediato.
+                Esta acción se aplicará de inmediato.
               </p>
             </div>
             <div className="px-8 pb-8 flex gap-3">
-              <button onClick={() => setMostrarConfirmacion(false)} disabled={eliminando}
+              <button 
+                onClick={() => { setMostrarConfirmacion(false); setUsuarioAEliminar(null); }} 
+                disabled={eliminando}
                 className="flex-1 py-3 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all disabled:opacity-50">
                 Cancelar
               </button>
-              <button onClick={handleEliminarCuenta} disabled={eliminando}
+              <button 
+                onClick={mostrarConfirmacion ? handleEliminarCuenta : handleEliminarOtroUsuario} 
+                disabled={eliminando}
                 className="flex-1 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-red-600/20">
                 <span className="material-symbols-outlined text-[17px]">{eliminando ? 'hourglass_empty' : 'delete_forever'}</span>
                 {eliminando ? 'Eliminando...' : 'Sí, eliminar'}

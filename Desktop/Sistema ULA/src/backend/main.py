@@ -386,13 +386,29 @@ def registrar_usuario(datos: RegistroUsuario):
 
 
 @app.delete("/api/usuarios/{usuario_id}")
-def eliminar_usuario(usuario_id: int):
+def eliminar_usuario(usuario_id: int, admin_correo: str):
+    correo_admin_permitido = "yenri.moo@alumno.universidadlatino.edu.mx"
+    
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT correo FROM usuarios WHERE id = %s", (usuario_id,))
+            user_a_eliminar = cursor.fetchone()
+            
+            if not user_a_eliminar:
+                raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+                
+            correo_eliminar = user_a_eliminar['correo']
+            
+            # Un usuario puede eliminarse a sí mismo. Para eliminar a otros, debe ser el admin.
+            if admin_correo.lower() != correo_eliminar.lower() and admin_correo.lower() != correo_admin_permitido:
+                raise HTTPException(status_code=403, detail="Solo el administrador puede eliminar a otros usuarios.")
+                
             cursor.execute("DELETE FROM usuarios WHERE id = %s", (usuario_id,))
         connection.commit()
         return {"message": "Cuenta eliminada correctamente"}
+    except HTTPException:
+        raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar la cuenta: {str(e)}")
     finally:
