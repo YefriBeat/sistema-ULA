@@ -108,10 +108,18 @@ def _enviar_smtp(correo_destino: str, asunto: str, html: str):
     msg["To"] = correo_destino
     msg.attach(MIMEText(html, "html"))
 
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.sendmail(smtp_user, correo_destino, msg.as_string())
+    try:
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
+                server.login(smtp_user, smtp_password)
+                server.sendmail(smtp_user, correo_destino, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+                server.sendmail(smtp_user, correo_destino, msg.as_string())
+    except TimeoutError:
+        raise ValueError("La conexión al servidor de correo tardó demasiado. Verifica los puertos y que Render permita la salida SMTP.")
 
 
 def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):

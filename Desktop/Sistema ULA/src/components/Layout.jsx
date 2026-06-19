@@ -22,10 +22,10 @@ export default function Layout() {
 
   return (
     <div className="bg-[#faf9fc] text-[#1b1c1e] antialiased flex flex-col min-h-screen font-manrope">
-      
+
       {/* FONDO OSCURO (OVERLAY) PARA MÓVILES */}
       {menuAbierto && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden transition-opacity"
           onClick={cerrarMenu}
         ></div>
@@ -33,7 +33,7 @@ export default function Layout() {
 
       {/* HEADER SIEMPRE VISIBLE - Corrección: Se eliminó 'w-full' para que no se salga de la pantalla */}
       <header className="bg-white border-b border-[#c5c6cf]/30 flex justify-between items-center px-4 sm:px-8 py-3 h-16 z-30 fixed top-0 right-0 left-0 lg:left-64 shadow-sm transition-all duration-300">
-        
+
         {/* Botón Menú y Logo (Izquierda - Solo Móvil) */}
         <div className="flex items-center gap-3 lg:hidden">
           <button onClick={() => setMenuAbierto(true)} aria-label="Abrir menú de navegación" className="p-1 hover:bg-slate-100 rounded-md">
@@ -59,12 +59,11 @@ export default function Layout() {
       </header>
 
       <div className="flex flex-1 pt-16">
-        
+
         {/* SIDEBAR (MENÚ LATERAL) */}
-        <aside 
-          className={`bg-[#1c355e] min-h-screen w-64 border-r border-white/5 shadow-2xl fixed left-0 top-0 flex flex-col z-50 transform transition-transform duration-300 ease-in-out ${
-            menuAbierto ? 'translate-x-0' : '-translate-x-full'
-          } lg:translate-x-0`}
+        <aside
+          className={`bg-[#1c355e] min-h-screen w-64 border-r border-white/5 shadow-2xl fixed left-0 top-0 flex flex-col z-50 transform transition-transform duration-300 ease-in-out ${menuAbierto ? 'translate-x-0' : '-translate-x-full'
+            } lg:translate-x-0`}
         >
           {/* Botón de cerrar (Solo móvil) */}
           <button
@@ -77,7 +76,7 @@ export default function Layout() {
 
           <div className="px-6 py-10 flex flex-col items-center text-center">
             <div className="w-full flex items-center justify-center px-2 mb-2">
-               <img src={logo} alt="Universidad Latino Logo" className="w-24 h-24 sm:w-32 sm:h-32 object-contain mb-2 drop-shadow-lg" />
+              <img src={logo} alt="Universidad Latino Logo" className="w-24 h-24 sm:w-32 sm:h-32 object-contain mb-2 drop-shadow-lg" />
             </div>
             <p className="text-white text-[10px] uppercase tracking-[0.2em] font-extrabold opacity-80 mt-2">PREFECTURA CENTRAL</p>
           </div>
@@ -92,10 +91,10 @@ export default function Layout() {
               <span className={`material-symbols-outlined text-xl ${isActive('horarios') ? '' : 'opacity-70 group-hover:opacity-100'}`}>calendar_today</span>
               <span className="text-sm">Gestión de Horarios</span>
             </Link>
-            
+
             <Link to="/gestion-aulas" onClick={cerrarMenu} className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${isActive('gestion-aulas') ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
               <span className={`material-symbols-outlined text-xl ${isActive('gestion-aulas') ? '' : 'opacity-70 group-hover:opacity-100'}`}>meeting_room</span>
-              <span className="text-sm">Gestión de Aulas</span>
+              <span className="text-sm">Gestión de Espacios  </span>
             </Link>
 
             <Link to="/gestion-docentes" onClick={cerrarMenu} className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${isActive('gestion-docentes') ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
@@ -126,7 +125,7 @@ export default function Layout() {
       {/* FOOTER */}
       <footer className="bg-[#1c2738] w-full py-5 px-4 sm:px-8 flex flex-col md:flex-row justify-between items-center z-20 relative mt-auto border-t border-white/5 lg:pl-[288px] gap-4 md:gap-0">
         <div className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] text-center md:text-left">
-            © 2026 UNIVERSIDAD LATINO - SISTEMA DE GESTIÓN INSTITUCIONAL
+          © 2026 UNIVERSIDAD LATINO - SISTEMA DE GESTIÓN INSTITUCIONAL
         </div>
         <nav className="flex flex-wrap justify-center items-center gap-4 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
           <Link to="/soporte" className="hover:text-white transition-colors">SOPORTE TÉCNICO</Link>
