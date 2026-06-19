@@ -481,148 +481,175 @@ export default function GestionDocentes() {
         </button>
       </div>
 
-      {/* ── CARDS ──────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {cargando ? (
-          <div className="col-span-full flex flex-col items-center py-16 text-[#75777f]">
-            <span className="material-symbols-outlined animate-spin text-3xl mb-2">sync</span>
-            <p className="font-semibold">Cargando docentes...</p>
-          </div>
-        ) : docentesFiltrados.length === 0 ? (
-          <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30">
-            <span className="material-symbols-outlined text-5xl text-[#c5c6cf] mb-3 block">school</span>
-            <p className="font-bold text-[#44464e]">
-              {docentes.length === 0
-                ? 'No hay docentes en la base de datos. Carga un horario en PDF primero.'
-                : 'Sin docentes en esta categoría.'}
-            </p>
-          </div>
-        ) : (
-          docentesFiltrados.map(docente => {
-            const { label, cls, icon } = getBadge(docente.estado);
-            const esSuplente  = docente.estado === 'suplente_asignado';
-            const esPorEntrar = docente.estado === 'por_entrar';
-            const minsAhora   = ahora.getHours() * 60 + ahora.getMinutes();
+      {/* ── CONTENEDOR PRINCIPAL: DOCENTES (Izquierda/Centro) y ESTADÍSTICAS (Derecha) ── */}
+      <div className="flex flex-col xl:flex-row gap-8 items-start">
+        
+        {/* ── CARDS DE DOCENTES ──────────────────────────────────────────────── */}
+        <div className="flex-1 w-full">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {cargando ? (
+              <div className="col-span-full flex flex-col items-center py-16 text-[#75777f]">
+                <span className="material-symbols-outlined animate-spin text-3xl mb-2">sync</span>
+                <p className="font-semibold">Cargando docentes...</p>
+              </div>
+            ) : docentesFiltrados.length === 0 ? (
+              <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30">
+                <span className="material-symbols-outlined text-5xl text-[#c5c6cf] mb-3 block">school</span>
+                <p className="font-bold text-[#44464e]">
+                  {docentes.length === 0
+                    ? 'No hay docentes en la base de datos. Carga un horario en PDF primero.'
+                    : 'Sin docentes en esta categoría.'}
+                </p>
+              </div>
+            ) : (
+              docentesFiltrados.map(docente => {
+                const { label, cls, icon } = getBadge(docente.estado);
+                const esSuplente  = docente.estado === 'suplente_asignado';
+                const esPorEntrar = docente.estado === 'por_entrar';
+                const minsAhora   = ahora.getHours() * 60 + ahora.getMinutes();
 
-            return (
-              <div
-                key={docente.nombre}
-                className={`bg-white border rounded-2xl p-5 shadow-sm flex flex-col gap-3 transition-all ${
-                  esSuplente  ? 'border-orange-200' :
-                  esPorEntrar ? 'border-amber-200'  :
-                  docente.estado === 'en_clase' ? 'border-red-200' :
-                  'border-[#c5c6cf]/30'
-                }`}
-              >
-                {/* ── Cabecera compacta ── */}
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-[#0e2045] text-white flex items-center justify-center font-bold text-base uppercase shadow-sm flex-shrink-0">
-                    {docente.nombre.charAt(0)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h2 className="text-sm font-bold text-[#1b1c1e] leading-tight truncate">{docente.nombre}</h2>
-                    {docente.licenciaturas?.[0] && (
-                      <p className="text-[11px] text-[#75777f] truncate mt-0.5">{docente.licenciaturas[0]}</p>
-                    )}
-                  </div>
-                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-0.5 whitespace-nowrap flex-shrink-0 ${cls}`}>
-                    <span className="material-symbols-outlined text-[11px]">{icon}</span>
-                    {label}
-                  </span>
-                </div>
-
-                {/* ── Banner suplencia activa ── */}
-                {esSuplente && docente.suplencia_activa && (
-                  <div className="flex items-center justify-between gap-2 text-xs text-orange-600 font-semibold bg-orange-50 border border-orange-100 px-3 py-2 rounded-xl">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[14px] flex-shrink-0">swap_horiz</span>
-                      <span className="truncate">
-                        Cubre: <span className="font-bold">{docente.suplencia_activa.suplente_nombre}</span>
+                return (
+                  <div
+                    key={docente.nombre}
+                    className={`bg-white border rounded-2xl p-5 shadow-sm flex flex-col gap-3 transition-all ${
+                      esSuplente  ? 'border-orange-200' :
+                      esPorEntrar ? 'border-amber-200'  :
+                      docente.estado === 'en_clase' ? 'border-red-200' :
+                      'border-[#c5c6cf]/30'
+                    }`}
+                  >
+                    {/* ── Cabecera compacta ── */}
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-[#0e2045] text-white flex items-center justify-center font-bold text-base uppercase shadow-sm flex-shrink-0">
+                        {docente.nombre.charAt(0)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h2 className="text-sm font-bold text-[#1b1c1e] leading-tight truncate">{docente.nombre}</h2>
+                        {docente.licenciaturas?.[0] && (
+                          <p className="text-[11px] text-[#75777f] truncate mt-0.5">{docente.licenciaturas[0]}</p>
+                        )}
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-0.5 whitespace-nowrap flex-shrink-0 ${cls}`}>
+                        <span className="material-symbols-outlined text-[11px]">{icon}</span>
+                        {label}
                       </span>
-                      <span className="font-mono opacity-70 flex-shrink-0">{docente.suplencia_activa.hora_inicio}–{docente.suplencia_activa.hora_fin}</span>
                     </div>
+
+                    {/* ── Banner suplencia activa ── */}
+                    {esSuplente && docente.suplencia_activa && (
+                      <div className="flex items-center justify-between gap-2 text-xs text-orange-600 font-semibold bg-orange-50 border border-orange-100 px-3 py-2 rounded-xl">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="material-symbols-outlined text-[14px] flex-shrink-0">swap_horiz</span>
+                          <span className="truncate">
+                            Cubre: <span className="font-bold">{docente.suplencia_activa.suplente_nombre}</span>
+                          </span>
+                          <span className="font-mono opacity-70 flex-shrink-0">{docente.suplencia_activa.hora_inicio}–{docente.suplencia_activa.hora_fin}</span>
+                        </div>
+                        <button
+                          onClick={() => handleCancelarSuplencia(docente.suplencia_activa.id, docente.nombre)}
+                          title="Cancelar suplencia"
+                          className="text-orange-300 hover:text-red-500 transition-colors flex-shrink-0"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">cancel</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* ── Banner por entrar ── */}
+                    {esPorEntrar && docente.proxima_clase && (
+                      <div className="flex items-center gap-2 text-xs text-amber-700 font-semibold bg-amber-50 border border-amber-100 px-3 py-2 rounded-xl">
+                        <span className="material-symbols-outlined text-[14px]">schedule</span>
+                        <span>
+                          Entra en <span className="font-bold">{docente.proxima_clase.inicio_mins - minsAhora} min</span>
+                          {docente.proxima_clase.asignatura ? ` · ${docente.proxima_clase.asignatura}` : ''}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* ── Banner cubriendo suplencia ── */}
+                    {docente.cubriendo_suplencia && (
+                      <div className="flex items-center gap-1.5 text-xs text-blue-700 font-semibold bg-blue-50 border border-blue-100 px-3 py-2 rounded-xl">
+                        <span className="material-symbols-outlined text-[14px] flex-shrink-0">swap_horiz</span>
+                        <span className="truncate">
+                          Cubriendo a <span className="font-bold">{docente.cubriendo_suplencia.docente_ausente}</span>
+                          {docente.cubriendo_suplencia.materia ? ` · ${docente.cubriendo_suplencia.materia}` : ''}
+                        </span>
+                        <span className="font-mono opacity-70 flex-shrink-0 ml-auto">
+                          {docente.cubriendo_suplencia.hora_inicio}–{docente.cubriendo_suplencia.hora_fin}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* ── Clases de hoy ── */}
+                    {docente.horarios_hoy?.length > 0 ? (
+                      <div className="space-y-1">
+                        {docente.horarios_hoy.slice(0, 3).map((h, i) => {
+                          const activa  = minsAhora >= h.inicio_mins && minsAhora <= h.fin_mins;
+                          const proxima = h.inicio_mins > minsAhora && h.inicio_mins - minsAhora <= MINUTOS_AVISO;
+                          return (
+                            <div key={i} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium ${
+                              activa  ? 'bg-red-50 text-red-700 border border-red-100' :
+                              proxima ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                              'bg-[#f4f3f6] text-[#44464e]'
+                            }`}>
+                              <span className="material-symbols-outlined text-[12px] flex-shrink-0">
+                                {activa ? 'play_circle' : proxima ? 'schedule' : 'radio_button_unchecked'}
+                              </span>
+                              <span className="font-mono flex-shrink-0">{minsToHora(h.inicio_mins)}–{minsToHora(h.fin_mins)}</span>
+                              <span className="truncate">{h.asignatura}</span>
+                            </div>
+                          );
+                        })}
+                        {docente.horarios_hoy.length > 3 && (
+                          <p className="text-[11px] text-[#75777f] pl-2">+{docente.horarios_hoy.length - 3} clases más hoy</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#f4f3f6] text-[11px] text-[#75777f]">
+                        <span className="material-symbols-outlined text-[13px]">event_busy</span>
+                        Sin clases hoy
+                      </div>
+                    )}
+
+                    {/* ── Botón asignar suplente (siempre al fondo) ── */}
                     <button
-                      onClick={() => handleCancelarSuplencia(docente.suplencia_activa.id, docente.nombre)}
-                      title="Cancelar suplencia"
-                      className="text-orange-300 hover:text-red-500 transition-colors flex-shrink-0"
+                      onClick={() => abrirModalSuplente(docente)}
+                      className={`mt-auto w-full py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all border ${
+                        esSuplente
+                          ? 'bg-orange-50 border-orange-200 text-orange-600 hover:bg-orange-100'
+                          : 'bg-[#f4f3f6] border-[#c5c6cf]/40 text-[#44464e] hover:bg-[#1c355e]/5 hover:border-[#1c355e]/20 hover:text-[#1c355e]'
+                      }`}
                     >
-                      <span className="material-symbols-outlined text-[16px]">cancel</span>
+                      <span className="material-symbols-outlined text-[15px]">group_add</span>
+                      Asignar Suplente
                     </button>
                   </div>
-                )}
+                );
+              })
+            )}
+          </div>
+        </div>
 
-                {/* ── Banner por entrar ── */}
-                {esPorEntrar && docente.proxima_clase && (
-                  <div className="flex items-center gap-2 text-xs text-amber-700 font-semibold bg-amber-50 border border-amber-100 px-3 py-2 rounded-xl">
-                    <span className="material-symbols-outlined text-[14px]">schedule</span>
-                    <span>
-                      Entra en <span className="font-bold">{docente.proxima_clase.inicio_mins - minsAhora} min</span>
-                      {docente.proxima_clase.asignatura ? ` · ${docente.proxima_clase.asignatura}` : ''}
-                    </span>
-                  </div>
-                )}
+        {/* ── ESTADÍSTICAS (COSTADO DERECHO) ─────────────────────────────────── */}
+        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-8">
+          <div className="bg-[#1c355e] text-white p-6 rounded-2xl shadow-lg">
+            <p className="text-xs font-bold uppercase opacity-80">Total Docentes</p>
+            <p className="text-4xl font-extrabold mt-1">{totalDocentes}</p>
+          </div>
+          <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
+            <p className="text-xs font-bold uppercase text-[#44464e]">Disponibles</p>
+            <p className="text-4xl font-extrabold text-[#1c9c72] mt-1">{disponibles}</p>
+          </div>
+          <div className="bg-white border border-red-200 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
+            <p className="text-xs font-bold uppercase text-[#44464e]">En Clase</p>
+            <p className="text-4xl font-extrabold text-red-600 mt-1">{enClase}</p>
+          </div>
+          <div className="bg-white border border-amber-200 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
+            <p className="text-xs font-bold uppercase text-[#44464e]">Por Entrar</p>
+            <p className="text-4xl font-extrabold text-amber-600 mt-1">{porEntrar}</p>
+          </div>
+        </div>
 
-                {/* ── Banner cubriendo suplencia ── */}
-                {docente.cubriendo_suplencia && (
-                  <div className="flex items-center gap-1.5 text-xs text-blue-700 font-semibold bg-blue-50 border border-blue-100 px-3 py-2 rounded-xl">
-                    <span className="material-symbols-outlined text-[14px] flex-shrink-0">swap_horiz</span>
-                    <span className="truncate">
-                      Cubriendo a <span className="font-bold">{docente.cubriendo_suplencia.docente_ausente}</span>
-                      {docente.cubriendo_suplencia.materia ? ` · ${docente.cubriendo_suplencia.materia}` : ''}
-                    </span>
-                    <span className="font-mono opacity-70 flex-shrink-0 ml-auto">
-                      {docente.cubriendo_suplencia.hora_inicio}–{docente.cubriendo_suplencia.hora_fin}
-                    </span>
-                  </div>
-                )}
-
-                {/* ── Clases de hoy ── */}
-                {docente.horarios_hoy?.length > 0 ? (
-                  <div className="space-y-1">
-                    {docente.horarios_hoy.slice(0, 3).map((h, i) => {
-                      const activa  = minsAhora >= h.inicio_mins && minsAhora <= h.fin_mins;
-                      const proxima = h.inicio_mins > minsAhora && h.inicio_mins - minsAhora <= MINUTOS_AVISO;
-                      return (
-                        <div key={i} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium ${
-                          activa  ? 'bg-red-50 text-red-700 border border-red-100' :
-                          proxima ? 'bg-amber-50 text-amber-700 border border-amber-100' :
-                          'bg-[#f4f3f6] text-[#44464e]'
-                        }`}>
-                          <span className="material-symbols-outlined text-[12px] flex-shrink-0">
-                            {activa ? 'play_circle' : proxima ? 'schedule' : 'radio_button_unchecked'}
-                          </span>
-                          <span className="font-mono flex-shrink-0">{minsToHora(h.inicio_mins)}–{minsToHora(h.fin_mins)}</span>
-                          <span className="truncate">{h.asignatura}</span>
-                        </div>
-                      );
-                    })}
-                    {docente.horarios_hoy.length > 3 && (
-                      <p className="text-[11px] text-[#75777f] pl-2">+{docente.horarios_hoy.length - 3} clases más hoy</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#f4f3f6] text-[11px] text-[#75777f]">
-                    <span className="material-symbols-outlined text-[13px]">event_busy</span>
-                    Sin clases hoy
-                  </div>
-                )}
-
-                {/* ── Botón asignar suplente (siempre al fondo) ── */}
-                <button
-                  onClick={() => abrirModalSuplente(docente)}
-                  className={`mt-auto w-full py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all border ${
-                    esSuplente
-                      ? 'bg-orange-50 border-orange-200 text-orange-600 hover:bg-orange-100'
-                      : 'bg-[#f4f3f6] border-[#c5c6cf]/40 text-[#44464e] hover:bg-[#1c355e]/5 hover:border-[#1c355e]/20 hover:text-[#1c355e]'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[15px]">group_add</span>
-                  Asignar Suplente
-                </button>
-              </div>
-            );
-          })
-        )}
       </div>
 
       {/* ── MODAL CONFIRMACIÓN ─────────────────────────────────────────────── */}
@@ -651,26 +678,6 @@ export default function GestionDocentes() {
           </div>
         </div>
       )}
-
-      {/* ── ESTADÍSTICAS ───────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-[#1c355e] text-white p-6 rounded-2xl shadow-lg">
-          <p className="text-xs font-bold uppercase opacity-80">Total Docentes</p>
-          <p className="text-3xl font-extrabold">{totalDocentes}</p>
-        </div>
-        <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm">
-          <p className="text-xs font-bold uppercase text-[#44464e]">Disponibles</p>
-          <p className="text-3xl font-extrabold text-[#1c9c72]">{disponibles}</p>
-        </div>
-        <div className="bg-white border border-red-200 p-6 rounded-2xl shadow-sm">
-          <p className="text-xs font-bold uppercase text-[#44464e]">En Clase</p>
-          <p className="text-3xl font-extrabold text-red-600">{enClase}</p>
-        </div>
-        <div className="bg-white border border-amber-200 p-6 rounded-2xl shadow-sm">
-          <p className="text-xs font-bold uppercase text-[#44464e]">Por Entrar</p>
-          <p className="text-3xl font-extrabold text-amber-600">{porEntrar}</p>
-        </div>
-      </div>
 
       <ToastContainer toasts={toasts} />
     </div>
