@@ -482,7 +482,7 @@ export default function GestionDocentes() {
       </div>
 
       {/* ── CONTENEDOR PRINCIPAL: DOCENTES (Izquierda/Centro) y ESTADÍSTICAS (Derecha) ── */}
-      <div className="flex flex-col xl:flex-row gap-8 items-start">
+      <div className="flex flex-col xl:flex-row gap-8 items-stretch">
         
         {/* ── CARDS DE DOCENTES ──────────────────────────────────────────────── */}
         <div className="flex-1 w-full">
@@ -631,7 +631,7 @@ export default function GestionDocentes() {
         </div>
 
         {/* ── ESTADÍSTICAS (COSTADO DERECHO) ─────────────────────────────────── */}
-        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-8">
+        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-24 self-start">
           <div className="bg-[#1c355e] text-white p-6 rounded-2xl shadow-lg">
             <p className="text-xs font-bold uppercase opacity-80">Total Docentes</p>
             <p className="text-4xl font-extrabold mt-1">{totalDocentes}</p>
