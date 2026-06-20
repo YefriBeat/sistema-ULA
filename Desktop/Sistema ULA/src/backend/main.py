@@ -40,6 +40,9 @@ def migrar_columnas_verificacion():
                 "ALTER TABLE usuarios ADD COLUMN reset_code_expira DATETIME NULL",
                 "ALTER TABLE usuarios ADD COLUMN created_at DATETIME DEFAULT NOW()",
                 "ALTER TABLE horarios ADD COLUMN fecha_clase DATE NULL",
+                "ALTER TABLE horarios ADD COLUMN semestre VARCHAR(50) NULL",
+                "ALTER TABLE horarios ADD COLUMN cuatrimestre VARCHAR(50) NULL",
+                "ALTER TABLE horarios ADD COLUMN grupo VARCHAR(50) NULL",
                 """CREATE TABLE IF NOT EXISTS docentes (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     nombre VARCHAR(200) NOT NULL,
@@ -221,6 +224,9 @@ class Horario(BaseModel):
     horario: str
     aulaAsignada: str
     archivo: str
+    semestre: str = ""
+    cuatrimestre: str = ""
+    grupo: str = ""
 
 class Aula(BaseModel):
     nombre: str
@@ -341,7 +347,14 @@ def _normalizar_licenciatura(texto: str) -> str:
     texto = re.sub(r'([A-Za-záéíóúÁÉÍÓÚñÑ]{5,})\1', r'\1', texto)
     # Palabras separadas repetidas: "Licenciatura Licenciatura" → "Licenciatura"
     texto = re.sub(r'\b(\w+)\s+\1\b', r'\1', texto, flags=re.IGNORECASE)
-    return ' '.join(texto.split()).strip()
+    texto = ' '.join(texto.split()).strip()
+    
+    # Extraer siglas si están entre paréntesis, por ejemplo: "(ISC Plan 2020)" o "(Der Plan 2024)" -> "ISC", "DER"
+    match = re.search(r'\(\s*([A-Za-z]{2,6})\b', texto)
+    if match:
+        return match.group(1).upper()
+        
+    return texto
 
 
 def _time_to_mins(t):
@@ -607,6 +620,9 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
             raise ValueError("Formato no soportado. Usa PDF o imágenes (PNG, JPG).")
         
         licenciatura_extraida = "Licenciatura no identificada"
+        semestre_extraido = ""
+        cuatrimestre_extraido = ""
+        grupo_extraido = ""
         mapa_docentes = {}
         horarios_compilados = []
         
@@ -618,9 +634,15 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                 for page_num, page in enumerate(pdf.pages):
                     texto_pagina = page.extract_text() or ""
                     for linea in texto_pagina.split('\n'):
-                        if "Licenciatura en" in linea or "LICENCIATURA" in linea.upper():
+                        linea_upper = linea.upper()
+                        if "LICENCIATURA EN" in linea_upper or "LICENCIATURA" in linea_upper:
                             licenciatura_extraida = _normalizar_licenciatura(linea.strip())
-                            break
+                        match_sem = re.search(r'SEMESTRE:\s*([^\s]+)', linea_upper)
+                        if match_sem: semestre_extraido = match_sem.group(1)
+                        match_cuat = re.search(r'CUATRIMESTRE:\s*([^\s]+)', linea_upper)
+                        if match_cuat: cuatrimestre_extraido = match_cuat.group(1)
+                        match_grupo = re.search(r'GRUPO:\s*([^\s]+)', linea_upper)
+                        if match_grupo: grupo_extraido = match_grupo.group(1)
                     
                     tables = page.extract_tables()
                     if not tables:
@@ -702,13 +724,15 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                                         "licenciatura": licenciatura_extraida,
                                         "asignatura": asignatura_celda.title(),
                                         "horario_resumen": f"{dia_nombre} {horario_slot}",
-                                        "aula_asignada": ""
+                                        "aula_asignada": "",
+                                        "semestre": semestre_extraido,
+                                        "cuatrimestre": cuatrimestre_extraido,
+                                        "grupo": grupo_extraido
                                     })
         
         # ========== PROCESAR IMÁGENES ==========
         else:
             try:
-                import re
                 import numpy as np
                 import easyocr
                 from PIL import Image
@@ -736,11 +760,17 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
 
                 elementos.sort(key=lambda e: e["y"])
 
-                # Extraer licenciatura
+                # Extraer licenciatura, semestre, cuatrimestre, grupo
                 for elem in elementos:
-                    if "Licenciatura" in elem["texto"] or "licenciatura" in elem["texto"].lower():
+                    texto_upper = elem["texto"].upper()
+                    if "LICENCIATURA" in texto_upper:
                         licenciatura_extraida = _normalizar_licenciatura(elem["texto"].strip())
-                        break
+                    match_sem = re.search(r'SEMESTRE:\s*([^\s]+)', texto_upper)
+                    if match_sem: semestre_extraido = match_sem.group(1)
+                    match_cuat = re.search(r'CUATRIMESTRE:\s*([^\s]+)', texto_upper)
+                    if match_cuat: cuatrimestre_extraido = match_cuat.group(1)
+                    match_grupo = re.search(r'GRUPO:\s*([^\s]+)', texto_upper)
+                    if match_grupo: grupo_extraido = match_grupo.group(1)
 
                 # Agrupar elementos en filas (aumentar tolerancia a 25px para mejor agrupación)
                 filas = []
@@ -837,7 +867,10 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                                     "licenciatura": licenciatura_extraida,
                                     "asignatura": celda.title(),
                                     "horario_resumen": f"{dia_asignado} {horario_slot}",
-                                    "aula_asignada": ""
+                                    "aula_asignada": "",
+                                    "semestre": semestre_extraido,
+                                    "cuatrimestre": cuatrimestre_extraido,
+                                    "grupo": grupo_extraido
                                 })
 
                 # OPCIÓN 2: Si no se estructuró bien, generar horarios de texto directo
@@ -860,7 +893,10 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                                 "licenciatura": licenciatura_extraida,
                                 "asignatura": texto.title(),
                                 "horario_resumen": "Verificar en imagen",
-                                "aula_asignada": ""
+                                "aula_asignada": "",
+                                "semestre": semestre_extraido,
+                                "cuatrimestre": cuatrimestre_extraido,
+                                "grupo": grupo_extraido
                             })
                             contador += 1
                             if contador >= 20:  # Máximo 20 fallback para evitar spam
@@ -874,7 +910,10 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                         "licenciatura": licenciatura_extraida,
                         "asignatura": f"Se detectó imagen. Se extrajeron {len(elementos)} elementos de texto. Verifica que el formato sea correcto.",
                         "horario_resumen": "Revisar imagen",
-                        "aula_asignada": ""
+                        "aula_asignada": "",
+                        "semestre": semestre_extraido,
+                        "cuatrimestre": cuatrimestre_extraido,
+                        "grupo": grupo_extraido
                     })
 
             except ImportError:
@@ -1028,8 +1067,8 @@ def guardar_horarios(horarios: list[dict]):
             for h in horarios:
                 sql = """
                     INSERT INTO horarios
-                    (docente, licenciatura, asignatura, horario, aula_asignada, archivo, fecha_creacion, fecha_clase)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), CURDATE())
+                    (docente, licenciatura, asignatura, horario, aula_asignada, archivo, fecha_creacion, fecha_clase, semestre, cuatrimestre, grupo)
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), CURDATE(), %s, %s, %s)
                 """
                 cursor.execute(sql, (
                     h.get("docente", ""),
@@ -1037,7 +1076,10 @@ def guardar_horarios(horarios: list[dict]):
                     h.get("asignatura", ""),
                     h.get("horario", h.get("horario_resumen", "")),
                     h.get("aulaAsignada", h.get("aula_asignada", "Por asignar")),
-                    h.get("archivo", "")
+                    h.get("archivo", ""),
+                    h.get("semestre", ""),
+                    h.get("cuatrimestre", ""),
+                    h.get("grupo", "")
                 ))
         connection.commit()
         return {"message": "Horarios guardados"}
@@ -1070,6 +1112,9 @@ def obtener_horarios():
                     h.aula_asignada,
                     MIN(h.archivo)      AS archivo,
                     MAX(h.fecha_creacion) AS fecha_creacion,
+                    MAX(h.semestre)     AS semestre,
+                    MAX(h.cuatrimestre) AS cuatrimestre,
+                    MAX(h.grupo)        AS grupo,
                     a.en_mantenimiento,
                     a.fin_mantenimiento,
                     a.aula_temporal
@@ -1330,7 +1375,7 @@ def obtener_horarios_archivo(nombre_archivo: str):
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT id, docente, licenciatura, asignatura, horario, aula_asignada, fecha_creacion
+                SELECT id, docente, licenciatura, asignatura, horario, aula_asignada, fecha_creacion, semestre, cuatrimestre, grupo
                 FROM horarios 
                 WHERE archivo = %s
                 ORDER BY horario

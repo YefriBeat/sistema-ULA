@@ -22,6 +22,7 @@ export default function GestionHorarios() {
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   // ocupacion: { "A24": { matutino: true, vespertino: true }, ... }
   const [ocupacion, setOcupacion] = useState({});
+  const [archivosSeleccionados, setArchivosSeleccionados] = useState([]);
 
   const esBloqueada = (nombreAula) => {
     const d = ocupacion[nombreAula];
@@ -90,6 +91,50 @@ export default function GestionHorarios() {
         } catch (err) {
           console.error("Error al eliminar archivo:", err);
           toast("Error en la comunicación con el servidor", "error");
+        }
+      }
+    });
+  };
+
+  const toggleSeleccionArchivo = (e, nombreArchivo) => {
+    e.stopPropagation();
+    setArchivosSeleccionados(prev => 
+      prev.includes(nombreArchivo)
+        ? prev.filter(n => n !== nombreArchivo)
+        : [...prev, nombreArchivo]
+    );
+  };
+
+  const seleccionarTodos = () => {
+    if (archivosSeleccionados.length === archivosGuardados.length) {
+      setArchivosSeleccionados([]);
+    } else {
+      setArchivosSeleccionados(archivosGuardados.map(a => a.archivo));
+    }
+  };
+
+  const eliminarArchivosSeleccionados = () => {
+    if (archivosSeleccionados.length === 0) return;
+    
+    setConfirmacion({
+      mensaje: `¿Está seguro de que desea eliminar los ${archivosSeleccionados.length} archivos seleccionados y todos sus horarios?`,
+      onConfirmar: async () => {
+        try {
+          const promesas = archivosSeleccionados.map(nombre => 
+            fetch(`/api/archivos/${encodeURIComponent(nombre)}`, { method: 'DELETE' })
+          );
+          await Promise.all(promesas);
+          
+          toast(`${archivosSeleccionados.length} archivos eliminados exitosamente`, "exito");
+          cargarArchivosGuardados();
+          if (archivosSeleccionados.includes(archivoSeleccionado)) {
+            setArchivoSeleccionado(null);
+            setDetallesArchivo(null);
+          }
+          setArchivosSeleccionados([]);
+        } catch (err) {
+          console.error("Error al eliminar archivos:", err);
+          toast("Error al eliminar algunos archivos", "error");
         }
       }
     });
@@ -179,6 +224,17 @@ export default function GestionHorarios() {
     }
   };
 
+  const validarArchivoNoDuplicado = (file) => {
+    const duplicado = archivosGuardados.some(
+      (guardado) => guardado.archivo.toLowerCase() === file.name.toLowerCase()
+    );
+    if (duplicado) {
+      toast(`Ya existe un archivo cargado con el nombre "${file.name}".`, "error");
+      return false;
+    }
+    return true;
+  };
+
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -186,17 +242,23 @@ export default function GestionHorarios() {
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       const tiposPermitidos = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
-      if (tiposPermitidos.includes(file.type)) {
-        setArchivo(file);
-      } else {
+      if (!tiposPermitidos.includes(file.type)) {
         toast("El archivo debe ser PDF o imagen (PNG, JPG).", "advertencia");
+        return;
       }
+      if (!validarArchivoNoDuplicado(file)) return;
+      setArchivo(file);
     }
   };
 
   const handleFileSelect = (e) => {
     if (e.target.files && e.target.files[0]) {
-      setArchivo(e.target.files[0]);
+      const file = e.target.files[0];
+      if (!validarArchivoNoDuplicado(file)) {
+        e.target.value = null;
+        return;
+      }
+      setArchivo(file);
     }
   };
 
@@ -230,7 +292,10 @@ export default function GestionHorarios() {
       asignatura: item.asignatura,
       horario: item.horario_resumen,
       aulaAsignada: asignaciones[index] || "Por asignar",
-      archivo: archivo.name
+      archivo: archivo.name,
+      semestre: item.semestre || "",
+      cuatrimestre: item.cuatrimestre || "",
+      grupo: item.grupo || ""
     }));
 
     try {
@@ -304,13 +369,35 @@ export default function GestionHorarios() {
             <div className="text-sm text-[#44464e]">
               <span className="font-bold text-[#1c355e]">{archivosGuardados.length}</span> archivos cargados
             </div>
-            <button 
-              onClick={() => cargarArchivosGuardados()}
-              className="px-4 py-2 flex items-center gap-2 text-xs font-bold bg-[#f4f3f6] text-[#1c355e] rounded-lg hover:bg-[#eaeaee] transition-all"
-            >
-              <span className="material-symbols-outlined text-[16px]">refresh</span>
-              Actualizar
-            </button>
+            <div className="flex items-center gap-3">
+              {archivosGuardados.length > 0 && (
+                <button 
+                  onClick={seleccionarTodos}
+                  className="px-4 py-2 flex items-center gap-2 text-xs font-bold bg-[#f4f3f6] text-[#1c355e] rounded-lg hover:bg-[#eaeaee] transition-all"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {archivosSeleccionados.length === archivosGuardados.length ? 'deselect' : 'select_all'}
+                  </span>
+                  <span className="hidden sm:inline">{archivosSeleccionados.length === archivosGuardados.length ? 'Deseleccionar' : 'Seleccionar Todos'}</span>
+                </button>
+              )}
+              {archivosSeleccionados.length > 0 && (
+                <button 
+                  onClick={eliminarArchivosSeleccionados}
+                  className="px-4 py-2 flex items-center gap-2 text-xs font-bold bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
+                >
+                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                  <span className="hidden sm:inline">Eliminar ({archivosSeleccionados.length})</span>
+                </button>
+              )}
+              <button 
+                onClick={() => cargarArchivosGuardados()}
+                className="px-4 py-2 flex items-center gap-2 text-xs font-bold bg-[#f4f3f6] text-[#1c355e] rounded-lg hover:bg-[#eaeaee] transition-all"
+              >
+                <span className="material-symbols-outlined text-[16px]">refresh</span>
+                Actualizar
+              </button>
+            </div>
           </div>
 
           {/* Lista de archivos */}
@@ -338,11 +425,21 @@ export default function GestionHorarios() {
               {archivosGuardados.map((archivoGuardado, idx) => (
                 <div
                   key={idx}
-                  className="bg-white border border-[#c5c6cf]/30 rounded-2xl p-5 hover:shadow-lg transition-all cursor-pointer group"
+                  className={`bg-white border rounded-2xl p-5 hover:shadow-lg transition-all cursor-pointer group relative ${archivosSeleccionados.includes(archivoGuardado.archivo) ? 'border-[#1c355e] ring-1 ring-[#1c355e]/50 bg-[#1c355e]/5' : 'border-[#c5c6cf]/30'}`}
                   onClick={() => verDetallesArchivo(archivoGuardado.archivo)}
                 >
+                  {/* Checkbox de selección */}
+                  <div 
+                    className="absolute top-4 left-4 z-10"
+                    onClick={(e) => toggleSeleccionArchivo(e, archivoGuardado.archivo)}
+                  >
+                    <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${archivosSeleccionados.includes(archivoGuardado.archivo) ? 'bg-[#1c355e] border-[#1c355e]' : 'border-[#c5c6cf] bg-white group-hover:border-[#1c355e]/50'}`}>
+                      {archivosSeleccionados.includes(archivoGuardado.archivo) && <span className="material-symbols-outlined text-white text-[14px] font-bold">check</span>}
+                    </div>
+                  </div>
+
                   {/* Encabezado con icono */}
-                  <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-start justify-between mb-4 pl-8">
                     <div className="p-3 bg-[#1c355e]/10 text-[#1c355e] rounded-xl group-hover:bg-[#1c355e]/20 transition-all">
                       <span className="material-symbols-outlined text-2xl">description</span>
                     </div>
@@ -590,7 +687,7 @@ export default function GestionHorarios() {
               <thead>
                 <tr style={{ background: 'linear-gradient(135deg, #1c355e 0%, #162c50 100%)' }} className="text-white text-[10px] uppercase font-bold tracking-widest">
                   <th className="px-5 py-4">Docente</th>
-                  <th className="px-5 py-4">Licenciatura</th>
+                  <th className="px-5 py-4">Licenciatura / Nivel</th>
                   <th className="px-5 py-4">Asignatura</th>
                   <th className="px-5 py-4">Horario</th>
                   <th className="px-5 py-4 w-[220px]">Aula Asignada</th>
@@ -604,9 +701,14 @@ export default function GestionHorarios() {
                     <tr key={index} className={`hover:bg-[#faf9fc] transition-colors ${aulaSeleccionada ? 'bg-emerald-50/30' : ''}`}>
                       <td className="px-5 py-3.5 text-sm font-semibold text-[#44464e]">{item.docente}</td>
                       <td className="px-5 py-3.5 text-xs font-bold">
-                        <span className="bg-[#1c355e]/8 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
-                          {item.licenciatura}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="bg-[#1c355e]/8 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
+                            {item.licenciatura}
+                          </span>
+                          {item.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px]">Sem: {item.semestre}</span>}
+                          {item.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px]">Cuat: {item.cuatrimestre}</span>}
+                          {item.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px]">Gpo: {item.grupo}</span>}
+                        </div>
                       </td>
                       <td className="px-5 py-3.5 text-sm font-bold text-[#1b1c1e]">{item.asignatura}</td>
                       <td className="px-5 py-3.5">
@@ -719,7 +821,7 @@ export default function GestionHorarios() {
               <thead>
                 <tr className="bg-[#1c355e] text-white text-xs font-bold uppercase tracking-wider">
                   <th className="px-6 py-4.5">Docente</th>
-                  <th className="px-6 py-4.5">Licenciatura</th>
+                  <th className="px-6 py-4.5">Licenciatura / Nivel</th>
                   <th className="px-6 py-4.5">Asignatura</th>
                   <th className="px-6 py-4.5">Horario</th>
                   <th className="px-6 py-4.5">Aula Asignada</th>
@@ -731,9 +833,14 @@ export default function GestionHorarios() {
                   <tr key={horario.id} className="hover:bg-[#f4f3f6]/30 transition-colors">
                     <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{horario.docente}</td>
                     <td className="px-6 py-4 text-xs font-bold">
-                      <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
-                        {horario.licenciatura}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
+                          {horario.licenciatura}
+                        </span>
+                        {horario.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px]">Sem: {horario.semestre}</span>}
+                        {horario.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px]">Cuat: {horario.cuatrimestre}</span>}
+                        {horario.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px]">Gpo: {horario.grupo}</span>}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm font-bold text-[#1b1c1e]">{horario.asignatura}</td>
                     <td className="px-6 py-4 text-sm font-mono font-bold text-gray-500 italic">{horario.horario}</td>

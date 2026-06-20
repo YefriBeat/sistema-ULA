@@ -28,9 +28,13 @@ const parsearHorario = (horarioCompleto) => {
 
 const obtenerColorLicenciatura = (licenciatura) => {
   const lic = (licenciatura || '').toLowerCase();
-  if (lic.includes('medicina')) return 'bg-blue-50 text-blue-700 border-blue-200/50';
-  if (lic.includes('administración') || lic.includes('negocios')) return 'bg-orange-50 text-orange-700 border-orange-200/50';
-  if (lic.includes('mecatrónica') || lic.includes('ingeniería')) return 'bg-green-50 text-green-700 border-green-200/50';
+  if (lic.includes('medicina') || lic === 'med') return 'bg-blue-50 text-blue-700 border-blue-200/50';
+  if (lic.includes('administración') || lic.includes('negocios') || lic === 'adm' || lic === 'neg') return 'bg-orange-50 text-orange-700 border-orange-200/50';
+  if (lic.includes('mecatrónica') || lic.includes('ingeniería') || lic === 'isc' || lic === 'sis' || lic === 'imc') return 'bg-green-50 text-green-700 border-green-200/50';
+  if (lic.includes('enfermería') || lic === 'enf') return 'bg-teal-50 text-teal-700 border-teal-200/50';
+  if (lic.includes('derecho') || lic === 'der') return 'bg-red-50 text-red-700 border-red-200/50';
+  if (lic.includes('nutrición') || lic === 'nut') return 'bg-lime-50 text-lime-700 border-lime-200/50';
+  if (lic.includes('psicología') || lic === 'psi') return 'bg-purple-50 text-purple-700 border-purple-200/50';
   return 'bg-gray-50 text-gray-700 border-gray-200/50';
 };
 
@@ -46,6 +50,10 @@ const normalizarNombreLic = (nombre) => {
 const extraerClaveLic = (licenciatura) => {
   if (!licenciatura) return '';
   const norm = normalizarNombreLic(licenciatura);
+  
+  // Si ya es un acrónimo (por el nuevo extractor del backend), devolverlo directo
+  if (/^[A-Z]{2,6}$/i.test(norm)) return norm.toUpperCase();
+
   // Patrón explícito: (ENF), (ADM), etc.
   const mParens = norm.match(/\(([A-Z]{2,6})\)/);
   if (mParens) return mParens[1];
@@ -698,9 +706,14 @@ export default function VisualBd() {
                     </span>
                   )}
                   {/* Licenciatura */}
-                  <span className={`mt-1.5 px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase border inline-block break-words max-w-full ${obtenerColorLicenciatura(item.licenciatura)}`}>
-                    {item.licenciatura}
-                  </span>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase border break-words ${obtenerColorLicenciatura(item.licenciatura)}`}>
+                      {item.licenciatura}
+                    </span>
+                    {item.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Sem: {item.semestre}</span>}
+                    {item.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Cuat: {item.cuatrimestre}</span>}
+                    {item.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Gpo: {item.grupo}</span>}
+                  </div>
                   {/* Asignatura */}
                   <p className="text-xs font-medium text-[#44464e] mt-1 leading-snug">{item.asignatura}</p>
                   {/* Horario + Aula */}
@@ -779,9 +792,14 @@ export default function VisualBd() {
                       )}
                     </td>
                     <td className="py-3.5 px-5">
-                      <span className={`px-2 py-1 rounded-lg text-[9px] font-bold uppercase border break-words inline-block max-w-full ${obtenerColorLicenciatura(item.licenciatura)}`}>
-                        {item.licenciatura}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase border break-words ${obtenerColorLicenciatura(item.licenciatura)}`}>
+                          {item.licenciatura}
+                        </span>
+                        {item.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Sem: {item.semestre}</span>}
+                        {item.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Cuat: {item.cuatrimestre}</span>}
+                        {item.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Gpo: {item.grupo}</span>}
+                      </div>
                     </td>
                     <td className="py-3.5 px-5 font-medium text-[#44464e] break-words text-xs">{item.asignatura}</td>
                     <td className="py-3.5 px-5 font-mono text-[#1c355e] font-bold text-xs whitespace-nowrap">{item.textoHora}</td>
