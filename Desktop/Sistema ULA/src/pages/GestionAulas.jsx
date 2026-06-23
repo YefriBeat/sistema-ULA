@@ -228,11 +228,7 @@ export default function GestionAulas() {
 
   const aulasFiltradas = aulas.filter(aula => {
     if (filtro === 'mantenimiento') return estaEnMantenimiento(aula);
-    const estado = obtenerEstadoAula(aula.nombre);
-    if (filtro === 'disponible')  return !estaEnMantenimiento(aula) && estado === 'disponible';
-    if (filtro === 'matutino')    return !estaEnMantenimiento(aula) && estado === 'matutino';
-    if (filtro === 'vespertino')  return !estaEnMantenimiento(aula) && estado === 'vespertino';
-    if (filtro === 'bloqueada')   return !estaEnMantenimiento(aula) && estado === 'bloqueada';
+    if (filtro === 'en_curso') return !estaEnMantenimiento(aula) && !!obtenerClaseEnCurso(aula.nombre);
     return true;
   }).sort((a, b) => {
     // En "Todos": aulas con clase activa ahora van primero
@@ -268,53 +264,7 @@ export default function GestionAulas() {
         </button>
       </div>
 
-      {/* RESUMEN ESTADÍSTICO */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Total */}
-        <div className="bg-[#1c355e] text-white p-5 rounded-2xl shadow-lg flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0">
-            <span className="material-symbols-outlined text-[22px]">meeting_room</span>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">Total de Aulas</p>
-            <p className="text-3xl font-extrabold leading-tight">{totalAulas}</p>
-          </div>
-        </div>
-        {/* En Clase Ahora — tiempo real con prioridad */}
-        <div className={`p-5 rounded-2xl shadow-sm flex items-center gap-4 border transition-all ${aulasEnClaseAhora > 0 ? 'bg-blue-50 border-blue-200' : 'bg-white border-[#c5c6cf]/30'}`}>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${aulasEnClaseAhora > 0 ? 'bg-blue-100' : 'bg-[#f4f3f6]'}`}>
-            <span className={`material-symbols-outlined text-[22px] ${aulasEnClaseAhora > 0 ? 'text-blue-600' : 'text-[#c5c6cf]'}`}>play_circle</span>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">En Clase Ahora</p>
-            <div className="flex items-center gap-2">
-              <p className={`text-3xl font-extrabold leading-tight ${aulasEnClaseAhora > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>{aulasEnClaseAhora}</p>
-              {aulasEnClaseAhora > 0 && <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping" />}
-            </div>
-            <p className="text-[9px] text-[#75777f] font-semibold mt-0.5">{aulasDisponibles} disponibles</p>
-          </div>
-        </div>
-        {/* Mantenimiento */}
-        <div className="bg-white border border-orange-200 p-5 rounded-2xl shadow-sm flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center flex-shrink-0">
-            <span className="material-symbols-outlined text-[22px] text-orange-500">construction</span>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">En Mantenimiento</p>
-            <p className="text-3xl font-extrabold text-orange-500 leading-tight">{aulasEnMant}</p>
-          </div>
-        </div>
-        {/* Capacidad */}
-        <div className="bg-white border border-[#c5c6cf]/30 p-5 rounded-2xl shadow-sm flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-[#1c355e]/8 flex items-center justify-center flex-shrink-0">
-            <span className="material-symbols-outlined text-[22px] text-[#1c355e]">group</span>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-[#44464e]">Capacidad Total</p>
-            <p className="text-3xl font-extrabold text-[#1c355e] leading-tight">{capacidadInstalada}</p>
-          </div>
-        </div>
-      </div>
+
 
       {/* MODAL NUEVA AULA */}
       {mostrarFormulario && (
@@ -514,10 +464,7 @@ export default function GestionAulas() {
       <div className="flex gap-3 flex-wrap">
         {[
           { id: 'todos',         label: 'Todos'         },
-          { id: 'disponible',    label: 'Disponibles'   },
-          { id: 'matutino',      label: 'Matutino'      },
-          { id: 'vespertino',    label: 'Vespertino'    },
-          { id: 'bloqueada',     label: 'Bloqueadas'    },
+          { id: 'en_curso',      label: 'En Curso'      },
           { id: 'mantenimiento', label: 'Mantenimiento' },
         ].map(btn => (
           <button
@@ -534,9 +481,13 @@ export default function GestionAulas() {
         ))}
       </div>
 
-      {/* LISTA DE AULAS */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {cargando ? (
+      {/* ── CONTENEDOR PRINCIPAL: AULAS (Izquierda/Centro) y ESTADÍSTICAS (Derecha) ── */}
+      <div className="flex flex-col xl:flex-row gap-8 items-stretch">
+        
+        {/* ── LISTA DE AULAS ──────────────────────────────────────────────── */}
+        <div className="flex-1 w-full">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {cargando ? (
           <p className="col-span-full text-center">Cargando datos...</p>
         ) : aulasFiltradas.length === 0 ? (
           <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30">Sin Aulas en esta categoría</div>
@@ -549,11 +500,11 @@ export default function GestionAulas() {
             // Prioridad visual: mantenimiento > en_clase > estado por horario
             const BADGE = {
               mantenimiento: { cls: 'bg-orange-100 text-orange-600',  icon: 'construction', label: 'Mantenimiento' },
-              en_clase:      { cls: 'bg-blue-100 text-blue-700',      icon: 'play_circle',  label: 'En Clase'      },
+              en_clase:      { cls: 'bg-blue-100 text-blue-700',      icon: 'play_circle',  label: 'En Curso'      },
               disponible:    { cls: 'bg-[#1c9c72]/10 text-[#1c9c72]', icon: 'check_circle', label: 'Disponible'    },
-              matutino:      { cls: 'bg-amber-100 text-amber-700',    icon: 'wb_sunny',     label: 'Mat. Ocupada'  },
-              vespertino:    { cls: 'bg-orange-100 text-orange-700',  icon: 'nights_stay',  label: 'Vesp. Ocupada' },
-              bloqueada:     { cls: 'bg-red-100 text-red-600',        icon: 'block',        label: 'Bloqueada'     },
+              matutino:      { cls: 'bg-amber-100 text-amber-700',    icon: 'wb_sunny',     label: 'Ocupado: Matutino'  },
+              vespertino:    { cls: 'bg-indigo-100 text-indigo-700',  icon: 'nights_stay',  label: 'Ocupado: Vespertino' },
+              bloqueada:     { cls: 'bg-purple-100 text-purple-700',  icon: 'domain',       label: 'Ocupado: Ambos'     },
             };
             const badgeKey = enMant ? 'mantenimiento' : claseActiva ? 'en_clase' : estadoHorario;
             const badge    = BADGE[badgeKey] || BADGE.disponible;
@@ -636,7 +587,33 @@ export default function GestionAulas() {
               </div>
             );
           })
-        )}
+            )}
+          </div>
+        </div>
+
+        {/* ── ESTADÍSTICAS (COSTADO DERECHO) ─────────────────────────────────── */}
+        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-24 self-start">
+          <div className="bg-[#1c355e] text-white p-6 rounded-2xl shadow-lg">
+            <p className="text-xs font-bold uppercase opacity-80">Total de Aulas</p>
+            <p className="text-4xl font-extrabold mt-1">{totalAulas}</p>
+          </div>
+          <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
+            <p className="text-xs font-bold uppercase text-[#44464e]">En Clase Ahora</p>
+            <div className="flex items-center gap-2 mt-1">
+              <p className={`text-4xl font-extrabold ${aulasEnClaseAhora > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>{aulasEnClaseAhora}</p>
+              {aulasEnClaseAhora > 0 && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping" />}
+            </div>
+            <p className="text-[11px] text-[#75777f] font-semibold mt-1">{aulasDisponibles} disponibles</p>
+          </div>
+          <div className="bg-white border border-orange-200 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
+            <p className="text-xs font-bold uppercase text-[#44464e]">En Mantenimiento</p>
+            <p className="text-4xl font-extrabold text-orange-500 mt-1">{aulasEnMant}</p>
+          </div>
+          <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
+            <p className="text-xs font-bold uppercase text-[#44464e]">Capacidad Total</p>
+            <p className="text-4xl font-extrabold text-[#1c355e] mt-1">{capacidadInstalada}</p>
+          </div>
+        </div>
       </div>
 
       {/* MODAL DE CONFIRMACIÓN */}

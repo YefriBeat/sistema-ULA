@@ -310,7 +310,9 @@ export default function VisualBd() {
     const finalizadas = todosAgrupados.filter(c => c.estadoTiempo === 'finalizada' && c.diaClaseIndex === diaHoy).length;
     const programadas = todosAgrupados.filter(c => c.estadoTiempo === 'programada').length;
     const total       = todosAgrupados.length;
-    return { enCurso, proximas, finalizadas, programadas, total };
+    const docentesEnCurso = new Set(todosAgrupados.filter(c => c.estadoTiempo === 'en_curso').map(c => c.docente)).size;
+    const docentesTotales = new Set(todosAgrupados.map(c => c.docente)).size;
+    return { enCurso, proximas, finalizadas, programadas, total, docentesEnCurso, docentesTotales };
   }, [todosAgrupados, ahora]);
 
   // Donut chart — datos de ocupación de aulas
@@ -398,9 +400,14 @@ export default function VisualBd() {
                 <span className={`material-symbols-outlined text-[16px] ${stats.enCurso > 0 ? 'text-blue-600' : 'text-[#c5c6cf]'}`}>play_circle</span>
               </div>
             </div>
-            <h3 className={`text-4xl lg:text-5xl font-black leading-none ${stats.enCurso > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>
-              {stats.enCurso}
-            </h3>
+            <div>
+              <h3 className={`text-4xl lg:text-5xl font-black leading-none ${stats.enCurso > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>
+                {stats.enCurso}
+              </h3>
+              {stats.enCurso > 0 && (
+                <p className="text-[11px] font-bold text-blue-600 mt-2">{stats.docentesEnCurso} maestros activos</p>
+              )}
+            </div>
             <div className="flex items-center justify-between mt-3">
               <p className="text-[10px] text-[#75777f] font-semibold">Click para filtrar</p>
               {stats.enCurso > 0 && (
@@ -457,7 +464,10 @@ export default function VisualBd() {
                 <span className="material-symbols-outlined text-[16px] text-white/80">database</span>
               </div>
             </div>
-            <h3 className="text-4xl lg:text-5xl font-black text-white leading-none">{stats.total}</h3>
+            <div>
+              <h3 className="text-4xl lg:text-5xl font-black text-white leading-none">{stats.total}</h3>
+              <p className="text-[11px] font-bold text-white/80 mt-2">{stats.docentesTotales} maestros registrados</p>
+            </div>
             <p className="text-[10px] text-white/50 font-semibold mt-3">Click para mostrar todo</p>
           </div>
         </div>

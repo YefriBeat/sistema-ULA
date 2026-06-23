@@ -472,8 +472,25 @@ export default function GestionHorarios() {
                     </div>
                   </div>
 
-                  {/* Nombre del archivo */}
-                  <h3 className="font-bold text-[#1b1c1e] truncate mb-2 text-sm">{archivoGuardado.archivo}</h3>
+                  {/* Nombre del archivo y turno */}
+                  <div className="mb-3">
+                    <h3 className="font-bold text-[#1b1c1e] truncate text-sm mb-1.5" title={archivoGuardado.archivo}>
+                      {archivoGuardado.archivo}
+                    </h3>
+                    {archivoGuardado.turno && (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider ${
+                        archivoGuardado.turno === 'Matutino' ? 'bg-amber-100 text-amber-700' :
+                        archivoGuardado.turno === 'Vespertino' ? 'bg-indigo-100 text-indigo-700' :
+                        archivoGuardado.turno === 'Ambos Turnos' ? 'bg-purple-100 text-purple-700' :
+                        'bg-[#f4f3f6] text-[#75777f]'
+                      }`}>
+                        <span className="material-symbols-outlined text-[12px]">
+                          {archivoGuardado.turno === 'Matutino' ? 'wb_sunny' : archivoGuardado.turno === 'Vespertino' ? 'nights_stay' : archivoGuardado.turno === 'Ambos Turnos' ? 'domain' : 'schedule'}
+                        </span>
+                        {archivoGuardado.turno}
+                      </span>
+                    )}
+                  </div>
 
                   {/* Información */}
                   <div className="space-y-2 text-xs text-[#44464e]">
@@ -501,6 +518,20 @@ export default function GestionHorarios() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Aulas Ocupadas */}
+                  {archivoGuardado.aulas_ocupadas && (
+                    <div className="mt-4 pt-4 border-t border-[#c5c6cf]/30">
+                      <span className="text-[10px] font-bold text-[#44464e] uppercase tracking-wider block mb-2">Aulas Ocupadas</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {archivoGuardado.aulas_ocupadas.split(', ').map((aula, i) => (
+                          <span key={i} className="px-2 py-1 bg-[#1c355e]/5 border border-[#1c355e]/10 text-[#1c355e] text-[10px] font-bold rounded-md">
+                            {aula}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Barra de progreso */}
                   <div className="mt-4 pt-4 border-t border-[#c5c6cf]/30">
@@ -792,79 +823,81 @@ export default function GestionHorarios() {
         </div>
       )}
 
-      {/* PANEL DE DETALLES */}
+      {/* PANEL DE DETALLES (MODAL) */}
       {archivoSeleccionado && detallesArchivo && (
-        <div className="bg-white border border-[#c5c6cf]/30 rounded-3xl shadow-sm overflow-hidden">
-          <div className="p-5 bg-[#f4f3f6] border-b border-[#c5c6cf]/30 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#1c355e]/10 text-[#1c355e] rounded-xl">
-                <span className="material-symbols-outlined text-xl">folder</span>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-fadeIn">
+            <div className="p-5 bg-[#f4f3f6] border-b border-[#c5c6cf]/30 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#1c355e]/10 text-[#1c355e] rounded-xl">
+                  <span className="material-symbols-outlined text-xl">folder</span>
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-[#44464e] uppercase block">Detalles del Archivo</span>
+                  <span className="text-sm font-bold text-[#1c355e] font-mono">{archivoSeleccionado}</span>
+                </div>
               </div>
-              <div>
-                <span className="text-xs font-bold text-[#44464e] uppercase block">Detalles del Archivo</span>
-                <span className="text-sm font-bold text-[#1c355e] font-mono">{archivoSeleccionado}</span>
-              </div>
+              <button 
+                onClick={() => {
+                  setArchivoSeleccionado(null);
+                  setDetallesArchivo(null);
+                }}
+                className="p-2 text-[#44464e] hover:bg-white rounded-lg transition-all"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
             </div>
-            <button 
-              onClick={() => {
-                setArchivoSeleccionado(null);
-                setDetallesArchivo(null);
-              }}
-              className="p-2 text-[#44464e] hover:bg-white rounded-lg transition-all"
-            >
-              <span className="material-symbols-outlined text-[20px]">close</span>
-            </button>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#1c355e] text-white text-xs font-bold uppercase tracking-wider">
-                  <th className="px-6 py-4.5">Docente</th>
-                  <th className="px-6 py-4.5">Licenciatura / Nivel</th>
-                  <th className="px-6 py-4.5">Asignatura</th>
-                  <th className="px-6 py-4.5">Horario</th>
-                  <th className="px-6 py-4.5">Aula Asignada</th>
-                  <th className="px-6 py-4.5">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {detallesArchivo.map((horario) => (
-                  <tr key={horario.id} className="hover:bg-[#f4f3f6]/30 transition-colors">
-                    <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{horario.docente}</td>
-                    <td className="px-6 py-4 text-xs font-bold">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
-                          {horario.licenciatura}
-                        </span>
-                        {horario.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px]">Sem: {horario.semestre}</span>}
-                        {horario.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px]">Cuat: {horario.cuatrimestre}</span>}
-                        {horario.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px]">Gpo: {horario.grupo}</span>}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm font-bold text-[#1b1c1e]">{horario.asignatura}</td>
-                    <td className="px-6 py-4 text-sm font-mono font-bold text-gray-500 italic">{horario.horario}</td>
-                    <td className="px-6 py-4">
-                      <span className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                        horario.aula_asignada === 'Por asignar'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-emerald-100 text-emerald-700'
-                      }`}>
-                        {horario.aula_asignada}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <button 
-                        onClick={() => abrirModalEditar(horario)}
-                        className="p-2 text-[#1c355e] hover:bg-[#f4f3f6] rounded-lg transition-all"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">edit</span>
-                      </button>
-                    </td>
+            <div className="overflow-auto flex-1 p-0">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 z-10 shadow-sm">
+                  <tr className="bg-[#1c355e] text-white text-xs font-bold uppercase tracking-wider">
+                    <th className="px-6 py-4.5">Docente</th>
+                    <th className="px-6 py-4.5">Licenciatura / Nivel</th>
+                    <th className="px-6 py-4.5">Asignatura</th>
+                    <th className="px-6 py-4.5">Horario</th>
+                    <th className="px-6 py-4.5">Aula Asignada</th>
+                    <th className="px-6 py-4.5">Acciones</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {detallesArchivo.map((horario) => (
+                    <tr key={horario.id} className="hover:bg-[#f4f3f6]/30 transition-colors">
+                      <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{horario.docente}</td>
+                      <td className="px-6 py-4 text-xs font-bold">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
+                            {horario.licenciatura}
+                          </span>
+                          {horario.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px]">Sem: {horario.semestre}</span>}
+                          {horario.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px]">Cuat: {horario.cuatrimestre}</span>}
+                          {horario.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px]">Gpo: {horario.grupo}</span>}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm font-bold text-[#1b1c1e]">{horario.asignatura}</td>
+                      <td className="px-6 py-4 text-sm font-mono font-bold text-gray-500 italic">{horario.horario}</td>
+                      <td className="px-6 py-4">
+                        <span className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                          horario.aula_asignada === 'Por asignar'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-emerald-100 text-emerald-700'
+                        }`}>
+                          {horario.aula_asignada}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <button 
+                          onClick={() => abrirModalEditar(horario)}
+                          className="p-2 text-[#1c355e] hover:bg-[#f4f3f6] rounded-lg transition-all"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">edit</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

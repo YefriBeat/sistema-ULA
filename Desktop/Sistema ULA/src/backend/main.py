@@ -1353,12 +1353,41 @@ def obtener_archivos():
                        COUNT(*) as total_horarios,
                        MIN(fecha_creacion) as fecha_carga,
                        MAX(fecha_creacion) as ultima_modificacion,
-                       COUNT(CASE WHEN aula_asignada != 'Por asignar' THEN 1 END) as aulas_asignadas
+                       COUNT(CASE WHEN aula_asignada != 'Por asignar' THEN 1 END) as aulas_asignadas,
+                       GROUP_CONCAT(DISTINCT CASE WHEN aula_asignada != 'Por asignar' AND TRIM(aula_asignada) != '' THEN aula_asignada END SEPARATOR ', ') as aulas_ocupadas,
+                       GROUP_CONCAT(horario SEPARATOR '|') as todos_horarios
                 FROM horarios 
                 GROUP BY archivo 
                 ORDER BY fecha_carga DESC
             """)
             archivos = cursor.fetchall()
+            
+        LIMITE_VESPERTINO = 14 * 60 # 14:00
+        for arch in (archivos or []):
+            turnos = set()
+            if arch.get('todos_horarios'):
+                horarios_lista = arch['todos_horarios'].split('|')
+                for h in horarios_lista:
+                    _, inicio, _ = _parse_horario_minutos(h)
+                    if inicio is not None:
+                        if inicio < LIMITE_VESPERTINO:
+                            turnos.add("Matutino")
+                        else:
+                            turnos.add("Vespertino")
+            
+            if "Matutino" in turnos and "Vespertino" in turnos:
+                arch['turno'] = "Ambos Turnos"
+            elif "Matutino" in turnos:
+                arch['turno'] = "Matutino"
+            elif "Vespertino" in turnos:
+                arch['turno'] = "Vespertino"
+            else:
+                arch['turno'] = "Sin horario fijo"
+            
+            # Limpiar campo pesado antes de devolverlo
+            if 'todos_horarios' in arch:
+                del arch['todos_horarios']
+
         return archivos if archivos else []
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener archivos: {str(e)}")
