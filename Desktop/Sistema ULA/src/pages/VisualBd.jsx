@@ -82,6 +82,18 @@ const minToTime = (mins) => {
   return `${h}:${m}`;
 };
 
+const getBloqueEstandar = (inicio) => {
+  if (inicio >= 420 && inicio < 550) return "07:00-08:40";
+  if (inicio >= 550 && inicio < 650) return "09:10-10:50";
+  if (inicio >= 650 && inicio < 750) return "10:50-12:30";
+  if (inicio >= 750 && inicio < 850) return "12:30-14:10";
+  if (inicio >= 850 && inicio < 950) return "14:10-15:50";
+  if (inicio >= 950 && inicio < 1030) return "15:50-17:30";
+  if (inicio >= 1030 && inicio < 1150) return "17:10-18:50";
+  if (inicio >= 1150) return "19:10-20:50";
+  return `${minToTime(inicio)}-${minToTime(inicio + 100)}`;
+};
+
 const groupConsecutiveClasses = (clases) => {
   if (!clases.length) return clases;
   const estadoPrioridad = { en_curso: 0, proxima: 1, finalizada: 2, programada: 3 };
@@ -250,10 +262,10 @@ export default function VisualBd() {
   }, [asignaturas]);
 
   const datosPorLic = useMemo(() => {
-    if (!filtroLic) return asignaturasConEstado;
+    if (!filtroLic) return todosAgrupados;
     // filtroLic ahora es la abreviatura → comparar con la abreviatura de cada clase
-    return asignaturasConEstado.filter(a => extraerClaveLic(a.licenciatura) === filtroLic);
-  }, [asignaturasConEstado, filtroLic]);
+    return todosAgrupados.filter(a => extraerClaveLic(a.licenciatura) === filtroLic);
+  }, [todosAgrupados, filtroLic]);
 
   const opcionesAsignatura = useMemo(() => (
     [...new Set(datosPorLic.map(a => a.asignatura).filter(Boolean))].sort()
@@ -263,17 +275,17 @@ export default function VisualBd() {
     const base = filtroAsignatura
       ? datosPorLic.filter(a => a.asignatura === filtroAsignatura)
       : datosPorLic;
-    return [...new Set(base.map(a => a.textoHora).filter(Boolean))].sort();
+    return [...new Set(base.map(a => getBloqueEstandar(a.inicio)).filter(Boolean))].sort();
   }, [datosPorLic, filtroAsignatura]);
 
   const datosFiltrados = useMemo(() => {
-    let resultado = asignaturasConEstado.filter(item => {
+    let resultado = todosAgrupados.filter(item => {
       const coincideBusqueda =
         item.docente?.toLowerCase().includes(busqueda.toLowerCase()) ||
         item.aula_asignada?.toLowerCase().includes(busqueda.toLowerCase());
       const coincideLic       = filtroLic       === '' || extraerClaveLic(item.licenciatura) === filtroLic;
       const coincideAsignatura = filtroAsignatura === '' || item.asignatura  === filtroAsignatura;
-      const coincideHora      = filtroHora      === '' || item.textoHora    === filtroHora;
+      const coincideHora      = filtroHora      === '' || getBloqueEstandar(item.inicio) === filtroHora;
       const coincideDia       = filtroDia       === '' || item.diaOriginal  === filtroDia;
       return coincideBusqueda && coincideLic && coincideAsignatura && coincideHora && coincideDia;
     });
@@ -294,13 +306,17 @@ export default function VisualBd() {
         s.aula_asignada?.toLowerCase().includes(busqueda.toLowerCase());
       const coincideLic        = filtroLic       === '' || extraerClaveLic(s.licenciatura) === filtroLic;
       const coincideAsignatura = filtroAsignatura === '' || s.asignatura  === filtroAsignatura;
-      return coincideEstado && coincideBusqueda && coincideLic && coincideAsignatura;
+      const coincideHora       = filtroHora      === '' || getBloqueEstandar(s.inicio) === filtroHora;
+      return coincideEstado && coincideBusqueda && coincideLic && coincideAsignatura && coincideHora;
     });
     resultado = [...resultado, ...suplFiltradas];
-    return resultado;
-  }, [asignaturasConEstado, filasSuplencias, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, ahora]);
+    return resultado.sort((a, b) => {
+      if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex ?? 99) - (b.diaClaseIndex ?? 99);
+      return (a.inicio ?? 0) - (b.inicio ?? 0);
+    });
+  }, [todosAgrupados, filasSuplencias, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, ahora]);
 
-  const datosAgrupados = useMemo(() => groupConsecutiveClasses(datosFiltrados), [datosFiltrados]);
+  const datosAgrupados = useMemo(() => datosFiltrados, [datosFiltrados]);
 
   const stats = useMemo(() => {
     const diaHoy      = ahora.getDay();
