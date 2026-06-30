@@ -370,6 +370,10 @@ def _time_to_mins(t):
 # ENDPOINTS (RUTAS DE LA API)
 # ---------------------------------------------------------
 
+@app.get("/ping")
+def ping():
+    return {"status": "ok", "message": "Servidor activo"}
+
 @app.post("/api/registro")
 def registrar_usuario(datos: RegistroUsuario):
     correo_limpio = datos.correo.strip().lower()

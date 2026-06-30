@@ -74,11 +74,19 @@ export default function Layout() {
             <span className="material-symbols-outlined text-2xl">close</span>
           </button>
 
-          <div className="px-6 py-10 flex flex-col items-center text-center">
-            <div className="w-full flex items-center justify-center px-2 mb-2">
-              <img src={logo} alt="Universidad Latino Logo" className="w-24 h-24 sm:w-32 sm:h-32 object-contain mb-2 drop-shadow-lg" />
+          <div className="px-4 py-8 w-full flex flex-col items-center">
+            <div className="w-full relative rounded-3xl bg-gradient-to-br from-white/10 to-white/0 border border-white/10 p-6 flex flex-col items-center justify-center overflow-hidden">
+              {/* Foco de luz difusa (glow) para iluminar el texto del logo sin usar una forma sólida */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-28 h-28 bg-white/70 blur-[30px] rounded-full pointer-events-none z-0"></div>
+
+              {/* Logo */}
+              <img src={logo} alt="Universidad Latino Logo" className="relative z-10 w-24 h-24 sm:w-32 sm:h-32 object-contain drop-shadow-2xl" />
+              
+              {/* Divisor y Texto integrados en la tarjeta */}
+              <div className="relative z-10 mt-5 pt-4 w-full border-t border-white/10 flex justify-center">
+                <p className="text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-300 text-[10px] sm:text-[11px] uppercase tracking-[0.25em] font-extrabold drop-shadow-sm text-center">PREFECTURA CENTRAL</p>
+              </div>
             </div>
-            <p className="text-white text-[10px] uppercase tracking-[0.2em] font-extrabold opacity-80 mt-2">PREFECTURA CENTRAL</p>
           </div>
 
           <nav className="flex-1 px-4 mt-2 space-y-1">
