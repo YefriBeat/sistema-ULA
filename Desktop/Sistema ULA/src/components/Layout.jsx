@@ -20,6 +20,24 @@ export default function Layout() {
   // Cierra el menú al hacer clic en un enlace en versión móvil
   const cerrarMenu = () => setMenuAbierto(false);
 
+  const isDashboard = location.pathname === '/dashboard' || location.pathname === '/';
+
+  const getLinkClasses = (path) => {
+    const active = path === 'dashboard' ? isDashboard : isActive(path);
+    return `rounded-2xl flex items-center gap-3.5 py-3 px-5 transition-all duration-300 ${
+      active 
+        ? 'bg-gradient-to-r from-[#fdbb11] to-[#e8a906] text-[#0e2045] shadow-lg shadow-[#fdbb11]/20 font-black translate-x-1' 
+        : 'text-[#c5c6cf] hover:bg-white/5 hover:text-white font-semibold group hover:translate-x-1'
+    }`;
+  };
+
+  const getIconClasses = (path) => {
+    const active = path === 'dashboard' ? isDashboard : isActive(path);
+    return `material-symbols-outlined text-[22px] ${
+      active ? '' : 'opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform'
+    }`;
+  };
+
   return (
     <div className="bg-[#faf9fc] text-[#1b1c1e] antialiased flex flex-col min-h-screen font-manrope">
 
@@ -62,64 +80,57 @@ export default function Layout() {
 
         {/* SIDEBAR (MENÚ LATERAL) */}
         <aside
-          className={`bg-[#1c355e] min-h-screen w-64 border-r border-white/5 shadow-2xl fixed left-0 top-0 flex flex-col z-50 transform transition-transform duration-300 ease-in-out ${menuAbierto ? 'translate-x-0' : '-translate-x-full'
-            } lg:translate-x-0`}
+          className={`bg-[#0e2045] min-h-screen w-64 shadow-2xl fixed left-0 top-0 flex flex-col z-50 transform transition-transform duration-300 ease-in-out ${menuAbierto ? 'translate-x-0' : '-translate-x-full'
+            } lg:translate-x-0 border-r border-[#1c355e]`}
         >
           {/* Botón de cerrar (Solo móvil) */}
           <button
             onClick={cerrarMenu}
             aria-label="Cerrar menú de navegación"
-            className="absolute top-4 right-4 text-white/50 hover:text-white lg:hidden"
+            className="absolute top-4 right-4 text-white/50 hover:text-white lg:hidden bg-white/5 p-2 rounded-lg"
           >
-            <span className="material-symbols-outlined text-2xl">close</span>
+            <span className="material-symbols-outlined text-[20px]">close</span>
           </button>
 
-          <div className="px-4 py-8 w-full flex flex-col items-center">
-            <div className="w-full relative rounded-3xl bg-gradient-to-br from-white/10 to-white/0 border border-white/10 p-6 flex flex-col items-center justify-center overflow-hidden">
-              {/* Foco de luz difusa (glow) para iluminar el texto del logo sin usar una forma sólida */}
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-28 h-28 bg-white/70 blur-[30px] rounded-full pointer-events-none z-0"></div>
-
-              {/* Logo */}
-              <img src={logo} alt="Universidad Latino Logo" className="relative z-10 w-24 h-24 sm:w-32 sm:h-32 object-contain drop-shadow-2xl" />
-              
-              {/* Divisor y Texto integrados en la tarjeta */}
-              <div className="relative z-10 mt-5 pt-4 w-full border-t border-white/10 flex justify-center">
-                <p className="text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-300 text-[10px] sm:text-[11px] uppercase tracking-[0.25em] font-extrabold drop-shadow-sm text-center">PREFECTURA CENTRAL</p>
-              </div>
+          <div className="px-6 py-10 w-full flex flex-col items-center justify-center">
+            <div className="relative flex flex-col items-center group cursor-default">
+              <div className="absolute inset-0 bg-[#fdbb11]/20 blur-[35px] rounded-full w-24 h-24 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -z-10 group-hover:bg-[#fdbb11]/30 transition-all duration-500"></div>
+              <img src={logo} alt="Universidad Latino Logo" className="w-28 h-auto object-contain drop-shadow-2xl mb-5 relative z-10 group-hover:scale-105 transition-transform duration-500" />
+              <p className="text-transparent bg-clip-text bg-gradient-to-r from-white to-[#fdbb11] text-[12px] uppercase tracking-[0.3em] font-black text-center drop-shadow-sm">SIPREF</p>
             </div>
           </div>
 
-          <nav className="flex-1 px-4 mt-2 space-y-1">
-            <Link to="/dashboard" onClick={cerrarMenu} className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${location.pathname === '/dashboard' || location.pathname === '/' ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
-              <span className={`material-symbols-outlined text-xl ${location.pathname === '/dashboard' || location.pathname === '/' ? '' : 'opacity-70 group-hover:opacity-100'}`}>dashboard</span>
-              <span className="text-sm">Inicio</span>
+          <nav className="flex-1 px-5 mt-2 space-y-2">
+            <Link to="/dashboard" onClick={cerrarMenu} className={getLinkClasses('dashboard')}>
+              <span className={getIconClasses('dashboard')}>dashboard</span>
+              <span className="text-sm tracking-wide">Inicio</span>
             </Link>
 
-            <Link to="/horarios" onClick={cerrarMenu} className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${isActive('horarios') ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
-              <span className={`material-symbols-outlined text-xl ${isActive('horarios') ? '' : 'opacity-70 group-hover:opacity-100'}`}>calendar_today</span>
-              <span className="text-sm">Gestión de Horarios</span>
+            <Link to="/horarios" onClick={cerrarMenu} className={getLinkClasses('horarios')}>
+              <span className={getIconClasses('horarios')}>calendar_today</span>
+              <span className="text-sm tracking-wide">Gestión de Horarios</span>
             </Link>
 
-            <Link to="/gestion-aulas" onClick={cerrarMenu} className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${isActive('gestion-aulas') ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
-              <span className={`material-symbols-outlined text-xl ${isActive('gestion-aulas') ? '' : 'opacity-70 group-hover:opacity-100'}`}>meeting_room</span>
-              <span className="text-sm">Gestión de Espacios  </span>
+            <Link to="/gestion-aulas" onClick={cerrarMenu} className={getLinkClasses('gestion-aulas')}>
+              <span className={getIconClasses('gestion-aulas')}>meeting_room</span>
+              <span className="text-sm tracking-wide">Gestión de Espacios</span>
             </Link>
 
-            <Link to="/gestion-docentes" onClick={cerrarMenu} className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${isActive('gestion-docentes') ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
-              <span className={`material-symbols-outlined text-xl ${isActive('gestion-docentes') ? '' : 'opacity-70 group-hover:opacity-100'}`}>school</span>
-              <span className="text-sm">Gestión de Docentes</span>
+            <Link to="/gestion-docentes" onClick={cerrarMenu} className={getLinkClasses('gestion-docentes')}>
+              <span className={getIconClasses('gestion-docentes')}>school</span>
+              <span className="text-sm tracking-wide">Gestión de Docentes</span>
             </Link>
 
-            <Link to="/configuracion-perfil" onClick={cerrarMenu} className={`rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200 ${isActive('configuracion-perfil') ? 'bg-[#fdbb11] text-[#000924] shadow-lg shadow-black/10 font-bold' : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium group'}`}>
-              <span className={`material-symbols-outlined text-xl ${isActive('configuracion-perfil') ? '' : 'opacity-70 group-hover:opacity-100'}`}>manage_accounts</span>
-              <span className="text-sm">Configuración de Perfil</span>
+            <Link to="/configuracion-perfil" onClick={cerrarMenu} className={getLinkClasses('configuracion-perfil')}>
+              <span className={getIconClasses('configuracion-perfil')}>manage_accounts</span>
+              <span className="text-sm tracking-wide">Configuración de Perfil</span>
             </Link>
           </nav>
 
-          <div className="px-4 pb-8 mt-auto">
-            <Link to="/login" onClick={() => { cerrarSesion(); cerrarMenu(); }} className="text-slate-400 hover:bg-red-500/10 hover:text-red-400 rounded-xl flex items-center gap-4 py-3.5 px-4 transition-all duration-200">
-              <span className="material-symbols-outlined text-xl">logout</span>
-              <span className="font-medium text-sm">Cerrar Sesión</span>
+          <div className="px-5 pb-8 mt-auto">
+            <Link to="/login" onClick={() => { cerrarSesion(); cerrarMenu(); }} className="text-[#c5c6cf] hover:bg-red-500/10 hover:text-red-400 rounded-2xl flex items-center gap-3.5 py-3 px-5 transition-all duration-300 group hover:translate-x-1">
+              <span className="material-symbols-outlined text-[22px] opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">logout</span>
+              <span className="font-semibold text-sm tracking-wide">Cerrar Sesión</span>
             </Link>
           </div>
         </aside>
@@ -133,7 +144,7 @@ export default function Layout() {
       {/* FOOTER */}
       <footer className="bg-[#1c2738] w-full py-5 px-4 sm:px-8 flex flex-col md:flex-row justify-between items-center z-20 relative mt-auto border-t border-white/5 lg:pl-[288px] gap-4 md:gap-0">
         <div className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] text-center md:text-left">
-          © 2026 UNIVERSIDAD LATINO - SISTEMA DE GESTIÓN INSTITUCIONAL
+          © 2026 UNIVERSIDAD LATINO - SIPREF
         </div>
         <nav className="flex flex-wrap justify-center items-center gap-4 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
           <Link to="/soporte" className="hover:text-white transition-colors">SOPORTE TÉCNICO</Link>

@@ -23,6 +23,9 @@ export default function GestionHorarios() {
   // ocupacion: { "A24": { matutino: true, vespertino: true }, ... }
   const [ocupacion, setOcupacion] = useState({});
   const [archivosSeleccionados, setArchivosSeleccionados] = useState([]);
+  const [orden, setOrden] = useState('original');
+  const [filtroModal, setFiltroModal] = useState('');
+  const [filtroMaestroModal, setFiltroMaestroModal] = useState('');
 
   const esBloqueada = (nombreAula) => {
     const d = ocupacion[nombreAula];
@@ -391,6 +394,15 @@ export default function GestionHorarios() {
                 </button>
               )}
               <button 
+                onClick={() => setOrden(orden === 'original' ? 'az' : 'original')}
+                className="px-4 py-2 flex items-center gap-2 text-xs font-bold bg-[#f4f3f6] text-[#1c355e] rounded-lg hover:bg-[#eaeaee] transition-all"
+              >
+                <span className="material-symbols-outlined text-[16px]">
+                  {orden === 'original' ? 'sort_by_alpha' : 'history'}
+                </span>
+                <span className="hidden sm:inline">{orden === 'original' ? 'Ordenar A-Z' : 'Creación Reciente'}</span>
+              </button>
+              <button 
                 onClick={() => cargarArchivosGuardados()}
                 className="px-4 py-2 flex items-center gap-2 text-xs font-bold bg-[#f4f3f6] text-[#1c355e] rounded-lg hover:bg-[#eaeaee] transition-all"
               >
@@ -422,7 +434,7 @@ export default function GestionHorarios() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {archivosGuardados.map((archivoGuardado, idx) => (
+              {[...archivosGuardados].sort((a, b) => orden === 'az' ? a.archivo.localeCompare(b.archivo) : 0).map((archivoGuardado, idx) => (
                 <div
                   key={idx}
                   className={`bg-white border rounded-2xl p-5 hover:shadow-lg transition-all cursor-pointer group relative ${archivosSeleccionados.includes(archivoGuardado.archivo) ? 'border-[#1c355e] ring-1 ring-[#1c355e]/50 bg-[#1c355e]/5' : 'border-[#c5c6cf]/30'}`}
@@ -826,26 +838,67 @@ export default function GestionHorarios() {
       {/* PANEL DE DETALLES (MODAL) */}
       {archivoSeleccionado && detallesArchivo && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-fadeIn">
-            <div className="p-5 bg-[#f4f3f6] border-b border-[#c5c6cf]/30 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-[#1c355e]/10 text-[#1c355e] rounded-xl">
-                  <span className="material-symbols-outlined text-xl">folder</span>
+          <div className="bg-white rounded-2xl md:rounded-3xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-fadeIn m-2">
+            <div className="p-4 md:p-5 bg-[#f4f3f6] border-b border-[#c5c6cf]/30 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 flex-shrink-0">
+              
+              <div className="flex items-center justify-between w-full lg:w-auto gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2 bg-[#1c355e]/10 text-[#1c355e] rounded-xl flex-shrink-0">
+                    <span className="material-symbols-outlined text-xl">folder</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-[#44464e] uppercase block truncate">Detalles del Archivo</span>
+                    <span className="text-sm font-bold text-[#1c355e] font-mono block truncate max-w-[200px] sm:max-w-xs">{archivoSeleccionado}</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-xs font-bold text-[#44464e] uppercase block">Detalles del Archivo</span>
-                  <span className="text-sm font-bold text-[#1c355e] font-mono">{archivoSeleccionado}</span>
-                </div>
+                <button 
+                  onClick={() => {
+                    setArchivoSeleccionado(null);
+                    setDetallesArchivo(null);
+                    setFiltroModal('');
+                    setFiltroMaestroModal('');
+                  }}
+                  className="p-2 text-[#44464e] hover:bg-white rounded-lg transition-all lg:hidden flex-shrink-0"
+                >
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
               </div>
-              <button 
-                onClick={() => {
-                  setArchivoSeleccionado(null);
-                  setDetallesArchivo(null);
-                }}
-                className="p-2 text-[#44464e] hover:bg-white rounded-lg transition-all"
-              >
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
+
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
+                {detallesArchivo && (
+                  <select
+                    value={filtroMaestroModal}
+                    onChange={(e) => setFiltroMaestroModal(e.target.value)}
+                    className="px-4 py-2 bg-white border border-[#c5c6cf]/40 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 w-full sm:max-w-[200px]"
+                  >
+                    <option value="">Todos los maestros</option>
+                    {[...new Set(detallesArchivo.map(h => h.docente))].sort().map(docente => (
+                      <option key={docente} value={docente}>{docente}</option>
+                    ))}
+                  </select>
+                )}
+                <div className="relative w-full sm:w-auto">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-[#c5c6cf]">search</span>
+                  <input 
+                    type="text"
+                    placeholder="Filtrar por docente, asignatura..."
+                    value={filtroModal}
+                    onChange={(e) => setFiltroModal(e.target.value)}
+                    className="pl-9 pr-4 py-2 bg-white border border-[#c5c6cf]/40 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 w-full sm:w-64"
+                  />
+                </div>
+                <button 
+                  onClick={() => {
+                    setArchivoSeleccionado(null);
+                    setDetallesArchivo(null);
+                    setFiltroModal('');
+                    setFiltroMaestroModal('');
+                  }}
+                  className="p-2 text-[#44464e] hover:bg-white rounded-lg transition-all hidden lg:block"
+                >
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
+              </div>
             </div>
 
             <div className="overflow-auto flex-1 p-0">
@@ -861,7 +914,15 @@ export default function GestionHorarios() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {detallesArchivo.map((horario) => (
+                  {detallesArchivo.filter(h => {
+                    const term = filtroModal.toLowerCase();
+                    const coincideTexto = h.docente?.toLowerCase().includes(term) ||
+                           h.asignatura?.toLowerCase().includes(term) ||
+                           h.horario?.toLowerCase().includes(term) ||
+                           h.aula_asignada?.toLowerCase().includes(term);
+                    const coincideMaestro = filtroMaestroModal === '' || h.docente === filtroMaestroModal;
+                    return coincideTexto && coincideMaestro;
+                  }).map((horario) => (
                     <tr key={horario.id} className="hover:bg-[#f4f3f6]/30 transition-colors">
                       <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{horario.docente}</td>
                       <td className="px-6 py-4 text-xs font-bold">

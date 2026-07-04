@@ -6,6 +6,23 @@ const MINUTOS_AVISO = 30; // mostrar "Por entrar" si faltan ≤ 30 min
 const DIAS_NOMBRES = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 const minsToHora = m => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
 
+// Agrupa bloques consecutivos de la misma asignatura en un solo rango horario
+const agruparClases = (slots) => {
+  if (!slots || slots.length === 0) return [];
+  const grupos = [{ ...slots[0] }];
+  for (let i = 1; i < slots.length; i++) {
+    const prev = grupos[grupos.length - 1];
+    const curr = slots[i];
+    // Si misma asignatura y el bloque es consecutivo (empalma o diferencia ≤ 10 min)
+    if (curr.asignatura === prev.asignatura && curr.inicio_mins - prev.fin_mins <= 10) {
+      prev.fin_mins = curr.fin_mins; // extender el bloque anterior
+    } else {
+      grupos.push({ ...curr });
+    }
+  }
+  return grupos;
+};
+
 export default function GestionDocentes() {
   const { toast, toasts } = useToast();
   const [confirmacion, setConfirmacion] = useState(null);
@@ -75,8 +92,11 @@ export default function GestionDocentes() {
         return { ...doc, estado: 'suplente_asignado', suplencia_activa: suplencia, cubriendo_suplencia: null };
       }
 
-      // Filtrar solo los horarios del día de hoy
-      const horarios_hoy = (doc.horarios_semana || []).filter(h => h.dia_index === diaHoy);
+      // Filtrar solo los horarios del día de hoy, ordenar y agrupar bloques consecutivos
+      const horarios_hoy_raw = (doc.horarios_semana || [])
+        .filter(h => h.dia_index === diaHoy)
+        .sort((a, b) => a.inicio_mins - b.inicio_mins);
+      const horarios_hoy = agruparClases(horarios_hoy_raw);
 
       // 1b) Este docente está cubriendo la clase de otro ahora mismo
       const cubriendo = suplentesActivos.get(doc.nombre) || null;
@@ -583,26 +603,25 @@ export default function GestionDocentes() {
                     {/* ── Clases de hoy ── */}
                     {docente.horarios_hoy?.length > 0 ? (
                       <div className="space-y-1">
-                        {docente.horarios_hoy.slice(0, 3).map((h, i) => {
-                          const activa  = minsAhora >= h.inicio_mins && minsAhora <= h.fin_mins;
-                          const proxima = h.inicio_mins > minsAhora && h.inicio_mins - minsAhora <= MINUTOS_AVISO;
+                        {docente.horarios_hoy.map((h, i) => {
+                          const activa     = minsAhora >= h.inicio_mins && minsAhora <= h.fin_mins;
+                          const proxima    = h.inicio_mins > minsAhora && h.inicio_mins - minsAhora <= MINUTOS_AVISO;
+                          const finalizada = minsAhora > h.fin_mins;
                           return (
                             <div key={i} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium ${
-                              activa  ? 'bg-red-50 text-red-700 border border-red-100' :
-                              proxima ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                              activa     ? 'bg-red-50 text-red-700 border border-red-100' :
+                              proxima    ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                              finalizada ? 'bg-[#f4f3f6] text-[#b0b1b8]' :
                               'bg-[#f4f3f6] text-[#44464e]'
                             }`}>
                               <span className="material-symbols-outlined text-[12px] flex-shrink-0">
-                                {activa ? 'play_circle' : proxima ? 'schedule' : 'radio_button_unchecked'}
+                                {activa ? 'play_circle' : proxima ? 'schedule' : finalizada ? 'check_circle' : 'radio_button_unchecked'}
                               </span>
                               <span className="font-mono flex-shrink-0">{minsToHora(h.inicio_mins)}–{minsToHora(h.fin_mins)}</span>
                               <span className="truncate">{h.asignatura}</span>
                             </div>
                           );
                         })}
-                        {docente.horarios_hoy.length > 3 && (
-                          <p className="text-[11px] text-[#75777f] pl-2">+{docente.horarios_hoy.length - 3} clases más hoy</p>
-                        )}
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#f4f3f6] text-[11px] text-[#75777f]">

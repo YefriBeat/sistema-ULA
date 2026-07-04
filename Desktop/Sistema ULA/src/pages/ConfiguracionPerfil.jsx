@@ -207,7 +207,7 @@ export default function ConfiguracionPerfil() {
           {/* Datos principales */}
           <div className="flex-1 text-center sm:text-left">
             <p className="text-[9px] font-bold uppercase tracking-[0.2em] mb-1" style={{ color: '#fdbb11' }}>
-              Universidad Latino · Sistema de Prefectura
+              Universidad Latino · SIPREF
             </p>
             <h1 className="text-xl font-black text-white leading-tight capitalize">
               {usuario.nombre_completo || 'Usuario'}
@@ -244,14 +244,14 @@ export default function ConfiguracionPerfil() {
         <div className="space-y-5">
 
           {/* ── EDITAR PERFIL ────────────────────────────────────────────────── */}
-          <form onSubmit={handleGuardar} className="bg-white border border-[#c5c6cf]/40 rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-[#c5c6cf]/30 bg-[#faf9fc] flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-[#1c355e] flex items-center justify-center">
-                <span className="material-symbols-outlined text-white text-[16px]">manage_accounts</span>
+          <form onSubmit={handleGuardar} className="bg-white border border-[#c5c6cf]/40 rounded-[24px] shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+            <div className="px-7 py-5 border-b border-[#c5c6cf]/30 bg-gradient-to-r from-[#faf9fc] to-white flex items-center gap-4">
+              <div className="w-10 h-10 rounded-[14px] bg-[#1c355e] flex items-center justify-center shadow-inner">
+                <span className="material-symbols-outlined text-white text-[20px]">manage_accounts</span>
               </div>
               <div>
-                <h2 className="text-sm font-bold text-[#1b1c1e]">Información del Perfil</h2>
-                <p className="text-[10px] text-[#75777f]">Datos personales y configuración de cuenta</p>
+                <h2 className="text-base font-black text-[#1b1c1e] tracking-tight">Información del Perfil</h2>
+                <p className="text-xs text-[#75777f] font-medium mt-0.5">Datos personales y configuración de cuenta</p>
               </div>
             </div>
 
@@ -317,34 +317,34 @@ export default function ConfiguracionPerfil() {
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-[#c5c6cf]/30 bg-[#faf9fc] flex flex-col sm:flex-row items-center justify-between gap-3">
-              <p className="text-[10px] text-[#75777f] flex items-center gap-1">
-                <span className="material-symbols-outlined text-green-500 text-[13px]">shield</span>
-                Datos almacenados de forma segura.
+            <div className="px-7 py-5 border-t border-[#c5c6cf]/30 bg-[#faf9fc] flex flex-col sm:flex-row items-center justify-between gap-4">
+              <p className="text-xs text-[#75777f] font-medium flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-green-500 text-[16px]">verified_user</span>
+                Datos cifrados y almacenados de forma segura.
               </p>
               <button type="submit" disabled={guardando}
-                className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                  guardando ? 'bg-[#c5c6cf]/40 text-[#75777f] cursor-not-allowed' : 'bg-[#1c355e] hover:bg-[#0e1f3d] text-white shadow-lg shadow-[#1c355e]/15'
+                className={`w-full sm:w-auto flex items-center justify-center gap-2 px-7 py-3 rounded-[14px] text-sm font-bold transition-all ${
+                  guardando ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-[#1c355e] hover:bg-[#0e1f3d] text-white shadow-lg shadow-[#1c355e]/20 hover:-translate-y-0.5'
                 }`}>
-                <span className="material-symbols-outlined text-[17px]">{guardando ? 'hourglass_empty' : 'check_circle'}</span>
+                <span className="material-symbols-outlined text-[18px]">{guardando ? 'hourglass_empty' : 'save'}</span>
                 {guardando ? 'Guardando...' : 'Guardar Cambios'}
               </button>
             </div>
           </form>
 
           {/* ── CAMBIO DE CONTRASEÑA ─────────────────────────────────────────── */}
-          <form onSubmit={handleCambiarPassword} className="bg-white border border-[#c5c6cf]/40 rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-[#c5c6cf]/30 bg-[#faf9fc] flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-[#1c355e]/10 border border-[#1c355e]/20 flex items-center justify-center">
-                <span className="material-symbols-outlined text-[#1c355e] text-[16px]">lock_reset</span>
+          <form onSubmit={handleCambiarPassword} className="bg-white border border-[#c5c6cf]/40 rounded-[24px] shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+            <div className="px-7 py-5 border-b border-[#c5c6cf]/30 bg-gradient-to-r from-[#faf9fc] to-white flex items-center gap-4">
+              <div className="w-10 h-10 rounded-[14px] bg-[#1c355e]/10 border border-[#1c355e]/20 flex items-center justify-center">
+                <span className="material-symbols-outlined text-[#1c355e] text-[20px]">lock_reset</span>
               </div>
               <div>
-                <h2 className="text-sm font-bold text-[#1b1c1e]">Seguridad · Cambiar Contraseña</h2>
-                <p className="text-[10px] text-[#75777f]">Actualiza tu contraseña de acceso al sistema</p>
+                <h2 className="text-base font-black text-[#1b1c1e] tracking-tight">Seguridad · Contraseña</h2>
+                <p className="text-xs text-[#75777f] font-medium mt-0.5">Actualiza tu credencial de acceso al sistema</p>
               </div>
             </div>
 
-            <div className="px-6 py-5 space-y-4">
+            <div className="px-7 py-6 space-y-5">
               {/* Contraseña actual */}
               <div>
                 <label className="block text-[10px] font-bold text-[#44464e] uppercase tracking-widest mb-2">Contraseña Actual</label>
@@ -419,45 +419,45 @@ export default function ConfiguracionPerfil() {
                 </div>
               </div>
 
-              <div className="flex justify-end pt-1">
+              <div className="flex justify-end pt-2">
                 <button type="submit" disabled={cambiandoPass}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                    cambiandoPass ? 'bg-[#c5c6cf]/40 text-[#75777f] cursor-not-allowed' : 'bg-[#1c355e] hover:bg-[#0e1f3d] text-white shadow-lg shadow-[#1c355e]/15'
+                  className={`flex items-center gap-2 px-7 py-3 rounded-[14px] text-sm font-bold transition-all ${
+                    cambiandoPass ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-2 border-[#1c355e] text-[#1c355e] hover:bg-[#1c355e] hover:text-white shadow-sm hover:shadow-md hover:-translate-y-0.5'
                   }`}>
-                  <span className="material-symbols-outlined text-[17px]">{cambiandoPass ? 'hourglass_empty' : 'lock_reset'}</span>
-                  {cambiandoPass ? 'Actualizando...' : 'Cambiar Contraseña'}
+                  <span className="material-symbols-outlined text-[18px]">{cambiandoPass ? 'hourglass_empty' : 'key'}</span>
+                  {cambiandoPass ? 'Actualizando...' : 'Actualizar Contraseña'}
                 </button>
               </div>
             </div>
           </form>
 
           {/* ── ZONA DE PELIGRO ──────────────────────────────────────────────── */}
-          <div className="rounded-2xl overflow-hidden border border-red-200 shadow-sm">
-            <div className="px-6 py-4 flex items-center gap-3 border-b border-red-200"
+          <div className="rounded-[24px] overflow-hidden border border-red-200 shadow-sm hover:shadow-md transition-shadow">
+            <div className="px-7 py-5 flex items-center gap-4 border-b border-red-200"
               style={{ background: 'linear-gradient(135deg, #fff1f1 0%, #fff5f5 100%)' }}>
-              <div className="w-8 h-8 rounded-xl bg-red-100 border border-red-200 flex items-center justify-center flex-shrink-0">
-                <span className="material-symbols-outlined text-red-600 text-[18px]">dangerous</span>
+              <div className="w-10 h-10 rounded-[14px] bg-red-100 border border-red-200 flex items-center justify-center flex-shrink-0 shadow-inner">
+                <span className="material-symbols-outlined text-red-600 text-[20px]">warning</span>
               </div>
               <div>
-                <h2 className="text-sm font-bold text-red-700">Zona de Peligro</h2>
-                <p className="text-[10px] text-red-400">Las acciones de esta sección son permanentes e irreversibles.</p>
+                <h2 className="text-base font-black text-red-700 tracking-tight">Zona de Peligro</h2>
+                <p className="text-xs text-red-500 font-medium mt-0.5">Acciones destructivas permanentes e irreversibles.</p>
               </div>
             </div>
-            <div className="bg-white px-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <p className="text-sm font-bold text-[#1b1c1e]">Eliminar cuenta permanentemente</p>
-                <p className="text-xs text-[#75777f]">Se eliminarán todos tus datos, accesos y configuraciones.</p>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
+            <div className="bg-white px-7 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5">
+              <div className="space-y-1.5">
+                <p className="text-base font-bold text-[#1b1c1e]">Eliminar cuenta permanentemente</p>
+                <p className="text-sm text-[#75777f]">Se borrarán todos tus datos, historiales y configuraciones.</p>
+                <div className="flex flex-wrap gap-x-5 gap-y-2 pt-2">
                   {['Historial borrado', 'Acceso revocado', 'Sin recuperación'].map(item => (
-                    <span key={item} className="text-[10px] font-semibold text-red-400 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[11px]">close</span>{item}
+                    <span key={item} className="text-xs font-bold text-red-400 flex items-center gap-1.5 bg-red-50 px-2 py-1 rounded-lg">
+                      <span className="material-symbols-outlined text-[14px]">close</span>{item}
                     </span>
                   ))}
                 </div>
               </div>
               <button onClick={() => setMostrarConfirmacion(true)}
-                className="flex-shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl border border-red-300 bg-red-50 text-red-600 text-sm font-bold hover:bg-red-100 transition-all">
-                <span className="material-symbols-outlined text-[17px]">delete_forever</span>
+                className="flex-shrink-0 flex items-center gap-2 px-6 py-3 rounded-[14px] bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 hover:border-red-600 text-sm font-bold transition-all hover:shadow-lg hover:-translate-y-0.5">
+                <span className="material-symbols-outlined text-[18px]">delete_forever</span>
                 Eliminar cuenta
               </button>
             </div>
@@ -468,15 +468,15 @@ export default function ConfiguracionPerfil() {
         <div className="space-y-4">
 
           {/* ── PANEL USUARIOS REGISTRADOS ───────────────────────────────────── */}
-          <div className="bg-white border border-[#c5c6cf]/40 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-            <div className="px-5 py-4 border-b border-[#c5c6cf]/30 bg-[#faf9fc] flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-[#1c355e] flex items-center justify-center">
-                  <span className="material-symbols-outlined text-white text-[16px]">group</span>
+          <div className="bg-white border border-[#c5c6cf]/40 rounded-[24px] shadow-sm hover:shadow-md transition-shadow overflow-hidden flex flex-col">
+            <div className="px-6 py-5 border-b border-[#c5c6cf]/30 bg-gradient-to-r from-[#faf9fc] to-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-[14px] bg-[#1c355e] flex items-center justify-center shadow-inner">
+                  <span className="material-symbols-outlined text-white text-[20px]">group</span>
                 </div>
                 <div>
-                  <h2 className="text-sm font-bold text-[#1b1c1e]">Usuarios Registrados</h2>
-                  <p className="text-[10px] text-[#75777f]">Personal con acceso al sistema</p>
+                  <h2 className="text-base font-black text-[#1b1c1e] tracking-tight">Usuarios Registrados</h2>
+                  <p className="text-xs text-[#75777f] font-medium mt-0.5">Personal con acceso al sistema</p>
                 </div>
               </div>
               <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-[#1c355e]/8 text-[#1c355e] border border-[#1c355e]/15">
@@ -547,42 +547,42 @@ export default function ConfiguracionPerfil() {
             </div>
 
             {/* Footer */}
-            <div className="px-5 py-3 border-t border-[#c5c6cf]/30 bg-[#faf9fc] flex items-center justify-between">
-              <p className="text-[10px] text-[#75777f] font-medium">
+            <div className="px-6 py-4 border-t border-[#c5c6cf]/30 bg-[#faf9fc] flex items-center justify-between">
+              <p className="text-xs text-[#75777f] font-bold">
                 {usuarios.length} usuario{usuarios.length !== 1 ? 's' : ''} registrado{usuarios.length !== 1 ? 's' : ''}
               </p>
-              <span className="flex items-center gap-1 text-[10px] font-semibold text-green-600">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span className="flex items-center gap-1.5 text-xs font-bold text-green-600 bg-green-50 px-2.5 py-1 rounded-lg">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                 1 en línea
               </span>
             </div>
           </div>
 
           {/* ── ACTIVIDAD RECIENTE ───────────────────────────────────────────── */}
-          <div className="bg-white border border-[#c5c6cf]/40 rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#c5c6cf]/30 bg-[#faf9fc] flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-[#1c9c72]/10 border border-[#1c9c72]/20 flex items-center justify-center">
-                <span className="material-symbols-outlined text-[#1c9c72] text-[16px]">history</span>
+          <div className="bg-white border border-[#c5c6cf]/40 rounded-[24px] shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+            <div className="px-6 py-5 border-b border-[#c5c6cf]/30 bg-gradient-to-r from-[#faf9fc] to-white flex items-center gap-3">
+              <div className="w-10 h-10 rounded-[14px] bg-[#1c9c72]/10 border border-[#1c9c72]/20 flex items-center justify-center">
+                <span className="material-symbols-outlined text-[#1c9c72] text-[20px]">history</span>
               </div>
               <div>
-                <h2 className="text-sm font-bold text-[#1b1c1e]">Actividad Reciente</h2>
-                <p className="text-[10px] text-[#75777f]">Registro de accesos y cambios</p>
+                <h2 className="text-base font-black text-[#1b1c1e] tracking-tight">Actividad Reciente</h2>
+                <p className="text-xs text-[#75777f] font-medium mt-0.5">Registro de accesos y cambios</p>
               </div>
             </div>
 
-            <div className="px-5 py-4 space-y-3">
+            <div className="px-6 py-5 space-y-4">
               {[
-                { icon: 'login',      color: 'text-[#1c355e] bg-[#1c355e]/8', label: 'Último inicio de sesión',      valor: fmtFechaHora(usuario.logged_at)      },
-                { icon: 'edit',       color: 'text-amber-600 bg-amber-50',     label: 'Última actualización de perfil', valor: fmtFechaHora(ultimaActualizacion)    },
-                { icon: 'person_add', color: 'text-[#1c9c72] bg-[#1c9c72]/8',  label: 'Fecha de registro',             valor: fmtFecha(usuario.created_at)         },
+                { icon: 'login',      color: 'text-[#1c355e] bg-[#1c355e]/8 border border-[#1c355e]/10', label: 'Último inicio de sesión',      valor: fmtFechaHora(usuario.logged_at)      },
+                { icon: 'edit',       color: 'text-amber-600 bg-amber-50 border border-amber-200',     label: 'Última actualización de perfil', valor: fmtFechaHora(ultimaActualizacion)    },
+                { icon: 'person_add', color: 'text-[#1c9c72] bg-[#1c9c72]/8 border border-[#1c9c72]/10',  label: 'Fecha de registro',             valor: fmtFecha(usuario.created_at)         },
               ].map(item => (
-                <div key={item.label} className="flex items-center gap-3 py-2 border-b border-[#f0f0f4] last:border-none">
-                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${item.color}`}>
-                    <span className="material-symbols-outlined text-[15px]">{item.icon}</span>
+                <div key={item.label} className="flex items-center gap-4 py-2 border-b border-[#f0f0f4] last:border-none">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${item.color}`}>
+                    <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-wide">{item.label}</p>
-                    <p className="text-xs font-semibold text-[#1b1c1e] truncate">{item.valor}</p>
+                    <p className="text-[10px] font-bold text-[#75777f] uppercase tracking-wider">{item.label}</p>
+                    <p className="text-sm font-black text-[#1b1c1e] truncate mt-0.5">{item.valor}</p>
                   </div>
                 </div>
               ))}

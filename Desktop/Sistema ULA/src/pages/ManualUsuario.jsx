@@ -95,22 +95,52 @@ export default function ManualUsuario() {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const handleDescargarPDF = () => {
+    const estiloImpresion = document.createElement('style');
+    estiloImpresion.id = 'print-manual';
+    estiloImpresion.textContent = `
+      @media print {
+        body * { visibility: hidden; }
+        #manual-contenido, #manual-contenido * { visibility: visible; }
+        #manual-contenido { position: absolute; left: 0; top: 0; width: 100%; }
+        #manual-contenido aside, #manual-boton-indice, #manual-btn-descargar { display: none !important; }
+        #manual-contenido main { width: 100% !important; max-width: 100% !important; }
+        #manual-contenido section { break-inside: avoid; }
+        nav[aria-label="sidebar"] { display: none !important; }
+        @page { margin: 1.5cm; size: A4; }
+      }
+    `;
+    document.head.appendChild(estiloImpresion);
+    window.print();
+    setTimeout(() => estiloImpresion.remove(), 1000);
+  };
+
   return (
     <div className="min-h-screen bg-[#faf9fc]">
 
       {/* ── CABECERA ── */}
       <div style={{ background: 'linear-gradient(135deg, #1c355e 0%, #162c50 100%)' }} className="px-6 py-10 text-white">
-        <div className="max-w-5xl mx-auto flex items-center gap-5">
-          <img src={logo} alt="Logo Universidad Latino" className="w-14 h-14 rounded-xl object-contain bg-white/10 p-1" />
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-1">Universidad Latino</p>
-            <h1 className="text-2xl font-black">Manual de Usuario</h1>
-            <p className="text-sm text-white/70 mt-1">Sistema de Gestión de Prefectura — Versión 2.0</p>
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-5">
+          <div className="flex items-center gap-5">
+            <img src={logo} alt="Logo Universidad Latino" className="w-14 h-14 rounded-xl object-contain bg-white/10 p-1" />
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-1">Universidad Latino</p>
+              <h1 className="text-2xl font-black">Manual de Usuario</h1>
+              <p className="text-sm text-white/70 mt-1">SIPREF — Versión 2.1</p>
+            </div>
           </div>
+          <button
+            id="manual-btn-descargar"
+            onClick={handleDescargarPDF}
+            className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-sm font-bold text-white transition-all hover:shadow-lg"
+          >
+            <span className="material-symbols-outlined text-[18px]">download</span>
+            Descargar PDF
+          </button>
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-8 flex gap-8">
+      <div id="manual-contenido" className="max-w-5xl mx-auto px-4 py-8 flex gap-8">
 
         {/* ── SIDEBAR (escritorio) ── */}
         <aside className="hidden lg:block w-56 flex-shrink-0">
@@ -140,7 +170,7 @@ export default function ManualUsuario() {
         </aside>
 
         {/* ── BOTÓN FLOTANTE ÍNDICE MÓVIL ── */}
-        <div className="lg:hidden fixed bottom-20 right-4 z-50">
+        <div id="manual-boton-indice" className="lg:hidden fixed bottom-20 right-4 z-50">
           <button
             onClick={() => setMenuMovilAbierto(!menuMovilAbierto)}
             className="w-12 h-12 rounded-full bg-[#1c355e] text-white shadow-lg flex items-center justify-center"
@@ -168,7 +198,7 @@ export default function ManualUsuario() {
           <Seccion id="introduccion" icono="info" titulo="Introducción">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
-                El <strong className="text-[#1b1c1e]">Sistema de Gestión de Prefectura</strong> es una plataforma web desarrollada para la <strong className="text-[#1b1c1e]">Universidad Latino</strong> que centraliza la administración de horarios académicos, aulas e información docente en tiempo real.
+                El <strong className="text-[#1b1c1e]">SIPREF</strong> es una plataforma web desarrollada para la <strong className="text-[#1b1c1e]">Universidad Latino</strong> que centraliza la administración de horarios académicos, aulas e información docente en tiempo real.
               </p>
             </Tarjeta>
 
@@ -230,7 +260,37 @@ export default function ManualUsuario() {
               </p>
             </Tarjeta>
 
-            <Tarjeta titulo="Indicadores de estado" icono="radio_button_checked">
+            <Tarjeta titulo="Tarjetas de métricas interactivas" icono="touch_app">
+              <p className="text-xs text-[#44464e] leading-relaxed mb-3">
+                En la parte superior del dashboard hay 4 tarjetas con indicadores clave. Al hacer <strong className="text-[#1b1c1e]">clic en cualquier tarjeta</strong>, la página baja automáticamente a la tabla de horarios y aplica el filtro correspondiente:
+              </p>
+              <div className="space-y-2 mt-1">
+                {[
+                  { chip: <Chip color="blue"  texto="En Curso" />,      desc: 'Filtra y muestra solo las clases activas en este momento.' },
+                  { chip: <Chip color="amber" texto="Próximas" />,       desc: 'Muestra las clases que están por iniciar hoy y las programadas.' },
+                  { chip: <Chip color="gray"  texto="Finalizadas" />,    desc: 'Muestra las clases que ya terminaron hoy.' },
+                  { chip: <Chip color="indigo" texto="Clases Totales" />, desc: 'Muestra la base de datos completa sin filtros.' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="w-32 flex-shrink-0">{item.chip}</div>
+                    <p className="text-xs text-[#44464e]">{item.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </Tarjeta>
+
+            <Tarjeta titulo="Ocupación de Aulas y Laboratorios" icono="meeting_room">
+              <p className="text-xs text-[#44464e] leading-relaxed mb-2">
+                El panel lateral derecho muestra dos indicadores separados:
+              </p>
+              <div className="space-y-2 mt-1 text-xs text-[#44464e]">
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">meeting_room</span><span><strong className="text-[#1b1c1e]">Gráfico de Aulas:</strong> muestra el porcentaje de ocupación solo de aulas regulares (excluye laboratorios).</span></div>
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c9c72] flex-shrink-0 mt-0.5">science</span><span><strong className="text-[#1b1c1e]">Total Laboratorios:</strong> tarjeta independiente que muestra cuántos laboratorios hay, cuántos están en uso y cuántos están libres.</span></div>
+              </div>
+              <Aviso tipo="info" texto="Los laboratorios (espacios con prefijo 'Lab') no se mezclan con las aulas normales en los porcentajes ni en los totales del gráfico circular." />
+            </Tarjeta>
+
+            <Tarjeta titulo="Indicadores de estado en la tabla" icono="radio_button_checked">
               <div className="space-y-2.5 mt-1">
                 {[
                   { chip: <Chip color="blue"   texto="En Curso" />,    desc: 'La clase está activa en este momento.' },
@@ -255,13 +315,7 @@ export default function ManualUsuario() {
                 <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">schedule</span><span><strong className="text-[#1b1c1e]">Hora:</strong> filtra por turno (matutino / vespertino).</span></div>
                 <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">radio_button_checked</span><span><strong className="text-[#1b1c1e]">Estado:</strong> muestra solo clases con el estado seleccionado.</span></div>
               </div>
-              <Aviso tipo="tip" texto='Usa el botón "Base de Datos Total" para eliminar todos los filtros y ver el directorio completo.' />
-            </Tarjeta>
-
-            <Tarjeta titulo="Vista móvil vs escritorio" icono="devices">
-              <p className="text-xs text-[#44464e] leading-relaxed">
-                En <strong>escritorio</strong> (pantallas ≥ 1024 px) se muestra una tabla de 7 columnas. En <strong>móvil y tablet</strong> cada clase aparece como una <em>tarjeta</em> compacta con toda la información visible sin desplazamiento horizontal.
-              </p>
+              <Aviso tipo="tip" texto='Usa el botón "BD Total" o haz clic en la tarjeta "Clases Totales" para eliminar todos los filtros y ver el directorio completo.' />
             </Tarjeta>
           </Seccion>
 
@@ -308,15 +362,26 @@ export default function ManualUsuario() {
           <Seccion id="aulas" icono="door_open" titulo="Gestión de aulas">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
-                Administra el inventario de aulas del plantel. Puedes ver su disponibilidad en tiempo real, registrar nuevas aulas y activar el modo mantenimiento cuando un espacio no está disponible.
+                Administra el inventario de aulas y laboratorios del plantel. Puedes ver su disponibilidad en tiempo real, registrar nuevos espacios y activar el modo mantenimiento.
               </p>
+            </Tarjeta>
+
+            <Tarjeta titulo="Separación Aulas vs Laboratorios" icono="science">
+              <p className="text-xs text-[#44464e] leading-relaxed mb-2">
+                El sistema diferencia automáticamente entre <strong className="text-[#1b1c1e]">aulas regulares</strong> y <strong className="text-[#1b1c1e]">laboratorios</strong> (espacios con prefijo "Lab"):
+              </p>
+              <div className="space-y-2 mt-1 text-xs text-[#44464e]">
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">meeting_room</span><span>Las <strong>aulas</strong> se ordenan alfanuméricamente (A1, A2… A10) y aparecen primero en la lista.</span></div>
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c9c72] flex-shrink-0 mt-0.5">science</span><span>Los <strong>laboratorios</strong> se agrupan al final de la lista y tienen su propio panel de métricas independiente.</span></div>
+              </div>
+              <Aviso tipo="info" texto="Los laboratorios no cuentan en el total de aulas ni afectan los promedios de ocupación de salones regulares." />
             </Tarjeta>
 
             <Tarjeta titulo="Estados de un aula" icono="info">
               <div className="space-y-2.5 mt-1">
                 {[
                   { chip: <Chip color="green" texto="Disponible" />,    desc: 'El aula está libre y puede ser asignada.' },
-                  { chip: <Chip color="blue"  texto="En Clase" />,      desc: 'Hay una clase activa en este momento.' },
+                  { chip: <Chip color="blue"  texto="En Clase" />,      desc: 'Hay una clase activa en este momento (indicador azul estático).' },
                   { chip: <Chip color="amber" texto="Ocupada" />,       desc: 'Asignada a turno matutino y/o vespertino.' },
                   { chip: <Chip color="red"   texto="Mantenimiento" />, desc: 'Fuera de servicio temporalmente.' },
                 ].map((item, i) => (
@@ -352,14 +417,34 @@ export default function ManualUsuario() {
           <Seccion id="docentes" icono="group" titulo="Gestión de docentes">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
-                Consulta el directorio de docentes con su estado en tiempo real (en clase, libre, con suplencia activa) y gestiona las suplencias cuando un docente no pueda presentarse.
+                Consulta el directorio de docentes con su estado en tiempo real (en clase, disponible, por entrar, con suplencia activa) y gestiona las suplencias cuando un docente no pueda presentarse.
               </p>
+            </Tarjeta>
+
+            <Tarjeta titulo="Clases del día en cada tarjeta" icono="today">
+              <p className="text-xs text-[#44464e] leading-relaxed mb-2">
+                Cada tarjeta de docente muestra <strong className="text-[#1b1c1e]">únicamente las clases del día actual</strong>, ordenadas cronológicamente. Las clases consecutivas de la misma asignatura se agrupan automáticamente en un solo bloque horario.
+              </p>
+              <div className="space-y-2 mt-1">
+                {[
+                  { chip: <Chip color="red"   texto="Activa" />,      desc: 'La clase está en curso ahora mismo (fondo rojo claro).' },
+                  { chip: <Chip color="amber" texto="Próxima" />,      desc: 'La clase inicia en los próximos 30 minutos (fondo ámbar).' },
+                  { chip: <Chip color="gray"  texto="Finalizada" />,   desc: 'La clase ya terminó hoy (texto atenuado con ícono ✓).' },
+                  { chip: <Chip color="blue"  texto="Pendiente" />,    desc: 'Clase del día que aún no ha comenzado (fondo gris neutro).' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="w-28 flex-shrink-0">{item.chip}</div>
+                    <p className="text-xs text-[#44464e]">{item.desc}</p>
+                  </div>
+                ))}
+              </div>
+              <Aviso tipo="info" texto='Ejemplo: si un docente tiene 2 bloques de 50 min de la misma materia (07:00–07:50 y 07:50–08:40), se muestra como un solo bloque "07:00–08:40".' />
             </Tarjeta>
 
             <Tarjeta titulo="Filtros disponibles" icono="filter_list">
               <div className="space-y-2 mt-1 text-xs text-[#44464e]">
-                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0">search</span><span><strong className="text-[#1b1c1e]">Búsqueda:</strong> por nombre del docente.</span></div>
-                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0">radio_button_checked</span><span><strong className="text-[#1b1c1e]">Estado:</strong> Todos / En clase / Libres.</span></div>
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0">search</span><span><strong className="text-[#1b1c1e]">Búsqueda:</strong> por nombre del docente o carrera.</span></div>
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0">radio_button_checked</span><span><strong className="text-[#1b1c1e]">Estado:</strong> Todos / En Clase / Con Suplente.</span></div>
                 <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0">sort_by_alpha</span><span><strong className="text-[#1b1c1e]">Orden A–Z:</strong> ordena el listado alfabéticamente.</span></div>
               </div>
             </Tarjeta>
@@ -367,11 +452,11 @@ export default function ManualUsuario() {
             <Tarjeta titulo="Registrar una suplencia" icono="swap_horiz">
               <div className="space-y-3 mt-1">
                 <Paso numero={1} titulo="Localiza al docente que no podrá asistir en la lista." />
-                <Paso numero={2} titulo='Haz clic en "Registrar Suplencia" dentro de su tarjeta.' />
-                <Paso numero={3} titulo="Selecciona la clase específica que necesita cobertura." descripcion="Se muestran solo las clases del docente para el día/hora indicados." />
+                <Paso numero={2} titulo='Haz clic en "Asignar Suplente" dentro de su tarjeta.' />
+                <Paso numero={3} titulo="Selecciona la clase específica que necesita cobertura." descripcion="Se muestran todas las clases semanales del docente." />
                 <Paso numero={4} titulo="Elige al docente suplente de la lista o marca la opción de suplente externo e ingresa el nombre." />
                 <Paso numero={5} titulo="Confirma los datos (materia, día, fecha, hora de inicio y hora de fin)." />
-                <Paso numero={6} titulo='Presiona "Registrar suplencia".' />
+                <Paso numero={6} titulo='Presiona "Asignar Suplente".' />
               </div>
               <Aviso tipo="tip" texto="Una suplencia activa aparece en el Dashboard con el indicador azul «Suplencia» y muestra el nombre del docente sustituto." />
             </Tarjeta>
@@ -455,7 +540,7 @@ export default function ManualUsuario() {
           </Seccion>
 
           <p className="text-[10px] text-center text-[#75777f] pb-4">
-            Sistema de Gestión de Prefectura v2.0 · Universidad Latino · 2026
+            SIPREF v2.1 · Universidad Latino · 2026
           </p>
 
         </main>

@@ -92,7 +92,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="API Sistema de Prefectura ULA", lifespan=lifespan)
+app = FastAPI(title="API SIPREF ULA", lifespan=lifespan)
 
 
 import urllib.request
@@ -145,7 +145,7 @@ def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
     <html><body style="font-family:Arial,sans-serif;background:#f4f6fb;padding:32px;">
       <div style="max-width:420px;margin:auto;background:#fff;border-radius:16px;
                   padding:36px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08);">
-        <h2 style="color:#1c355e;margin-bottom:4px;">Sistema de Prefectura</h2>
+        <h2 style="color:#1c355e;margin-bottom:4px;">SIPREF</h2>
         <p style="color:#75777f;font-size:13px;">Universidad Latino</p>
         <p style="color:#44464e;">Hola <b>{nombre}</b>, tu código de verificación es:</p>
         <div style="font-size:38px;font-weight:bold;letter-spacing:10px;color:#1c355e;
@@ -156,7 +156,7 @@ def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
       </div>
     </body></html>
     """
-    _enviar_smtp(correo_destino, "Código de verificación — Sistema de Prefectura ULA", html)
+    _enviar_smtp(correo_destino, "Código de verificación — SIPREF ULA", html)
 
 # Configuración de CORS para permitir la conexión desde Vite (React)
 app.add_middleware(
@@ -976,7 +976,7 @@ def recuperar_contrasena(datos: RecuperarContrasena):
         <html><body style="font-family:Arial,sans-serif;background:#f4f6fb;padding:32px;">
           <div style="max-width:420px;margin:auto;background:#fff;border-radius:16px;
                       padding:36px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08);">
-            <h2 style="color:#1c355e;margin-bottom:4px;">Sistema de Prefectura</h2>
+            <h2 style="color:#1c355e;margin-bottom:4px;">SIPREF</h2>
             <p style="color:#75777f;font-size:13px;">Universidad Latino</p>
             <p style="color:#44464e;">Hola <b>{usuario['nombre']}</b>, tu código para restablecer la contraseña es:</p>
             <div style="font-size:38px;font-weight:bold;letter-spacing:10px;color:#1c355e;
@@ -987,7 +987,7 @@ def recuperar_contrasena(datos: RecuperarContrasena):
           </div>
         </body></html>
         """
-        _enviar_smtp(correo_limpio, "Restablecer contraseña — Sistema de Prefectura ULA", html_reset)
+        _enviar_smtp(correo_limpio, "Restablecer contraseña — SIPREF ULA", html_reset)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo enviar el correo: {str(e)}")
 

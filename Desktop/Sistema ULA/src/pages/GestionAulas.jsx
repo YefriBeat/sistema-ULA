@@ -231,19 +231,25 @@ export default function GestionAulas() {
     if (filtro === 'en_curso') return !estaEnMantenimiento(aula) && !!obtenerClaseEnCurso(aula.nombre);
     return true;
   }).sort((a, b) => {
-    // En "Todos": aulas con clase activa ahora van primero
-    const aActiva = !!obtenerClaseEnCurso(a.nombre);
-    const bActiva = !!obtenerClaseEnCurso(b.nombre);
-    if (aActiva && !bActiva) return -1;
-    if (!aActiva && bActiva) return 1;
-    return a.nombre.localeCompare(b.nombre);
+    const aEsLab = a.nombre.toLowerCase().startsWith('lab');
+    const bEsLab = b.nombre.toLowerCase().startsWith('lab');
+    if (aEsLab && !bEsLab) return 1;
+    if (!aEsLab && bEsLab) return -1;
+    return a.nombre.localeCompare(b.nombre, undefined, { numeric: true, sensitivity: 'base' });
   });
 
-  const totalAulas         = aulas.length;
-  const capacidadInstalada = aulas.reduce((t, a) => t + (Number(a.capacidad) || 0), 0);
-  const aulasEnClaseAhora  = aulas.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
-  const aulasDisponibles   = aulas.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
-  const aulasEnMant        = aulas.filter(a => estaEnMantenimiento(a)).length;
+  const esLaboratorio = (nombre) => nombre.toLowerCase().startsWith('lab');
+  const aulasNormales = aulas.filter(a => !esLaboratorio(a.nombre));
+  const laboratorios  = aulas.filter(a => esLaboratorio(a.nombre));
+
+  const totalAulas         = aulasNormales.length;
+  const capacidadInstalada = aulasNormales.reduce((t, a) => t + (Number(a.capacidad) || 0), 0);
+  const aulasEnClaseAhora  = aulasNormales.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
+  const aulasDisponibles   = aulasNormales.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
+  const aulasEnMant        = aulasNormales.filter(a => estaEnMantenimiento(a)).length;
+
+  const totalLaboratorios = laboratorios.length;
+  const labsEnUso = laboratorios.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
 
   // Nombres de aulas disponibles para el dropdown de aula temporal
   const nombresAulas = aulas.map(a => a.nombre).filter(n => n !== modalMantAula?.nombre);
@@ -519,7 +525,7 @@ export default function GestionAulas() {
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-2">
                     <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
-                    {claseActiva && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping flex-shrink-0" />}
+                    {claseActiva && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0 shadow-sm" />}
                   </div>
                   <div className="flex flex-col items-end gap-2">
                     {/* Badge con prioridad: tiempo real > horario programado */}
@@ -555,7 +561,7 @@ export default function GestionAulas() {
                   {claseActiva && (
                     <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 space-y-1">
                       <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                         Docente en clase ahora
                       </p>
                       <p className="text-sm font-black text-[#1b1c1e] leading-tight">{claseActiva.docente}</p>
@@ -598,19 +604,31 @@ export default function GestionAulas() {
             <p className="text-4xl font-extrabold mt-1">{totalAulas}</p>
           </div>
           <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
-            <p className="text-xs font-bold uppercase text-[#44464e]">En Clase Ahora</p>
+            <p className="text-xs font-bold uppercase text-[#44464e]">Aulas en Clase</p>
             <div className="flex items-center gap-2 mt-1">
               <p className={`text-4xl font-extrabold ${aulasEnClaseAhora > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>{aulasEnClaseAhora}</p>
-              {aulasEnClaseAhora > 0 && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping" />}
+              {aulasEnClaseAhora > 0 && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm" />}
             </div>
             <p className="text-[11px] text-[#75777f] font-semibold mt-1">{aulasDisponibles} disponibles</p>
           </div>
+
+          <div className="bg-[#1c9c72] text-white p-6 rounded-2xl shadow-lg flex flex-col items-center xl:items-start text-center xl:text-left">
+            <p className="text-xs font-bold uppercase opacity-90">Total Laboratorios</p>
+            <div className="flex items-center justify-between w-full mt-1">
+              <p className="text-4xl font-extrabold">{totalLaboratorios}</p>
+              <div className="text-right">
+                <p className="text-sm font-bold opacity-90">{labsEnUso} en uso</p>
+                <p className="text-[10px] opacity-75">{totalLaboratorios - labsEnUso} libres</p>
+              </div>
+            </div>
+          </div>
+
           <div className="bg-white border border-orange-200 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
-            <p className="text-xs font-bold uppercase text-[#44464e]">En Mantenimiento</p>
+            <p className="text-xs font-bold uppercase text-[#44464e]">Aulas en Mantenimiento</p>
             <p className="text-4xl font-extrabold text-orange-500 mt-1">{aulasEnMant}</p>
           </div>
           <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
-            <p className="text-xs font-bold uppercase text-[#44464e]">Capacidad Total</p>
+            <p className="text-xs font-bold uppercase text-[#44464e]">Capacidad Total (Aulas)</p>
             <p className="text-4xl font-extrabold text-[#1c355e] mt-1">{capacidadInstalada}</p>
           </div>
         </div>

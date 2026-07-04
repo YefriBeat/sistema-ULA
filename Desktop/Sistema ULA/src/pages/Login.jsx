@@ -124,7 +124,7 @@ export default function Login() {
 
           <div className="flex flex-col items-center mb-8">
             <img src={logo} alt="Universidad Latino Logo" className="w-40 h-auto mb-6" />
-            <h1 className="text-2xl text-[#1c355e] text-center mb-2 tracking-tight font-bold">SISTEMA DE PREFECTURA</h1>
+            <h1 className="text-2xl text-[#1c355e] text-center mb-2 tracking-tight font-bold">SIPREF</h1>
             <p className="text-sm text-[#75777f] text-center">Inicia sesión con tu cuenta institucional</p>
           </div>
 

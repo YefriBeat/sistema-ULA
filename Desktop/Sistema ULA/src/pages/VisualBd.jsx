@@ -331,18 +331,31 @@ export default function VisualBd() {
     return { enCurso, proximas, finalizadas, programadas, total, docentesEnCurso, docentesTotales };
   }, [todosAgrupados, ahora]);
 
-  // Donut chart — datos de ocupación de aulas
   const donutStats = useMemo(() => {
-    const total = aulasData.length;
+    const esLaboratorio = (nombre) => nombre?.toLowerCase().startsWith('lab');
+    const aulasNormales = aulasData.filter(a => !esLaboratorio(a.nombre));
+    const laboratorios = aulasData.filter(a => esLaboratorio(a.nombre));
+
+    const total = aulasNormales.length;
     const aulasEnCursoSet = new Set(
       todosAgrupados
-        .filter(c => c.estadoTiempo === 'en_curso' && c.aula_asignada && c.aula_asignada !== 'Por asignar')
+        .filter(c => c.estadoTiempo === 'en_curso' && c.aula_asignada && c.aula_asignada !== 'Por asignar' && !esLaboratorio(c.aula_asignada))
         .map(c => c.aula_asignada)
     );
+    const labsEnCursoSet = new Set(
+      todosAgrupados
+        .filter(c => c.estadoTiempo === 'en_curso' && c.aula_asignada && c.aula_asignada !== 'Por asignar' && esLaboratorio(c.aula_asignada))
+        .map(c => c.aula_asignada)
+    );
+
     const ocupadas    = aulasEnCursoSet.size;
     const disponibles = Math.max(0, total - ocupadas);
     const porcentaje  = total > 0 ? Math.round((ocupadas / total) * 100) : 0;
-    return { total, ocupadas, disponibles, porcentaje };
+    
+    const totalLabs = laboratorios.length;
+    const labsOcupados = labsEnCursoSet.size;
+
+    return { total, ocupadas, disponibles, porcentaje, totalLabs, labsOcupados };
   }, [aulasData, todosAgrupados]);
 
   const RADIO_DONUT = 38;
@@ -352,8 +365,14 @@ export default function VisualBd() {
   // Acciones rápidas
   const resetFiltros = () => { setFiltroLic(''); setFiltroAsignatura(''); setFiltroHora(''); setFiltroDia(''); setBusqueda(''); };
 
-  const verBaseDatosTotal = () => { setFiltroEstado('todas'); resetFiltros(); };
-  const verClasesEnCurso  = () => { setFiltroEstado('en_curso'); resetFiltros(); };
+  const scrollToTable = () => {
+    document.getElementById('tabla-resultados')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const verBaseDatosTotal    = () => { setFiltroEstado('todas'); resetFiltros(); scrollToTable(); };
+  const verClasesEnCurso     = () => { setFiltroEstado('en_curso'); resetFiltros(); scrollToTable(); };
+  const verClasesProximas    = () => { setFiltroEstado('proxima'); resetFiltros(); scrollToTable(); };
+  const verClasesFinalizadas = () => { setFiltroEstado('finalizada'); resetFiltros(); scrollToTable(); };
 
   const fechaFormateada = ahora.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -433,7 +452,9 @@ export default function VisualBd() {
           </div>
 
           {/* Próximas Hoy */}
-          <div className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 ${
+          <div 
+            onClick={verClasesProximas}
+            className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer ${
             (stats.proximas + stats.programadas) > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#c5c6cf]/40'
           }`}>
             <div className="flex items-start justify-between mb-3">
@@ -453,7 +474,9 @@ export default function VisualBd() {
           </div>
 
           {/* Finalizadas Hoy */}
-          <div className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 ${
+          <div 
+            onClick={verClasesFinalizadas}
+            className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer ${
             stats.finalizadas > 0 ? 'bg-gray-50 border-gray-200' : 'bg-white border-[#c5c6cf]/40'
           }`}>
             <div className="flex items-start justify-between mb-3">
@@ -488,75 +511,93 @@ export default function VisualBd() {
           </div>
         </div>
 
-        {/* ── Tarjeta Donut — Ocupación de Aulas ── */}
-        <div className="lg:w-56 xl:w-60 flex-shrink-0 bg-white rounded-2xl border border-[#c5c6cf]/40 shadow-sm p-5 flex flex-col">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">Ocupación de Aulas</p>
-            <div className="w-7 h-7 rounded-lg bg-[#f4f3f6] flex items-center justify-center">
-              <span className="material-symbols-outlined text-[16px] text-[#1c355e]">meeting_room</span>
+        {/* ── Contenedor Derecho: Donut de Aulas y Stats de Laboratorios ── */}
+        <div className="flex flex-col gap-4 lg:w-56 xl:w-60 flex-shrink-0">
+          
+          {/* Tarjeta Donut — Ocupación de Aulas */}
+          <div className="bg-white rounded-2xl border border-[#c5c6cf]/40 shadow-sm p-5 flex flex-col flex-1">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">Ocupación de Aulas</p>
+              <div className="w-7 h-7 rounded-lg bg-[#f4f3f6] flex items-center justify-center">
+                <span className="material-symbols-outlined text-[16px] text-[#1c355e]">meeting_room</span>
+              </div>
             </div>
+
+            {donutStats.total === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 py-4">
+                <span className="material-symbols-outlined text-4xl text-[#c5c6cf]">meeting_room</span>
+                <p className="text-[11px] text-[#75777f] text-center">Sin aulas registradas</p>
+              </div>
+            ) : (
+              <div className="flex lg:flex-col items-center gap-4 flex-1 mt-3">
+                {/* SVG Donut */}
+                <div className="relative flex-shrink-0">
+                  <svg viewBox="0 0 100 100" className="w-28 h-28 lg:w-32 lg:h-32 drop-shadow-sm">
+                    {/* Track (disponibles) */}
+                    <circle cx="50" cy="50" r={RADIO_DONUT} fill="none" stroke="#bbf7d0" strokeWidth="11" />
+                    {/* Ocupadas */}
+                    <circle
+                      cx="50" cy="50" r={RADIO_DONUT}
+                      fill="none"
+                      stroke="#1c355e"
+                      strokeWidth="11"
+                      strokeDasharray={`${dashOcupadas} ${CIRC_DONUT}`}
+                      strokeLinecap="round"
+                      transform="rotate(-90 50 50)"
+                    />
+                    {/* Porcentaje central */}
+                    <text x="50" y="45" textAnchor="middle" fontSize="17" fontWeight="800" fill="#1b1c1e">
+                      {donutStats.porcentaje}%
+                    </text>
+                    <text x="50" y="58" textAnchor="middle" fontSize="6.5" fill="#75777f" fontWeight="700" letterSpacing="0.5">
+                      OCUPADAS
+                    </text>
+                  </svg>
+                </div>
+
+                {/* Leyenda */}
+                <div className="flex-1 lg:w-full space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#1c355e] flex-shrink-0" />
+                      <span className="text-xs text-[#44464e] font-medium">Ocupadas</span>
+                    </div>
+                    <span className="text-xs font-black text-[#1b1c1e]">{donutStats.ocupadas}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-green-300 flex-shrink-0" />
+                      <span className="text-xs text-[#44464e] font-medium">Disponibles</span>
+                    </div>
+                    <span className="text-xs font-black text-[#1b1c1e]">{donutStats.disponibles}</span>
+                  </div>
+                  <div className="pt-2 border-t border-[#c5c6cf]/30 flex items-center justify-between">
+                    <span className="text-[10px] text-[#75777f] font-bold uppercase tracking-wider">Total Aulas</span>
+                    <span className="text-xs font-black text-[#1c355e]">{donutStats.total}</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          {donutStats.total === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-2 py-4">
-              <span className="material-symbols-outlined text-4xl text-[#c5c6cf]">meeting_room</span>
-              <p className="text-[11px] text-[#75777f] text-center">Sin aulas registradas</p>
+          {/* Tarjeta Laboratorios */}
+          <div className="bg-[#1c9c72] text-white rounded-2xl shadow-md p-5 flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-90">Total Laboratorios</p>
             </div>
-          ) : (
-            <div className="flex lg:flex-col items-center gap-4 flex-1 mt-3">
-              {/* SVG Donut */}
-              <div className="relative flex-shrink-0">
-                <svg viewBox="0 0 100 100" className="w-28 h-28 lg:w-32 lg:h-32 drop-shadow-sm">
-                  {/* Track (disponibles) */}
-                  <circle cx="50" cy="50" r={RADIO_DONUT} fill="none" stroke="#bbf7d0" strokeWidth="11" />
-                  {/* Ocupadas */}
-                  <circle
-                    cx="50" cy="50" r={RADIO_DONUT}
-                    fill="none"
-                    stroke="#1c355e"
-                    strokeWidth="11"
-                    strokeDasharray={`${dashOcupadas} ${CIRC_DONUT}`}
-                    strokeLinecap="round"
-                    transform="rotate(-90 50 50)"
-                  />
-                  {/* Porcentaje central */}
-                  <text x="50" y="45" textAnchor="middle" fontSize="17" fontWeight="800" fill="#1b1c1e">
-                    {donutStats.porcentaje}%
-                  </text>
-                  <text x="50" y="58" textAnchor="middle" fontSize="6.5" fill="#75777f" fontWeight="700" letterSpacing="0.5">
-                    OCUPADAS
-                  </text>
-                </svg>
-              </div>
-
-              {/* Leyenda */}
-              <div className="flex-1 lg:w-full space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#1c355e] flex-shrink-0" />
-                    <span className="text-xs text-[#44464e] font-medium">Ocupadas</span>
-                  </div>
-                  <span className="text-xs font-black text-[#1b1c1e]">{donutStats.ocupadas}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-300 flex-shrink-0" />
-                    <span className="text-xs text-[#44464e] font-medium">Disponibles</span>
-                  </div>
-                  <span className="text-xs font-black text-[#1b1c1e]">{donutStats.disponibles}</span>
-                </div>
-                <div className="pt-2 border-t border-[#c5c6cf]/30 flex items-center justify-between">
-                  <span className="text-[10px] text-[#75777f] font-bold uppercase tracking-wider">Total</span>
-                  <span className="text-xs font-black text-[#1c355e]">{donutStats.total}</span>
-                </div>
+            <div className="flex items-end justify-between">
+              <h3 className="text-4xl font-black">{donutStats.totalLabs}</h3>
+              <div className="text-right">
+                <p className="text-sm font-bold">{donutStats.labsOcupados} en uso</p>
+                <p className="text-[10px] opacity-75">{donutStats.totalLabs - donutStats.labsOcupados} libres</p>
               </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
 
       {/* ══ PANEL DE FILTROS ════════════════════════════════════════════════════ */}
-      <div className="bg-white rounded-2xl border border-[#c5c6cf]/40 shadow-sm overflow-hidden">
+      <div id="tabla-resultados" className="bg-white rounded-2xl border border-[#c5c6cf]/40 shadow-sm overflow-hidden">
 
         {/* Fila 1: Búsqueda + acciones rápidas */}
         <div className="px-5 pt-5 pb-4 flex flex-col lg:flex-row gap-3 items-center border-b border-[#c5c6cf]/30">

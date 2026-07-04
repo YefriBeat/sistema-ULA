@@ -11,7 +11,7 @@ export default function SoporteTecnico() {
           <div>
             <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-1">Universidad Latino</p>
             <h1 className="text-2xl font-black">Soporte Técnico</h1>
-            <p className="text-sm text-white/70 mt-1">Sistema de Gestión de Prefectura — Versión 2.0</p>
+            <p className="text-sm text-white/70 mt-1">SIPREF — Versión 2.0</p>
           </div>
         </div>
       </div>

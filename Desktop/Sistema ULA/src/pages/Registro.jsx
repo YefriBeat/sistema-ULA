@@ -64,7 +64,7 @@ export default function Registro() {
 
         <div className="px-8 pt-8 pb-6 text-center flex flex-col items-center">
           <img src={logo} alt="Logo" className="h-20 w-auto object-contain mb-2" />
-          <h2 className="text-[14px] font-semibold text-[#44464e] tracking-widest mb-4 uppercase">Sistema de Prefectura</h2>
+          <h2 className="text-[14px] font-semibold text-[#44464e] tracking-widest mb-4 uppercase">SIPREF</h2>
           <h1 className="text-[32px] font-bold text-[#1c355e] tracking-tight leading-[1.2]">
             REGISTRO DE PERSONAL
           </h1>
@@ -137,7 +137,7 @@ export default function Registro() {
       </main>
 
       <footer className="mt-8 text-center w-full max-w-md">
-        <p className="text-[12px] text-[#75777f] uppercase tracking-widest font-medium">© 2026 Universidad Latino - Gestión Institucional</p>
+        <p className="text-[12px] text-[#75777f] uppercase tracking-widest font-medium">© 2026 Universidad Latino - SIPREF</p>
       </footer>
 
       <ToastContainer toasts={toasts} />
