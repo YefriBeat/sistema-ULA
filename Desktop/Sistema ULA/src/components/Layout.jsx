@@ -62,8 +62,20 @@ export default function Layout() {
 
         {/* Información del Usuario (Derecha - Siempre visible) */}
         <div className="flex items-center gap-3 ml-auto pl-4 lg:border-l lg:border-[#c5c6cf]/30">
-          <div className="flex flex-col items-end justify-center min-w-0">
-            <p className="text-xs sm:text-sm font-bold text-[#1b1c1e] leading-tight capitalize truncate max-w-[200px]">
+          
+          {/* Iconos de Acción */}
+          <div className="flex items-center gap-1 sm:gap-2 mr-1 sm:mr-3 border-r border-[#c5c6cf]/30 pr-3 sm:pr-5">
+            <button className="relative p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" title="Notificaciones">
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">notifications</span>
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500 border-2 border-white animate-pulse"></span>
+            </button>
+            <Link to="/configuracion-perfil" className="p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" title="Configuración de Perfil">
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">settings</span>
+            </Link>
+          </div>
+
+          <div className="flex flex-col items-end justify-center min-w-0 hidden sm:flex">
+            <p className="text-xs sm:text-sm font-bold text-[#1b1c1e] leading-tight capitalize truncate max-w-[150px] lg:max-w-[200px]">
               {usuario.nombre}
             </p>
             <p className="text-[10px] sm:text-xs text-slate-500 font-semibold uppercase tracking-wider">
@@ -121,10 +133,6 @@ export default function Layout() {
               <span className="text-sm tracking-wide">Gestión de Docentes</span>
             </Link>
 
-            <Link to="/configuracion-perfil" onClick={cerrarMenu} className={getLinkClasses('configuracion-perfil')}>
-              <span className={getIconClasses('configuracion-perfil')}>manage_accounts</span>
-              <span className="text-sm tracking-wide">Configuración de Perfil</span>
-            </Link>
           </nav>
 
           <div className="px-5 pb-8 mt-auto">
