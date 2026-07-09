@@ -23,9 +23,10 @@ export default function Layout() {
           id: `exam-${c}`, titulo: `Exámenes: ${c}`, subtitulo: 'Calendario no cargado', tipo: 'examenes', carrera: c
         }))
       ];
+      const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
 
       try {
-        const res = await fetch('http://localhost:8000/api/calendarios');
+        const res = await fetch(`${API_URL}/api/calendarios`);
         const cargados = await res.json();
         
         if (!Array.isArray(cargados)) {

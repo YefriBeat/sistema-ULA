@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -84,6 +84,7 @@ def migrar_columnas_verificacion():
                     archivo_url VARCHAR(500) NOT NULL,
                     created_at DATETIME DEFAULT NOW()
                 )""",
+                "ALTER TABLE calendarios ADD COLUMN archivo_datos LONGBLOB NULL",
             ]:
                 try:
                     cursor.execute(sentencia)
@@ -411,28 +412,48 @@ async def subir_calendario(
     if archivo.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
     
-    # Crear nombre de archivo seguro
-    safe_filename = f"{tipo}_{carrera}_{secrets.token_hex(4)}.pdf" if carrera else f"{tipo}_{secrets.token_hex(4)}.pdf"
-    file_path = os.path.join(UPLOAD_DIR, safe_filename)
-    
-    # Guardar archivo físicamente
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(archivo.file, buffer)
-        
-    archivo_url = f"/uploads/calendarios/{safe_filename}"
+    file_bytes = await archivo.read()
+    archivo_url = f"/api/calendarios/view/{tipo}" + (f"/{carrera}" if carrera else "")
     
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Si ya existe un calendario para este tipo/carrera, lo borramos (o lo actualizamos)
-            # Para simplificar, insertamos uno nuevo y eliminamos los viejos de la BD
+            # Borrar calendario anterior
             cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s", (tipo, carrera))
+            # Insertar nuevo PDF como LONGBLOB
             cursor.execute(
-                "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url) VALUES (%s, %s, %s, %s)",
-                (tipo, carrera, archivo.filename, archivo_url)
+                "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url, archivo_datos) VALUES (%s, %s, %s, %s, %s)",
+                (tipo, carrera, archivo.filename, archivo_url, file_bytes)
             )
         connection.commit()
-        return {"message": "Calendario subido exitosamente", "url": archivo_url}
+        return {"message": "Calendario subido y guardado en la base de datos exitosamente", "url": archivo_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.get("/api/calendarios/view/{tipo}")
+@app.get("/api/calendarios/view/{tipo}/{carrera}")
+def ver_calendario(tipo: str, carrera: str = ""):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT archivo_datos, archivo_nombre FROM calendarios WHERE tipo = %s AND carrera = %s LIMIT 1",
+                (tipo, carrera)
+            )
+            row = cursor.fetchone()
+            if not row or not row.get('archivo_datos'):
+                raise HTTPException(status_code=404, detail="Calendario no encontrado")
+            
+            return Response(
+                content=row['archivo_datos'],
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'inline; filename="{row["archivo_nombre"]}"'}
+            )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:

@@ -9,10 +9,11 @@ export default function Calendarios() {
   const [uploadTarget, setUploadTarget] = useState(null); // {tipo, carrera}
 
   const carreras = ['DER', 'ENF', 'GAS', 'ISC', 'NEG', 'NUT', 'PSCF', 'PSIC', 'VMK'];
+  const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
 
   const fetchCalendarios = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/calendarios');
+      const res = await fetch(`${API_URL}/api/calendarios`);
       const data = await res.json();
       setCalendarios(data);
     } catch (error) {
@@ -51,7 +52,7 @@ export default function Calendarios() {
     Swal.fire({ title: 'Subiendo calendario...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
 
     try {
-      const res = await fetch('http://localhost:8000/api/calendarios/upload', {
+      const res = await fetch(`${API_URL}/api/calendarios/upload`, {
         method: 'POST',
         body: formData
       });
@@ -91,7 +92,7 @@ export default function Calendarios() {
     if (cal) {
       return (
         <div className="grid grid-cols-2 gap-2 mt-4">
-          <a href={`http://localhost:8000${cal.archivo_url}`} target="_blank" rel="noreferrer" 
+          <a href={`${API_URL}${cal.archivo_url}`} target="_blank" rel="noreferrer" 
              className="w-full py-2.5 rounded-xl border border-indigo-200 text-indigo-600 text-sm font-bold hover:bg-indigo-50 transition-colors flex items-center justify-center gap-1">
             <span className="material-symbols-outlined text-[18px]">visibility</span> Ver
           </a>
@@ -177,7 +178,7 @@ export default function Calendarios() {
                   </div>
                   {cal ? (
                     <div className="grid grid-cols-2 gap-2 mt-4">
-                      <a href={`http://localhost:8000${cal.archivo_url}`} target="_blank" rel="noreferrer" 
+                      <a href={`${API_URL}${cal.archivo_url}`} target="_blank" rel="noreferrer" 
                          className="w-full py-2 rounded-xl border border-emerald-200 text-emerald-600 text-xs font-bold hover:bg-emerald-50 transition-colors flex items-center justify-center gap-1">
                         Ver PDF
                       </a>
