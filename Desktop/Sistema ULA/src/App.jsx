@@ -17,6 +17,24 @@ const ConfiguracionPerfil = lazy(() => import('./pages/ConfiguracionPerfil'));
 const ManualUsuario       = lazy(() => import('./pages/ManualUsuario'));
 const SoporteTecnico      = lazy(() => import('./pages/SoporteTecnico'));
 
+// Variable para activar el modo de mantenimiento
+const EN_MANTENIMIENTO = true;
+
+function MantenimientoPagina() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+      <div className="text-center bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-gray-100">
+        <span className="material-symbols-outlined text-6xl text-amber-500 mb-4 block">construction</span>
+        <h1 className="text-2xl font-bold text-[#1c355e] mb-2">Sitio en Mantenimiento</h1>
+        <p className="text-gray-600 leading-relaxed text-lg">
+          🚧 SIPREF se encuentra en mantenimiento. Estaremos de regreso pronto.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
 function RutaProtegida({ children }) {
   return localStorage.getItem('usuarioLogueado')
     ? children
@@ -32,6 +50,10 @@ function CargandoPagina() {
 }
 
 export default function App() {
+  if (EN_MANTENIMIENTO) {
+    return <MantenimientoPagina />;
+  }
+
   return (
     <ErrorBoundary>
       <TimeProvider>
