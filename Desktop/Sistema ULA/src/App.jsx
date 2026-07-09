@@ -12,6 +12,7 @@ const VisualBd          = lazy(() => import('./pages/VisualBd'));
 const GestionHorarios   = lazy(() => import('./pages/GestionHorarios'));
 const GestionAulas      = lazy(() => import('./pages/GestionAulas'));
 const GestionDocentes   = lazy(() => import('./pages/GestionDocentes'));
+const Calendarios       = lazy(() => import('./pages/Calendarios'));
 const ConfiguracionPerfil = lazy(() => import('./pages/ConfiguracionPerfil'));
 const ManualUsuario       = lazy(() => import('./pages/ManualUsuario'));
 const SoporteTecnico      = lazy(() => import('./pages/SoporteTecnico'));
@@ -55,6 +56,9 @@ export default function App() {
                 } />
                 <Route path="gestion-docentes" element={
                   <Suspense fallback={<CargandoPagina />}><GestionDocentes /></Suspense>
+                } />
+                <Route path="calendarios" element={
+                  <Suspense fallback={<CargandoPagina />}><Calendarios /></Suspense>
                 } />
                 <Route path="configuracion-perfil" element={
                   <Suspense fallback={<CargandoPagina />}><ConfiguracionPerfil /></Suspense>

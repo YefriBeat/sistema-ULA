@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useUser } from './UserContext';
 import logo from './logo.png';
 
@@ -9,6 +9,66 @@ export default function Layout() {
 
   // Estado para controlar el menú en celulares y tablets
   const [menuAbierto, setMenuAbierto] = useState(false);
+  const [mostrarAlertas, setMostrarAlertas] = useState(false);
+  const alertasRef = useRef(null);
+
+  // Estado dinámico para calendarios pendientes
+  const [calendariosPendientes, setCalendariosPendientes] = useState([]);
+
+  useEffect(() => {
+    const fetchPendientes = async () => {
+      const requeridos = [
+        { id: 'gen', titulo: 'Calendario Institucional', subtitulo: 'Plan Cuatri. y Semes.', tipo: 'general' },
+        ...['DER', 'ENF', 'GAS', 'ISC', 'NEG', 'NUT', 'PSCF', 'PSIC', 'VMK'].map(c => ({
+          id: `exam-${c}`, titulo: `Exámenes: ${c}`, subtitulo: 'Calendario no cargado', tipo: 'examenes', carrera: c
+        }))
+      ];
+
+      try {
+        const res = await fetch('http://localhost:8000/api/calendarios');
+        const cargados = await res.json();
+        
+        if (!Array.isArray(cargados)) {
+          setCalendariosPendientes(requeridos);
+          return;
+        }
+
+        // Filtramos los requeridos que NO están en los cargados
+        const pendientes = requeridos.filter(req => {
+          return !cargados.some(c => c.tipo === req.tipo && (c.carrera === req.carrera || (!req.carrera && !c.carrera)));
+        });
+
+        setCalendariosPendientes(pendientes);
+      } catch (error) {
+        console.error("Error al obtener calendarios en Layout:", error);
+        setCalendariosPendientes(requeridos); // Si falla el fetch, los mostramos todos como pendientes
+      }
+    };
+
+    fetchPendientes();
+  }, [location.pathname]); // Se actualiza al cambiar de vista
+
+  useEffect(() => {
+    const handleClickFuera = (event) => {
+      if (alertasRef.current && !alertasRef.current.contains(event.target)) {
+        setMostrarAlertas(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickFuera);
+    return () => document.removeEventListener('mousedown', handleClickFuera);
+  }, []);
+
+  const [alertaActualIndex, setAlertaActualIndex] = useState(0);
+
+  useEffect(() => {
+    if (calendariosPendientes.length === 0) return;
+    const interval = setInterval(() => {
+      setAlertaActualIndex(prev => (prev + 1) % calendariosPendientes.length);
+    }, 4000); // Cambia cada 4 segundos
+    return () => clearInterval(interval);
+  }, [calendariosPendientes]);
+
+  const alertaActual = calendariosPendientes.length > 0 ? calendariosPendientes[alertaActualIndex] : null;
 
   const cerrarSesion = () => {
     localStorage.removeItem('usuarioLogueado');
@@ -40,6 +100,17 @@ export default function Layout() {
 
   return (
     <div className="bg-[#faf9fc] text-[#1b1c1e] antialiased flex flex-col min-h-screen font-manrope">
+      <style>{`
+        @keyframes fadeInSlideUp {
+          0% { opacity: 0; transform: translateY(6px); }
+          15% { opacity: 1; transform: translateY(0); }
+          85% { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(-6px); }
+        }
+        .animate-ticker {
+          animation: fadeInSlideUp 4s ease-in-out forwards;
+        }
+      `}</style>
 
       {/* FONDO OSCURO (OVERLAY) PARA MÓVILES */}
       {menuAbierto && (
@@ -60,11 +131,72 @@ export default function Layout() {
           <img src={logo} alt="Universidad Latino Logo" className="h-8 object-contain" />
         </div>
 
+        {/* Ticker de Alertas (Centro) */}
+        <div className="hidden sm:flex flex-1 mx-4 lg:mx-8 items-center justify-center overflow-hidden h-full relative">
+          {alertaActual && (
+            <div key={alertaActual.id} className="absolute flex items-center gap-3 animate-ticker bg-white px-5 py-2 rounded-full border border-amber-200/50 shadow-sm shadow-amber-500/10">
+              <span className="relative flex h-2.5 w-2.5 ml-0.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+              </span>
+              <span className="text-sm font-medium text-slate-500 tracking-wide">
+                Pendiente: <span className="text-slate-800 font-bold">{alertaActual.titulo}</span>
+                {!alertaActual.carrera && <span className="ml-1.5 text-slate-400 font-normal">({alertaActual.subtitulo})</span>}
+              </span>
+            </div>
+          )}
+        </div>
+
         {/* Información del Usuario (Derecha - Siempre visible) */}
         <div className="flex items-center gap-3 ml-auto pl-4 lg:border-l lg:border-[#c5c6cf]/30">
           
           {/* Iconos de Acción */}
           <div className="flex items-center gap-1 sm:gap-2 mr-1 sm:mr-3 border-r border-[#c5c6cf]/30 pr-3 sm:pr-5">
+            <div className="relative" ref={alertasRef}>
+              <button 
+                onClick={() => setMostrarAlertas(!mostrarAlertas)}
+                className="relative p-2 rounded-[12px] text-[#c5c6cf] hover:text-amber-500 hover:bg-amber-50 transition-colors group" 
+                title="Alertas del Sistema">
+                <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">warning</span>
+                {/* Indicador de alerta activa */}
+                {calendariosPendientes.length > 0 && (
+                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-amber-500 border-2 border-white animate-pulse"></span>
+                )}
+              </button>
+
+              {/* Dropdown de Alertas */}
+              {mostrarAlertas && (
+                <div className="absolute top-full right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden z-50">
+                  <div className="bg-amber-500 text-white px-4 py-3 flex items-center justify-between">
+                    <h3 className="font-bold text-sm">Alertas del Sistema</h3>
+                    <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                      {calendariosPendientes.length}
+                    </span>
+                  </div>
+                  <div className="p-2 max-h-72 overflow-y-auto">
+                    <div className="px-3 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Documentos Pendientes
+                    </div>
+                    {calendariosPendientes.map((cal) => (
+                      <div key={cal.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 rounded-xl transition-colors">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${cal.tipo.startsWith('general') ? 'bg-indigo-100 text-indigo-600' : 'bg-amber-100 text-amber-600'}`}>
+                          <span className="material-symbols-outlined text-[16px]">{cal.tipo.startsWith('general') ? 'event' : 'calendar_month'}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-700 truncate">{cal.titulo}</p>
+                          <p className="text-xs text-slate-500 truncate">{cal.subtitulo}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {calendariosPendientes.length === 0 && (
+                      <div className="text-center py-4 text-slate-500 text-sm">
+                        No hay alertas pendientes.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <button className="relative p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" title="Notificaciones">
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">notifications</span>
               <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500 border-2 border-white animate-pulse"></span>
@@ -131,6 +263,11 @@ export default function Layout() {
             <Link to="/gestion-docentes" onClick={cerrarMenu} className={getLinkClasses('gestion-docentes')}>
               <span className={getIconClasses('gestion-docentes')}>school</span>
               <span className="text-sm tracking-wide">Gestión de Docentes</span>
+            </Link>
+
+            <Link to="/calendarios" onClick={cerrarMenu} className={getLinkClasses('calendarios')}>
+              <span className={getIconClasses('calendarios')}>calendar_month</span>
+              <span className="text-sm tracking-wide">Calendarios</span>
             </Link>
 
           </nav>

@@ -14,8 +14,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from io import BytesIO
@@ -75,6 +76,14 @@ def migrar_columnas_verificacion():
                     activa BOOLEAN DEFAULT TRUE,
                     created_at DATETIME DEFAULT NOW()
                 )""",
+                """CREATE TABLE IF NOT EXISTS calendarios (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    tipo VARCHAR(50) NOT NULL,
+                    carrera VARCHAR(50) DEFAULT '',
+                    archivo_nombre VARCHAR(255) NOT NULL,
+                    archivo_url VARCHAR(500) NOT NULL,
+                    created_at DATETIME DEFAULT NOW()
+                )""",
             ]:
                 try:
                     cursor.execute(sentencia)
@@ -93,6 +102,11 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="API SIPREF ULA", lifespan=lifespan)
+
+# Configurar directorio de uploads
+UPLOAD_DIR = os.path.join(base_dir, "uploads", "calendarios")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=os.path.join(base_dir, "uploads")), name="uploads")
 
 
 import urllib.request
@@ -163,9 +177,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "http://localhost:5174"  # Se agrega soporte para ambos puertos de desarrollo
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "*"
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -369,6 +386,58 @@ def _time_to_mins(t):
 # ---------------------------------------------------------
 # ENDPOINTS (RUTAS DE LA API)
 # ---------------------------------------------------------
+
+@app.get("/api/calendarios")
+def obtener_calendarios():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, tipo, carrera, archivo_nombre, archivo_url FROM calendarios")
+            calendarios = cursor.fetchall()
+        return calendarios
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+import shutil
+
+@app.post("/api/calendarios/upload")
+async def subir_calendario(
+    tipo: str = Form(...),
+    carrera: str = Form(""),
+    archivo: UploadFile = File(...)
+):
+    if archivo.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
+    
+    # Crear nombre de archivo seguro
+    safe_filename = f"{tipo}_{carrera}_{secrets.token_hex(4)}.pdf" if carrera else f"{tipo}_{secrets.token_hex(4)}.pdf"
+    file_path = os.path.join(UPLOAD_DIR, safe_filename)
+    
+    # Guardar archivo físicamente
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(archivo.file, buffer)
+        
+    archivo_url = f"/uploads/calendarios/{safe_filename}"
+    
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            # Si ya existe un calendario para este tipo/carrera, lo borramos (o lo actualizamos)
+            # Para simplificar, insertamos uno nuevo y eliminamos los viejos de la BD
+            cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s", (tipo, carrera))
+            cursor.execute(
+                "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url) VALUES (%s, %s, %s, %s)",
+                (tipo, carrera, archivo.filename, archivo_url)
+            )
+        connection.commit()
+        return {"message": "Calendario subido exitosamente", "url": archivo_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
 
 @app.get("/ping")
 def ping():
