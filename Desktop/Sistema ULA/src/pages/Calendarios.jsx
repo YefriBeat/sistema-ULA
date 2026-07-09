@@ -18,9 +18,10 @@ export default function Calendarios() {
     try {
       const res = await fetch(`${API_URL}/api/calendarios`);
       const data = await res.json();
-      setCalendarios(data);
+      setCalendarios(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error al obtener calendarios:', error);
+      setCalendarios([]);
     } finally {
       setCargando(false);
     }
@@ -30,9 +31,10 @@ export default function Calendarios() {
     try {
       const res = await fetch(`${API_URL}/api/examenes-calendario/${carrera}`);
       const data = await res.json();
-      setExamenesData(prev => ({ ...prev, [carrera]: data }));
+      setExamenesData(prev => ({ ...prev, [carrera]: Array.isArray(data) ? data : [] }));
     } catch (error) {
       console.error(`Error al obtener exámenes de ${carrera}:`, error);
+      setExamenesData(prev => ({ ...prev, [carrera]: [] }));
     }
   };
 
