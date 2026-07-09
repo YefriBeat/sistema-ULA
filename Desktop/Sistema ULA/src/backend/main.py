@@ -1,4 +1,5 @@
 import os
+import io
 import re
 import unicodedata
 import pymysql
@@ -85,6 +86,16 @@ def migrar_columnas_verificacion():
                     created_at DATETIME DEFAULT NOW()
                 )""",
                 "ALTER TABLE calendarios ADD COLUMN archivo_datos LONGBLOB NULL",
+                """CREATE TABLE IF NOT EXISTS examenes_calendario (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    carrera VARCHAR(50) NOT NULL,
+                    periodo VARCHAR(100) NOT NULL,
+                    semestre VARCHAR(100) NOT NULL,
+                    dia VARCHAR(30) DEFAULT '',
+                    fecha VARCHAR(100) DEFAULT '',
+                    materia VARCHAR(250) NOT NULL,
+                    created_at DATETIME DEFAULT NOW()
+                )""",
             ]:
                 try:
                     cursor.execute(sentencia)
@@ -403,6 +414,108 @@ def obtener_calendarios():
 
 import shutil
 
+
+# -------------------------------------------------------
+# PARSER DE PDF DE EXÁMENES
+# -------------------------------------------------------
+def parsear_pdf_examenes(file_bytes: bytes) -> list:
+    """Parsea un PDF de calendario de exámenes de Universidad Latino y retorna datos estructurados."""
+    resultados = []
+    meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+             'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+    dias_semana = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            tables = page.extract_tables()
+
+            # Identificar periodos en orden de aparición en el texto
+            periodos = []
+            text_upper = text.upper()
+            # Buscar cada periodo y su posición para ordenarlos
+            posiciones = []
+            for nombre, buscar in [
+                ('Primer Parcial', 'PRIMER PARCIAL'),
+                ('Segundo Parcial', 'SEGUNDO PARCIAL'),
+                ('Ordinarios', 'ORDINARIO'),
+                ('Extraordinarios', 'EXTRAORDINARIO'),
+            ]:
+                pos = text_upper.find(buscar)
+                if pos != -1:
+                    posiciones.append((pos, nombre))
+            posiciones.sort(key=lambda x: x[0])
+            periodos = [p[1] for p in posiciones]
+
+            # Filtrar tablas que realmente contienen datos de exámenes
+            exam_tables = []
+            for table in tables:
+                if not table or len(table) < 2:
+                    continue
+                flat = ' '.join(str(c or '') for row in table for c in row).lower()
+                has_days = any(d in flat for d in dias_semana)
+                has_dates = any(m in flat for m in meses)
+                if has_days or has_dates:
+                    exam_tables.append(table)
+
+            # Procesar cada tabla y emparejarla con su periodo
+            for idx, table in enumerate(exam_tables):
+                periodo = periodos[idx] if idx < len(periodos) else f"Periodo {idx + 1}"
+
+                # Encontrar fila de días y fila de fechas
+                dia_row_idx = None
+                fecha_row_idx = None
+                for row_idx, row in enumerate(table):
+                    row_text = ' '.join(str(c or '') for c in row).lower()
+                    if any(d in row_text for d in dias_semana) and dia_row_idx is None:
+                        dia_row_idx = row_idx
+                    if any(m in row_text for m in meses) and fecha_row_idx is None:
+                        fecha_row_idx = row_idx
+
+                if dia_row_idx is None and fecha_row_idx is None:
+                    continue
+
+                # Si solo encontramos una, asumir la otra
+                if dia_row_idx is None:
+                    dia_row_idx = max(0, fecha_row_idx - 1)
+                if fecha_row_idx is None:
+                    fecha_row_idx = dia_row_idx + 1
+
+                dias = table[dia_row_idx] if dia_row_idx < len(table) else []
+                fechas = table[fecha_row_idx] if fecha_row_idx < len(table) else []
+
+                # Filas de datos empiezan después de la fila de fechas
+                data_start = max(dia_row_idx, fecha_row_idx) + 1
+
+                for row in table[data_start:]:
+                    if not row or not row[0]:
+                        continue
+                    semestre = str(row[0]).strip()
+                    # Saltar filas que no sean semestres reales
+                    if not semestre or len(semestre) < 2:
+                        continue
+                    # Saltar filas que parecen notas
+                    if 'nota' in semestre.lower() or 'todos' in semestre.lower():
+                        continue
+
+                    for col in range(1, len(row)):
+                        materia = str(row[col] or '').strip()
+                        # Limpiar saltos de línea dentro de la materia
+                        materia = ' '.join(materia.split())
+                        if materia and len(materia) > 1:
+                            dia = str(dias[col] or '').strip() if col < len(dias) else ''
+                            fecha = str(fechas[col] or '').strip() if col < len(fechas) else ''
+                            resultados.append({
+                                'periodo': periodo,
+                                'semestre': semestre,
+                                'dia': dia,
+                                'fecha': fecha,
+                                'materia': materia
+                            })
+
+    return resultados
+
+
 @app.post("/api/calendarios/upload")
 async def subir_calendario(
     tipo: str = Form(...),
@@ -411,22 +524,75 @@ async def subir_calendario(
 ):
     if archivo.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
-    
+
     file_bytes = await archivo.read()
-    archivo_url = f"/api/calendarios/view/{tipo}" + (f"/{carrera}" if carrera else "")
-    
+
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Borrar calendario anterior
-            cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s", (tipo, carrera))
-            # Insertar nuevo PDF como LONGBLOB
+            if tipo == 'examenes' and carrera:
+                # ── EXÁMENES: Parsear PDF y guardar datos estructurados ──
+                try:
+                    datos = parsear_pdf_examenes(file_bytes)
+                except Exception as parse_err:
+                    raise HTTPException(status_code=400, detail=f"No se pudo leer el PDF: {str(parse_err)}")
+
+                if not datos:
+                    raise HTTPException(status_code=400, detail="No se encontraron datos de exámenes en el PDF. Verifica que el formato sea correcto.")
+
+                # Borrar datos anteriores de esta carrera
+                cursor.execute("DELETE FROM examenes_calendario WHERE carrera = %s", (carrera,))
+
+                # Insertar cada examen extraído
+                for d in datos:
+                    cursor.execute(
+                        "INSERT INTO examenes_calendario (carrera, periodo, semestre, dia, fecha, materia) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (carrera, d['periodo'], d['semestre'], d['dia'], d['fecha'], d['materia'])
+                    )
+
+                # También registrar en tabla calendarios que ya se cargó (sin guardar el blob)
+                cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s", (tipo, carrera))
+                cursor.execute(
+                    "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url) VALUES (%s, %s, %s, %s)",
+                    (tipo, carrera, archivo.filename, f"/api/examenes-calendario/{carrera}")
+                )
+
+                connection.commit()
+                return {
+                    "message": f"Se extrajeron {len(datos)} exámenes del PDF y se guardaron en la base de datos.",
+                    "total": len(datos),
+                    "datos": datos
+                }
+            else:
+                # ── GENERAL: Guardar PDF como BLOB ──
+                archivo_url = f"/api/calendarios/view/{tipo}" + (f"/{carrera}" if carrera else "")
+                cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s", (tipo, carrera))
+                cursor.execute(
+                    "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url, archivo_datos) VALUES (%s, %s, %s, %s, %s)",
+                    (tipo, carrera, archivo.filename, archivo_url, file_bytes)
+                )
+                connection.commit()
+                return {"message": "Calendario subido y guardado exitosamente", "url": archivo_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.get("/api/examenes-calendario/{carrera}")
+def obtener_examenes_calendario(carrera: str):
+    """Retorna los exámenes extraídos para una carrera específica."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url, archivo_datos) VALUES (%s, %s, %s, %s, %s)",
-                (tipo, carrera, archivo.filename, archivo_url, file_bytes)
+                "SELECT id, periodo, semestre, dia, fecha, materia FROM examenes_calendario WHERE carrera = %s ORDER BY id",
+                (carrera,)
             )
-        connection.commit()
-        return {"message": "Calendario subido y guardado en la base de datos exitosamente", "url": archivo_url}
+            datos = cursor.fetchall()
+        return datos
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -446,7 +612,7 @@ def ver_calendario(tipo: str, carrera: str = ""):
             row = cursor.fetchone()
             if not row or not row.get('archivo_datos'):
                 raise HTTPException(status_code=404, detail="Calendario no encontrado")
-            
+
             return Response(
                 content=row['archivo_datos'],
                 media_type="application/pdf",
