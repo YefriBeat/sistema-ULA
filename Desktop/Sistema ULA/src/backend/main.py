@@ -599,6 +599,25 @@ def obtener_examenes_calendario(carrera: str):
         connection.close()
 
 
+@app.get("/api/examenes-hoy")
+def examenes_hoy(fecha: str):
+    """Retorna todos los exámenes programados para una fecha específica (ej: '09 de julio')"""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            # Usamos LIKE porque la fecha en la DB puede tener espacios extra
+            cursor.execute(
+                "SELECT carrera, materia, semestre, dia, fecha FROM examenes_calendario WHERE fecha LIKE %s ORDER BY carrera, semestre",
+                (f"%{fecha}%",)
+            )
+            datos = cursor.fetchall()
+        return datos
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
 @app.get("/api/calendarios/view/{tipo}")
 @app.get("/api/calendarios/view/{tipo}/{carrera}")
 def ver_calendario(tipo: str, carrera: str = ""):

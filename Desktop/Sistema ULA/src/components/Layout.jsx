@@ -1,6 +1,7 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { useUser } from './UserContext';
+import Swal from 'sweetalert2';
 import logo from './logo.png';
 
 export default function Layout() {
@@ -11,6 +12,11 @@ export default function Layout() {
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [mostrarAlertas, setMostrarAlertas] = useState(false);
   const alertasRef = useRef(null);
+
+  // Estados para notificaciones
+  const [notificaciones, setNotificaciones] = useState([]);
+  const [mostrarNotificaciones, setMostrarNotificaciones] = useState(false);
+  const notificacionesRef = useRef(null);
 
   // Estado dinámico para calendarios pendientes
   const [calendariosPendientes, setCalendariosPendientes] = useState([]);
@@ -50,9 +56,76 @@ export default function Layout() {
   }, [location.pathname]); // Se actualiza al cambiar de vista
 
   useEffect(() => {
+    // 1. Mostrar burbuja de bienvenida (solo una vez por sesión)
+    const hasSeenWelcome = sessionStorage.getItem('welcomeShown');
+    if (!hasSeenWelcome && usuario?.nombre) {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 4000,
+        timerProgressBar: true,
+        icon: 'success',
+        title: `¡Bienvenido de nuevo, ${usuario.nombre.split(' ')[0]}!`,
+      });
+      sessionStorage.setItem('welcomeShown', 'true');
+    }
+
+    // 2. Cargar notificaciones de exámenes para el día de hoy
+    const cargarExamenesHoy = async () => {
+      try {
+        const formatter = new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'long' });
+        // Ejemplo de formato: "09 de julio"
+        const fechaHoy = formatter.format(new Date()); 
+        
+        const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
+        const res = await fetch(`${API_URL}/api/examenes-hoy?fecha=${encodeURIComponent(fechaHoy)}`);
+        const data = await res.json();
+        
+        if (Array.isArray(data) && data.length > 0) {
+          const nuevasNotis = data.map((ex, i) => ({
+            id: `exam-${i}`,
+            titulo: `Examen: ${ex.materia}`,
+            subtitulo: `${ex.carrera} - ${ex.semestre}`,
+            tipo: 'examen',
+            fecha: fechaHoy
+          }));
+          setNotificaciones(nuevasNotis);
+
+          // Mostrar burbuja de alerta si hay exámenes y no se ha mostrado en esta sesión
+          const hasSeenExamsAlert = sessionStorage.getItem('examsAlertShown');
+          if (!hasSeenExamsAlert) {
+            setTimeout(() => {
+              Swal.fire({
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 5000,
+                timerProgressBar: true,
+                icon: 'info',
+                title: `Hoy hay ${data.length} exámenes programados`,
+              });
+              sessionStorage.setItem('examsAlertShown', 'true');
+            }, 1500); // Dar 1.5 segundos de espacio después del mensaje de bienvenida
+          }
+        } else {
+          setNotificaciones([]);
+        }
+      } catch (error) {
+        console.error("Error cargando notificaciones:", error);
+      }
+    };
+
+    cargarExamenesHoy();
+  }, [usuario]);
+
+  useEffect(() => {
     const handleClickFuera = (event) => {
       if (alertasRef.current && !alertasRef.current.contains(event.target)) {
         setMostrarAlertas(false);
+      }
+      if (notificacionesRef.current && !notificacionesRef.current.contains(event.target)) {
+        setMostrarNotificaciones(false);
       }
     };
     document.addEventListener('mousedown', handleClickFuera);
@@ -198,10 +271,51 @@ export default function Layout() {
                 </div>
               )}
             </div>
-            <button className="relative p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" title="Notificaciones">
-              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">notifications</span>
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500 border-2 border-white animate-pulse"></span>
-            </button>
+
+            {/* Notificaciones (Icono Campanita) */}
+            <div className="relative" ref={notificacionesRef}>
+              <button 
+                onClick={() => setMostrarNotificaciones(!mostrarNotificaciones)}
+                className="relative p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" 
+                title="Notificaciones">
+                <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">notifications</span>
+                {notificaciones.length > 0 && (
+                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500 border-2 border-white animate-pulse"></span>
+                )}
+              </button>
+
+              {/* Dropdown de Notificaciones */}
+              {mostrarNotificaciones && (
+                <div className="absolute top-full right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden z-50">
+                  <div className="bg-[#1c355e] text-white px-4 py-3 flex items-center justify-between">
+                    <h3 className="font-bold text-sm">Notificaciones de Hoy</h3>
+                    <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                      {notificaciones.length}
+                    </span>
+                  </div>
+                  <div className="p-2 max-h-80 overflow-y-auto">
+                    {notificaciones.map((noti) => (
+                      <div key={noti.id} className="flex items-start gap-3 px-3 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50 rounded-xl transition-colors">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <span className="material-symbols-outlined text-[16px]">school</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-700 leading-tight">{noti.titulo}</p>
+                          <p className="text-xs text-slate-500 mt-1">{noti.subtitulo}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {notificaciones.length === 0 && (
+                      <div className="text-center py-6 text-slate-500 text-sm">
+                        <span className="material-symbols-outlined text-3xl mb-2 opacity-50 block">notifications_paused</span>
+                        No hay notificaciones para hoy.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <Link to="/configuracion-perfil" className="p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" title="Configuración de Perfil">
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">settings</span>
             </Link>
