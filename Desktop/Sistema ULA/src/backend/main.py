@@ -1908,4 +1908,4 @@ def obtener_suplencias_activas():
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener suplencias activas: {str(e)}")
     finally:
-        connection.close()
+        connection.close()# 
