@@ -484,9 +484,9 @@ export default function GestionHorarios() {
                     </div>
                   </div>
 
-                  {/* Nombre del archivo y turno */}
-                  <div className="mb-3">
-                    <h3 className="font-bold text-[#1b1c1e] truncate text-sm mb-1.5" title={archivoGuardado.archivo}>
+                  {/* Nombre del archivo y turno/plan */}
+                  <div className="mb-3 flex flex-wrap gap-1.5 items-center">
+                    <h3 className="font-bold text-[#1b1c1e] truncate text-sm mb-1.5 w-full" title={archivoGuardado.archivo}>
                       {archivoGuardado.archivo}
                     </h3>
                     {archivoGuardado.turno && (
@@ -500,6 +500,18 @@ export default function GestionHorarios() {
                           {archivoGuardado.turno === 'Matutino' ? 'wb_sunny' : archivoGuardado.turno === 'Vespertino' ? 'nights_stay' : archivoGuardado.turno === 'Ambos Turnos' ? 'domain' : 'schedule'}
                         </span>
                         {archivoGuardado.turno}
+                      </span>
+                    )}
+                    {archivoGuardado.plan && archivoGuardado.plan !== 'No definido' && (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider ${
+                        archivoGuardado.plan === 'Semestral' ? 'bg-blue-100 text-blue-700' :
+                        archivoGuardado.plan === 'Cuatrimestral' ? 'bg-fuchsia-100 text-fuchsia-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        <span className="material-symbols-outlined text-[12px]">
+                          {archivoGuardado.plan === 'Semestral' ? 'calendar_month' : 'event'}
+                        </span>
+                        {archivoGuardado.plan}
                       </span>
                     )}
                   </div>

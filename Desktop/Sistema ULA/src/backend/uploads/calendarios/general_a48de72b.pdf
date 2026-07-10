@@ -1,5 +1,4 @@
 import os
-import io
 import re
 import unicodedata
 import pymysql
@@ -15,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -45,7 +44,6 @@ def migrar_columnas_verificacion():
                 "ALTER TABLE horarios ADD COLUMN semestre VARCHAR(50) NULL",
                 "ALTER TABLE horarios ADD COLUMN cuatrimestre VARCHAR(50) NULL",
                 "ALTER TABLE horarios ADD COLUMN grupo VARCHAR(50) NULL",
-                "ALTER TABLE examenes_calendario ADD COLUMN archivo_origen VARCHAR(255) NULL",
                 """CREATE TABLE IF NOT EXISTS docentes (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     nombre VARCHAR(200) NOT NULL,
@@ -86,29 +84,6 @@ def migrar_columnas_verificacion():
                     archivo_url VARCHAR(500) NOT NULL,
                     created_at DATETIME DEFAULT NOW()
                 )""",
-                "ALTER TABLE calendarios ADD COLUMN archivo_datos LONGBLOB NULL",
-                """CREATE TABLE IF NOT EXISTS examenes_calendario (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    carrera VARCHAR(50) NOT NULL,
-                    periodo VARCHAR(100) NOT NULL,
-                    semestre VARCHAR(100) NOT NULL,
-                    dia VARCHAR(30) DEFAULT '',
-                    fecha VARCHAR(100) DEFAULT '',
-                    materia VARCHAR(250) NOT NULL,
-                    created_at DATETIME DEFAULT NOW()
-                )""",
-                """CREATE TABLE IF NOT EXISTS calendario_institucional (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    plan VARCHAR(50) NOT NULL,
-                    ciclo VARCHAR(50) NOT NULL,
-                    periodo INT NOT NULL,
-                    tipo_evento VARCHAR(100) NOT NULL,
-                    descripcion VARCHAR(300) NOT NULL,
-                    fecha_inicio DATE NOT NULL,
-                    fecha_fin DATE NOT NULL,
-                    suspende_clases BOOLEAN DEFAULT FALSE,
-                    created_at DATETIME DEFAULT NOW()
-                )""",
             ]:
                 try:
                     cursor.execute(sentencia)
@@ -120,78 +95,9 @@ def migrar_columnas_verificacion():
         print(f"Advertencia en migración: {e}")
 
 
-def seed_calendario_institucional():
-    """Poblar el calendario institucional con datos del ciclo 2026-2027 Semestral."""
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            # Forzar resiembra para tener los nuevos datos (solo para esta actualización)
-            cursor.execute("DELETE FROM calendario_institucional")
-            
-            eventos = [
-                # ── SEMESTRE 1: 31 ago 2026 – 31 ene 2027 ──
-                ('semestral','2026-2027',1,'inicio_periodo','Inicio de periodo escolar','2026-08-31','2026-08-31',False),
-                ('semestral','2026-2027',1,'inhabil','Inhábil: Independencia de México','2026-09-16','2026-09-16',True),
-                ('semestral','2026-2027',1,'examen_parcial','Primer examen parcial','2026-10-05','2026-10-14',False),
-                ('semestral','2026-2027',1,'inhabil','Inhábil: Día de muertos','2026-11-02','2026-11-02',True),
-                ('semestral','2026-2027',1,'evaluacion','Evaluación docente','2026-11-03','2026-11-06',False),
-                ('semestral','2026-2027',1,'inhabil','Inhábil: Revolución Mexicana','2026-11-16','2026-11-16',True),
-                ('semestral','2026-2027',1,'examen_parcial','Segundo examen parcial','2026-11-18','2026-11-27',False),
-                ('semestral','2026-2027',1,'vacaciones','Vacaciones navideñas','2026-12-21','2027-01-01',True),
-                ('semestral','2026-2027',1,'examen_ordinario','Exámenes ordinarios','2027-01-04','2027-01-13',False),
-                ('semestral','2026-2027',1,'inscripcion','Inscripciones a exámenes extraordinarios','2027-01-08','2027-01-19',False),
-                ('semestral','2026-2027',1,'examen_extraordinario','Exámenes extraordinarios','2027-01-18','2027-01-27',False),
-                ('semestral','2026-2027',1,'fin_periodo','Fin de periodo escolar','2027-01-31','2027-01-31',False),
-                # ── SEMESTRE 2: 10 feb 2027 – 31 jul 2027 ──
-                ('semestral','2026-2027',2,'inhabil','Inhábil: Día de la Constitución','2027-02-01','2027-02-01',True),
-                ('semestral','2026-2027',2,'inhabil','Inhábil: Carnaval','2027-02-08','2027-02-09',True),
-                ('semestral','2026-2027',2,'inicio_periodo','Inicio de periodo escolar','2027-02-10','2027-02-10',False),
-                ('semestral','2026-2027',2,'inhabil','Inhábil: Natalicio de Benito Juárez','2027-03-15','2027-03-15',True),
-                ('semestral','2026-2027',2,'vacaciones','Vacaciones de semana santa','2027-03-22','2027-04-02',True),
-                ('semestral','2026-2027',2,'examen_parcial','Primer examen parcial','2027-04-05','2027-04-14',False),
-                ('semestral','2026-2027',2,'inhabil','Inhábil: Día del trabajo','2027-05-01','2027-05-01',True),
-                ('semestral','2026-2027',2,'evaluacion','Evaluación docente','2027-05-03','2027-05-06',False),
-                ('semestral','2026-2027',2,'inhabil','Inhábil: Día del Maestro','2027-05-14','2027-05-14',True),
-                ('semestral','2026-2027',2,'examen_parcial','Segundo examen parcial','2027-05-17','2027-05-26',False),
-                ('semestral','2026-2027',2,'examen_ordinario','Exámenes ordinarios','2027-06-23','2027-07-02',False),
-                ('semestral','2026-2027',2,'inscripcion','Inscripciones a exámenes extraordinarios','2027-06-29','2027-07-08',False),
-                ('semestral','2026-2027',2,'examen_extraordinario','Exámenes extraordinarios','2027-07-07','2027-07-16',False),
-                ('semestral','2026-2027',2,'fin_periodo','Fin de periodo escolar','2027-07-31','2027-07-31',False),
-                
-                # ── CUATRIMESTRE 2 (Mayo-Agosto 2026) ──
-                ('cuatrimestral','2026',2,'inicio_periodo','Inicio de Cuatrimestre','2026-05-04','2026-05-04',False),
-                ('cuatrimestral','2026',2,'inhabil','Inhábil: Día del trabajo (Recorrido)','2026-05-05','2026-05-05',True),
-                ('cuatrimestral','2026',2,'inhabil','Inhábil: Día del Maestro','2026-05-15','2026-05-15',True),
-                ('cuatrimestral','2026',2,'examen_parcial','Primer Parcial','2026-06-15','2026-06-20',False),
-                ('cuatrimestral','2026',2,'examen_parcial','Segundo Parcial','2026-07-20','2026-07-25',False),
-                ('cuatrimestral','2026',2,'examen_ordinario','Exámenes Finales','2026-08-10','2026-08-15',False),
-                ('cuatrimestral','2026',2,'fin_periodo','Fin de Cuatrimestre','2026-08-20','2026-08-20',False),
-                
-                # ── CUATRIMESTRE 3 (Septiembre-Diciembre 2026) ──
-                ('cuatrimestral','2026',3,'inicio_periodo','Inicio de Cuatrimestre','2026-09-07','2026-09-07',False),
-                ('cuatrimestral','2026',3,'inhabil','Inhábil: Independencia de México','2026-09-16','2026-09-16',True),
-                ('cuatrimestral','2026',3,'inhabil','Inhábil: Día de muertos','2026-11-02','2026-11-02',True),
-                ('cuatrimestral','2026',3,'inhabil','Inhábil: Revolución Mexicana','2026-11-16','2026-11-16',True),
-                ('cuatrimestral','2026',3,'vacaciones','Vacaciones navideñas','2026-12-21','2027-01-01',True),
-                ('cuatrimestral','2026',3,'fin_periodo','Fin de Cuatrimestre','2026-12-18','2026-12-18',False),
-            ]
-            for ev in eventos:
-                cursor.execute(
-                    "INSERT INTO calendario_institucional (plan,ciclo,periodo,tipo_evento,descripcion,fecha_inicio,fecha_fin,suspende_clases) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                    ev
-                )
-        connection.commit()
-        print("Calendario institucional sembrado exitosamente.")
-    except Exception as e:
-        print(f"Advertencia en seed calendario: {e}")
-    finally:
-        connection.close()
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     migrar_columnas_verificacion()
-    seed_calendario_institucional()
     yield
 
 
@@ -271,12 +177,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "*"
+        "http://localhost:5174"  # Se agrega soporte para ambos puertos de desarrollo
     ],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -496,108 +399,6 @@ def obtener_calendarios():
 
 import shutil
 
-
-# -------------------------------------------------------
-# PARSER DE PDF DE EXÁMENES
-# -------------------------------------------------------
-def parsear_pdf_examenes(file_bytes: bytes) -> list:
-    """Parsea un PDF de calendario de exámenes de Universidad Latino y retorna datos estructurados."""
-    resultados = []
-    meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-             'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
-    dias_semana = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
-
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            tables = page.extract_tables()
-
-            # Identificar periodos en orden de aparición en el texto
-            periodos = []
-            text_upper = text.upper()
-            # Buscar cada periodo y su posición para ordenarlos
-            posiciones = []
-            for nombre, buscar in [
-                ('Primer Parcial', 'PRIMER PARCIAL'),
-                ('Segundo Parcial', 'SEGUNDO PARCIAL'),
-                ('Ordinarios', 'ORDINARIO'),
-                ('Extraordinarios', 'EXTRAORDINARIO'),
-            ]:
-                pos = text_upper.find(buscar)
-                if pos != -1:
-                    posiciones.append((pos, nombre))
-            posiciones.sort(key=lambda x: x[0])
-            periodos = [p[1] for p in posiciones]
-
-            # Filtrar tablas que realmente contienen datos de exámenes
-            exam_tables = []
-            for table in tables:
-                if not table or len(table) < 2:
-                    continue
-                flat = ' '.join(str(c or '') for row in table for c in row).lower()
-                has_days = any(d in flat for d in dias_semana)
-                has_dates = any(m in flat for m in meses)
-                if has_days or has_dates:
-                    exam_tables.append(table)
-
-            # Procesar cada tabla y emparejarla con su periodo
-            for idx, table in enumerate(exam_tables):
-                periodo = periodos[idx] if idx < len(periodos) else f"Periodo {idx + 1}"
-
-                # Encontrar fila de días y fila de fechas
-                dia_row_idx = None
-                fecha_row_idx = None
-                for row_idx, row in enumerate(table):
-                    row_text = ' '.join(str(c or '') for c in row).lower()
-                    if any(d in row_text for d in dias_semana) and dia_row_idx is None:
-                        dia_row_idx = row_idx
-                    if any(m in row_text for m in meses) and fecha_row_idx is None:
-                        fecha_row_idx = row_idx
-
-                if dia_row_idx is None and fecha_row_idx is None:
-                    continue
-
-                # Si solo encontramos una, asumir la otra
-                if dia_row_idx is None:
-                    dia_row_idx = max(0, fecha_row_idx - 1)
-                if fecha_row_idx is None:
-                    fecha_row_idx = dia_row_idx + 1
-
-                dias = table[dia_row_idx] if dia_row_idx < len(table) else []
-                fechas = table[fecha_row_idx] if fecha_row_idx < len(table) else []
-
-                # Filas de datos empiezan después de la fila de fechas
-                data_start = max(dia_row_idx, fecha_row_idx) + 1
-
-                for row in table[data_start:]:
-                    if not row or not row[0]:
-                        continue
-                    semestre = str(row[0]).strip()
-                    # Saltar filas que no sean semestres reales
-                    if not semestre or len(semestre) < 2:
-                        continue
-                    # Saltar filas que parecen notas
-                    if 'nota' in semestre.lower() or 'todos' in semestre.lower():
-                        continue
-
-                    for col in range(1, len(row)):
-                        materia = str(row[col] or '').strip()
-                        # Limpiar saltos de línea dentro de la materia
-                        materia = ' '.join(materia.split())
-                        if materia and len(materia) > 1:
-                            dia = str(dias[col] or '').strip() if col < len(dias) else ''
-                            fecha = str(fechas[col] or '').strip() if col < len(fechas) else ''
-                            resultados.append({
-                                'periodo': periodo,
-                                'semestre': semestre,
-                                'dia': dia,
-                                'fecha': fecha,
-                                'materia': materia
-                            })
-
-    return resultados
-
-
 @app.post("/api/calendarios/upload")
 async def subir_calendario(
     tipo: str = Form(...),
@@ -606,189 +407,29 @@ async def subir_calendario(
 ):
     if archivo.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
-
-    file_bytes = await archivo.read()
-
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            if tipo == 'examenes' and carrera:
-                # ── EXÁMENES: Parsear PDF y guardar datos estructurados ──
-                try:
-                    datos = parsear_pdf_examenes(file_bytes)
-                except Exception as parse_err:
-                    raise HTTPException(status_code=400, detail=f"No se pudo leer el PDF: {str(parse_err)}")
-
-                if not datos:
-                    raise HTTPException(status_code=400, detail="No se encontraron datos de exámenes en el PDF. Verifica que el formato sea correcto.")
-
-                # Borrar SOLO los datos si se está resubiendo el MISMO archivo (para permitir correcciones)
-                cursor.execute("DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s", (carrera, archivo.filename))
-
-                # Insertar cada examen extraído
-                for d in datos:
-                    cursor.execute(
-                        "INSERT INTO examenes_calendario (carrera, periodo, semestre, dia, fecha, materia, archivo_origen) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                        (carrera, d['periodo'], d['semestre'], d['dia'], d['fecha'], d['materia'], archivo.filename)
-                    )
-
-                # Registrar en la tabla de calendarios (como historial)
-                cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s AND archivo_nombre = %s", (tipo, carrera, archivo.filename))
-                cursor.execute(
-                    "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url) VALUES (%s, %s, %s, %s)",
-                    (tipo, carrera, archivo.filename, f"/api/examenes-calendario/{carrera}")
-                )
-
-                connection.commit()
-                return {
-                    "message": f"Se extrajeron {len(datos)} exámenes del PDF y se guardaron en la base de datos.",
-                    "total": len(datos),
-                    "datos": datos
-                }
-            else:
-                # ── GENERAL: Guardar PDF como BLOB ──
-                archivo_url = f"/api/calendarios/view/{tipo}" + (f"/{carrera}" if carrera else "")
-                cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s", (tipo, carrera))
-                cursor.execute(
-                    "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url, archivo_datos) VALUES (%s, %s, %s, %s, %s)",
-                    (tipo, carrera, archivo.filename, archivo_url, file_bytes)
-                )
-                connection.commit()
-                return {"message": "Calendario subido y guardado exitosamente", "url": archivo_url}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        connection.close()
-
-
-def _es_fecha_pasada(fecha_str: str) -> bool:
-    """Devuelve True si la fecha (ej. '06 de junio') tiene más de 5 días de haber pasado, asumiendo el ciclo actual."""
-    if not fecha_str:
-        return True
-    fecha_str = str(fecha_str).lower().replace('de ', '')
-    partes = fecha_str.split()
-    if len(partes) < 2 or not partes[0].isdigit():
-        return False
-    dia = int(partes[0])
-    mes_texto = partes[1]
-    meses_map = {
-        'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
-        'julio': 7, 'agosto': 8, 'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
-    }
-    mes_num = meses_map.get(mes_texto)
-    if not mes_num: return False
     
-    today = datetime.now()
-    year = today.year
-    # Si el mes del examen es enero/febrero y hoy es octubre-diciembre, el examen es del próximo año
-    if mes_num < 3 and today.month > 9:
-        year += 1
-    # Si el mes del examen es noviembre/diciembre y hoy es enero-febrero, el examen es del año pasado
-    elif mes_num > 9 and today.month < 3:
-        year -= 1
+    # Crear nombre de archivo seguro
+    safe_filename = f"{tipo}_{carrera}_{secrets.token_hex(4)}.pdf" if carrera else f"{tipo}_{secrets.token_hex(4)}.pdf"
+    file_path = os.path.join(UPLOAD_DIR, safe_filename)
+    
+    # Guardar archivo físicamente
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(archivo.file, buffer)
         
-    try:
-        fecha_exam = datetime(year, mes_num, dia)
-        # Se considera "pasado" si ya pasaron más de 5 días desde la fecha del examen
-        return (today - fecha_exam).days > 5
-    except ValueError:
-        return False
-
-
-@app.get("/api/examenes-calendario/{carrera}")
-def obtener_examenes_calendario(carrera: str):
-    """Retorna los exámenes extraídos para la carrera y elimina automáticamente los calendarios finalizados."""
+    archivo_url = f"/uploads/calendarios/{safe_filename}"
+    
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # Si ya existe un calendario para este tipo/carrera, lo borramos (o lo actualizamos)
+            # Para simplificar, insertamos uno nuevo y eliminamos los viejos de la BD
+            cursor.execute("DELETE FROM calendarios WHERE tipo = %s AND carrera = %s", (tipo, carrera))
             cursor.execute(
-                "SELECT id, periodo, semestre, dia, fecha, materia, archivo_origen FROM examenes_calendario WHERE carrera = %s ORDER BY id",
-                (carrera,)
+                "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url) VALUES (%s, %s, %s, %s)",
+                (tipo, carrera, archivo.filename, archivo_url)
             )
-            datos = cursor.fetchall()
-            
-            if not datos:
-                return []
-                
-            # Agrupar por archivo_origen (o periodo si no hay archivo_origen)
-            grupos = {}
-            for d in datos:
-                clave = d.get('archivo_origen') or 'desconocido'
-                if clave not in grupos:
-                    grupos[clave] = []
-                grupos[clave].append(d)
-                
-            # Identificar el grupo activo
-            grupo_activo = None
-            archivos_a_borrar = []
-            
-            for clave, examenes in grupos.items():
-                # Verificar si TODOS los exámenes de este archivo ya pasaron
-                todos_pasaron = all(_es_fecha_pasada(e['fecha']) for e in examenes)
-                
-                if todos_pasaron:
-                    archivos_a_borrar.append(clave)
-                elif grupo_activo is None:
-                    # El primer archivo que no haya pasado es el activo
-                    grupo_activo = examenes
-                    
-            # Borrar de la DB los que ya pasaron
-            for clave in archivos_a_borrar:
-                cursor.execute("DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s", (carrera, clave))
-                cursor.execute("DELETE FROM calendarios WHERE carrera = %s AND archivo_nombre = %s", (carrera, clave))
-            if archivos_a_borrar:
-                connection.commit()
-                
-            return grupo_activo if grupo_activo else []
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        connection.close()
-
-
-@app.get("/api/examenes-hoy")
-def examenes_hoy(fecha: str):
-    """Retorna todos los exámenes programados para una fecha específica (ej: '09 de julio')"""
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            # Usamos LIKE porque la fecha en la DB puede tener espacios extra
-            cursor.execute(
-                "SELECT carrera, materia, semestre, dia, fecha FROM examenes_calendario WHERE fecha LIKE %s ORDER BY carrera, semestre",
-                (f"%{fecha}%",)
-            )
-            datos = cursor.fetchall()
-        return datos
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        connection.close()
-
-
-@app.get("/api/calendarios/view/{tipo}")
-@app.get("/api/calendarios/view/{tipo}/{carrera}")
-def ver_calendario(tipo: str, carrera: str = ""):
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT archivo_datos, archivo_nombre FROM calendarios WHERE tipo = %s AND carrera = %s LIMIT 1",
-                (tipo, carrera)
-            )
-            row = cursor.fetchone()
-            if not row or not row.get('archivo_datos'):
-                raise HTTPException(status_code=404, detail="Calendario no encontrado")
-
-            return Response(
-                content=row['archivo_datos'],
-                media_type="application/pdf",
-                headers={"Content-Disposition": f'inline; filename="{row["archivo_nombre"]}"'}
-            )
-    except HTTPException:
-        raise
+        connection.commit()
+        return {"message": "Calendario subido exitosamente", "url": archivo_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -798,116 +439,6 @@ def ver_calendario(tipo: str, carrera: str = ""):
 @app.get("/ping")
 def ping():
     return {"status": "ok", "message": "Servidor activo"}
-
-
-@app.get("/api/estado-academico")
-def estado_academico(plan: str = "semestral"):
-    """Retorna el estado académico actual para un tipo de plan."""
-    today = datetime.now().date()
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            # Buscar si estamos dentro de un periodo activo (entre inicio y fin)
-            cursor.execute("""
-                SELECT ciclo, periodo, fecha_inicio FROM calendario_institucional
-                WHERE plan = %s AND tipo_evento = 'inicio_periodo' AND fecha_inicio <= %s
-                ORDER BY fecha_inicio DESC LIMIT 1
-            """, (plan, today))
-            ultimo_inicio = cursor.fetchone()
-
-            cursor.execute("""
-                SELECT ciclo, periodo, fecha_fin FROM calendario_institucional
-                WHERE plan = %s AND tipo_evento = 'fin_periodo' AND fecha_fin >= %s
-                ORDER BY fecha_fin ASC LIMIT 1
-            """, (plan, today))
-            proximo_fin = cursor.fetchone()
-
-            # Determinar si estamos en periodo activo
-            en_periodo = False
-            periodo_info = None
-            if ultimo_inicio and proximo_fin:
-                if ultimo_inicio['ciclo'] == proximo_fin['ciclo'] and ultimo_inicio['periodo'] == proximo_fin['periodo']:
-                    en_periodo = True
-                    periodo_info = {'ciclo': ultimo_inicio['ciclo'], 'periodo': ultimo_inicio['periodo']}
-
-            if not en_periodo:
-                # Buscar próximo inicio de periodo
-                cursor.execute("""
-                    SELECT descripcion, fecha_inicio FROM calendario_institucional
-                    WHERE plan = %s AND tipo_evento = 'inicio_periodo' AND fecha_inicio > %s
-                    ORDER BY fecha_inicio ASC LIMIT 1
-                """, (plan, today))
-                proximo = cursor.fetchone()
-                msg = f"Próximo inicio: {proximo['fecha_inicio']}" if proximo else "Sin periodo programado"
-                return {
-                    'hay_clases': False,
-                    'estado': 'receso',
-                    'descripcion': 'Periodo de receso entre semestres',
-                    'detalle': msg,
-                    'eventos_hoy': [],
-                    'periodo_actual': None
-                }
-
-            # Buscar eventos activos hoy
-            cursor.execute("""
-                SELECT tipo_evento, descripcion, fecha_inicio, fecha_fin, suspende_clases
-                FROM calendario_institucional
-                WHERE plan = %s AND fecha_inicio <= %s AND fecha_fin >= %s
-                ORDER BY suspende_clases DESC
-            """, (plan, today, today))
-            eventos_hoy = cursor.fetchall()
-
-            # Serializar fechas
-            for ev in eventos_hoy:
-                ev['fecha_inicio'] = str(ev['fecha_inicio'])
-                ev['fecha_fin'] = str(ev['fecha_fin'])
-
-            hay_clases = True
-            estado = 'clases'
-            descripcion = 'Día de clases regular'
-            for ev in eventos_hoy:
-                if ev['suspende_clases']:
-                    hay_clases = False
-                    estado = ev['tipo_evento']
-                    descripcion = ev['descripcion']
-                    break
-                # Si hay exámenes, informar pero no suspender
-                if 'examen' in ev['tipo_evento']:
-                    estado = ev['tipo_evento']
-                    descripcion = ev['descripcion']
-
-            return {
-                'hay_clases': hay_clases,
-                'estado': estado,
-                'descripcion': descripcion,
-                'eventos_hoy': eventos_hoy,
-                'periodo_actual': periodo_info
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        connection.close()
-
-
-@app.get("/api/calendario-institucional")
-def listar_calendario_institucional(plan: str = "semestral"):
-    """Retorna todos los eventos del calendario institucional."""
-    connection = get_db_connection()
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, plan, ciclo, periodo, tipo_evento, descripcion, fecha_inicio, fecha_fin, suspende_clases FROM calendario_institucional WHERE plan = %s ORDER BY fecha_inicio",
-                (plan,)
-            )
-            datos = cursor.fetchall()
-            for d in datos:
-                d['fecha_inicio'] = str(d['fecha_inicio'])
-                d['fecha_fin'] = str(d['fecha_fin'])
-        return datos
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        connection.close()
 
 @app.post("/api/registro")
 def registrar_usuario(datos: RegistroUsuario):
@@ -1894,9 +1425,7 @@ def obtener_archivos():
                        MAX(fecha_creacion) as ultima_modificacion,
                        COUNT(CASE WHEN aula_asignada != 'Por asignar' THEN 1 END) as aulas_asignadas,
                        GROUP_CONCAT(DISTINCT CASE WHEN aula_asignada != 'Por asignar' AND TRIM(aula_asignada) != '' THEN aula_asignada END SEPARATOR ', ') as aulas_ocupadas,
-                       GROUP_CONCAT(horario SEPARATOR '|') as todos_horarios,
-                       MAX(NULLIF(TRIM(cuatrimestre), '')) as tiene_cuatri,
-                       MAX(NULLIF(TRIM(semestre), '')) as tiene_semestre
+                       GROUP_CONCAT(horario SEPARATOR '|') as todos_horarios
                 FROM horarios 
                 GROUP BY archivo 
                 ORDER BY fecha_carga DESC
@@ -1925,20 +1454,9 @@ def obtener_archivos():
             else:
                 arch['turno'] = "Sin horario fijo"
             
-            # Determinar el plan (Semestral o Cuatrimestral)
-            if arch.get('tiene_cuatri') and arch.get('tiene_semestre'):
-                arch['plan'] = 'Mixto'
-            elif arch.get('tiene_cuatri'):
-                arch['plan'] = 'Cuatrimestral'
-            elif arch.get('tiene_semestre'):
-                arch['plan'] = 'Semestral'
-            else:
-                arch['plan'] = 'No definido'
-                
-            # Limpiar campos pesados/innecesarios antes de devolver
-            if 'todos_horarios' in arch: del arch['todos_horarios']
-            if 'tiene_cuatri' in arch: del arch['tiene_cuatri']
-            if 'tiene_semestre' in arch: del arch['tiene_semestre']
+            # Limpiar campo pesado antes de devolverlo
+            if 'todos_horarios' in arch:
+                del arch['todos_horarios']
 
         return archivos if archivos else []
     except pymysql.Error as e:
@@ -2387,4 +1905,4 @@ def obtener_suplencias_activas():
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener suplencias activas: {str(e)}")
     finally:
-        connection.close()# 
+        connection.close()

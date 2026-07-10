@@ -18,6 +18,9 @@ export default function Layout() {
   const [mostrarNotificaciones, setMostrarNotificaciones] = useState(false);
   const notificacionesRef = useRef(null);
 
+  // Estado académico
+  const [estadoAcademico, setEstadoAcademico] = useState(null);
+
   // Estado dinámico para calendarios pendientes
   const [calendariosPendientes, setCalendariosPendientes] = useState([]);
 
@@ -53,7 +56,30 @@ export default function Layout() {
     };
 
     fetchPendientes();
-  }, [location.pathname]); // Se actualiza al cambiar de vista
+  }, [location.pathname]);
+
+  // Cargar estado académico
+  useEffect(() => {
+    const cargarEstado = async () => {
+      try {
+        const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
+        const [resSem, resCuat] = await Promise.all([
+          fetch(`${API_URL}/api/estado-academico?plan=semestral`),
+          fetch(`${API_URL}/api/estado-academico?plan=cuatrimestral`)
+        ]);
+        const dataSem = await resSem.json();
+        const dataCuat = await resCuat.json();
+        
+        setEstadoAcademico({
+          semestral: dataSem?.estado ? dataSem : null,
+          cuatrimestral: dataCuat?.estado ? dataCuat : null
+        });
+      } catch (err) {
+        console.error('Error cargando estado académico:', err);
+      }
+    };
+    cargarEstado();
+  }, []);
 
   useEffect(() => {
     // 1. Mostrar burbuja de bienvenida (solo una vez por sesión)
@@ -205,20 +231,52 @@ export default function Layout() {
           <img src={logo} alt="Universidad Latino Logo" className="h-8 object-contain" />
         </div>
 
-        {/* Ticker de Alertas (Centro) */}
-        <div className="hidden sm:flex flex-1 mx-4 lg:mx-8 items-center justify-center overflow-hidden h-full relative">
-          {alertaActual && (
-            <div key={alertaActual.id} className="absolute flex items-center gap-3 animate-ticker bg-white px-5 py-2 rounded-full border border-amber-200/50 shadow-sm shadow-amber-500/10">
-              <span className="relative flex h-2.5 w-2.5 ml-0.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
-              </span>
-              <span className="text-sm font-medium text-slate-500 tracking-wide">
-                Pendiente: <span className="text-slate-800 font-bold">{alertaActual.titulo}</span>
-                {!alertaActual.carrera && <span className="ml-1.5 text-slate-400 font-normal">({alertaActual.subtitulo})</span>}
-              </span>
+        {/* Ticker de Alertas y Estado Académico (Centro) */}
+        <div className="hidden sm:flex flex-1 mx-4 lg:mx-8 items-center justify-center overflow-hidden h-full relative gap-4">
+          
+          {/* ESTADO ACADÉMICO */}
+          {estadoAcademico && (estadoAcademico.semestral || estadoAcademico.cuatrimestral) && (
+            <div className="flex items-center gap-3 bg-white px-4 py-1.5 rounded-full border border-[#c5c6cf]/30 shadow-sm flex-shrink-0">
+              {estadoAcademico.semestral && (
+                <div className="flex items-center gap-1.5 border-r border-[#c5c6cf]/30 pr-3">
+                  <span className="relative flex h-2 w-2">
+                    {!estadoAcademico.semestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>}
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${estadoAcademico.semestral.hay_clases ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-500 tracking-wide uppercase">
+                    Sem: <span className={`font-bold ${estadoAcademico.semestral.hay_clases ? 'text-emerald-600' : 'text-red-600'}`}>{estadoAcademico.semestral.estado}</span>
+                  </span>
+                </div>
+              )}
+              {estadoAcademico.cuatrimestral && (
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    {!estadoAcademico.cuatrimestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>}
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${estadoAcademico.cuatrimestral.hay_clases ? 'bg-fuchsia-500' : 'bg-red-500'}`}></span>
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-500 tracking-wide uppercase">
+                    Cuat: <span className={`font-bold ${estadoAcademico.cuatrimestral.hay_clases ? 'text-fuchsia-600' : 'text-red-600'}`}>{estadoAcademico.cuatrimestral.estado}</span>
+                  </span>
+                </div>
+              )}
             </div>
           )}
+
+          {/* TICKER DE ALERTAS ORIGINAL */}
+          <div className="flex-1 flex justify-start sm:justify-center overflow-hidden relative h-full items-center">
+            {alertaActual && (
+              <div key={alertaActual.id} className="absolute flex items-center gap-3 animate-ticker bg-white px-5 py-2 rounded-full border border-amber-200/50 shadow-sm shadow-amber-500/10 whitespace-nowrap">
+                <span className="relative flex h-2.5 w-2.5 ml-0.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                </span>
+                <span className="text-sm font-medium text-slate-500 tracking-wide">
+                  Pendiente: <span className="text-slate-800 font-bold">{alertaActual.titulo}</span>
+                  {!alertaActual.carrera && <span className="ml-1.5 text-slate-400 font-normal">({alertaActual.subtitulo})</span>}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Información del Usuario (Derecha - Siempre visible) */}
