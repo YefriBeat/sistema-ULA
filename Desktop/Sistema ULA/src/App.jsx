@@ -18,7 +18,7 @@ const ManualUsuario       = lazy(() => import('./pages/ManualUsuario'));
 const SoporteTecnico      = lazy(() => import('./pages/SoporteTecnico'));
 
 // Variable para activar el modo de mantenimiento
-const EN_MANTENIMIENTO = true;
+const EN_MANTENIMIENTO = false;
 
 function MantenimientoPagina() {
   return (
