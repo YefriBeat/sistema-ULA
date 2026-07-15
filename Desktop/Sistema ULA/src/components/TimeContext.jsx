@@ -9,7 +9,7 @@ export function TimeProvider({ children }) {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setAhora(prev => new Date(prev.getTime() + 3000));
+      setAhora(new Date());
     }, 1000);
     return () => clearInterval(timer);
   }, []);
