@@ -412,7 +412,36 @@ export default function Layout() {
         </div>
       </header>
 
-      <div className="flex flex-1 pt-16">
+      {/* ESTADO ACADÉMICO MÓVIL — visible solo en pantallas pequeñas */}
+      {estadoAcademico && (estadoAcademico.semestral || estadoAcademico.cuatrimestral) && (
+        <div className="fixed top-16 left-0 right-0 z-20 bg-white/95 backdrop-blur-sm border-b border-[#c5c6cf]/20 px-3 py-2 flex items-center justify-center gap-3 sm:hidden shadow-sm">
+          {estadoAcademico.semestral && (
+            <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1 rounded-full border border-slate-200/60">
+              <span className="relative flex h-1.5 w-1.5">
+                {!estadoAcademico.semestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#fdbb11] opacity-75"></span>}
+                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${estadoAcademico.semestral.hay_clases ? 'bg-[#1c355e]' : 'bg-[#fdbb11]'}`}></span>
+              </span>
+              <span className="text-[10px] font-semibold text-slate-500 uppercase">
+                Sem: <span className={`font-bold ${estadoAcademico.semestral.hay_clases ? 'text-[#1c355e]' : 'text-[#e8a906]'}`}>{formatEstadoAcademico(estadoAcademico.semestral)}</span>
+              </span>
+            </div>
+          )}
+          {estadoAcademico.cuatrimestral && (
+            <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1 rounded-full border border-slate-200/60">
+              <span className="relative flex h-1.5 w-1.5">
+                {!estadoAcademico.cuatrimestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#fdbb11] opacity-75"></span>}
+                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${estadoAcademico.cuatrimestral.hay_clases ? 'bg-[#1c355e]' : 'bg-[#fdbb11]'}`}></span>
+              </span>
+              <span className="text-[10px] font-semibold text-slate-500 uppercase">
+                Cuat: <span className={`font-bold ${estadoAcademico.cuatrimestral.hay_clases ? 'text-[#1c355e]' : 'text-[#e8a906]'}`}>{formatEstadoAcademico(estadoAcademico.cuatrimestral)}</span>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* pt-16 = espacio del header. En móvil, si hay barra de estado académico, sumamos pt-[88px] para no tapar contenido */}
+      <div className={`flex flex-1 pt-16 ${estadoAcademico && (estadoAcademico.semestral || estadoAcademico.cuatrimestral) ? 'max-sm:pt-[88px]' : ''}`}>
 
         {/* SIDEBAR (MENÚ LATERAL) */}
         <aside
