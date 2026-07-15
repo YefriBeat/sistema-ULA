@@ -10,7 +10,7 @@ export function TimeProvider({ children }) {
   useEffect(() => {
     const timer = setInterval(() => {
       setAhora(new Date());
-    }, 1000);
+    }, 5000); // 🔧 Cada 5s es suficiente (la UI solo necesita precisión al minuto)
     return () => clearInterval(timer);
   }, []);
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTime } from '../components/TimeContext';
 
 // ─── Parser de horario ────────────────────────────────────────────────────────
@@ -149,7 +149,17 @@ export default function VisualBd() {
     cuatrimestral: { hay_clases: true, estado: 'clases' }
   });
 
-  const ahora = useTime();
+  const ahoraRaw = useTime();
+  // 🔧 Throttle: solo recalcular cuando cambia el MINUTO (no cada segundo)
+  const minutoActual = ahoraRaw.getHours() * 60 + ahoraRaw.getMinutes();
+  const ahora = useMemo(() => ahoraRaw, [minutoActual]);
+  // 🔧 String de fecha que solo cambia al cambiar el DÍA (evita refetch cada segundo)
+  const hoyStr = useMemo(() => {
+    const y = ahora.getFullYear();
+    const m = String(ahora.getMonth() + 1).padStart(2, '0');
+    const d = String(ahora.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, [ahora.getFullYear(), ahora.getMonth(), ahora.getDate()]);
   const [errorConexion, setErrorConexion] = useState(false);
   const [ultimaSync, setUltimaSync] = useState(null);
 
@@ -178,15 +188,10 @@ export default function VisualBd() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch estado academico y examenes de hoy para la lógica temporal
+  // Fetch estado academico y examenes de hoy — solo cuando cambia el DÍA (no cada segundo)
   useEffect(() => {
     const fetchEstado = async () => {
       try {
-        const y = ahora.getFullYear();
-        const m = String(ahora.getMonth() + 1).padStart(2, '0');
-        const d = String(ahora.getDate()).padStart(2, '0');
-        const hoyStr = `${y}-${m}-${d}`;
-        
         const formatter = new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'long' });
         const fechaStrFormat = formatter.format(ahora);
 
@@ -211,7 +216,7 @@ export default function VisualBd() {
       }
     };
     fetchEstado();
-  }, [ahora]);
+  }, [hoyStr]);
 
   // Fetch aulas para el donut chart
   useEffect(() => {

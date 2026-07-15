@@ -67,19 +67,14 @@ export default function Layout() {
     fetchPendientes();
   }, [location.pathname, fechaActualStr]);
 
-  // Cargar estado académico
+  // Cargar estado académico — solo cuando cambia el DÍA
   useEffect(() => {
     const cargarEstado = async () => {
       try {
-        const y = ahora.getFullYear();
-        const m = String(ahora.getMonth() + 1).padStart(2, '0');
-        const d = String(ahora.getDate()).padStart(2, '0');
-        const hoyStr = `${y}-${m}-${d}`;
-
         const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
         const [resSem, resCuat] = await Promise.all([
-          fetch(`${API_URL}/api/estado-academico?plan=semestral&fecha=${hoyStr}`),
-          fetch(`${API_URL}/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`)
+          fetch(`${API_URL}/api/estado-academico?plan=semestral&fecha=${fechaActualStr}`),
+          fetch(`${API_URL}/api/estado-academico?plan=cuatrimestral&fecha=${fechaActualStr}`)
         ]);
         const dataSem = await resSem.json();
         const dataCuat = await resCuat.json();
@@ -93,7 +88,7 @@ export default function Layout() {
       }
     };
     cargarEstado();
-  }, [ahora]);
+  }, [fechaActualStr]);
 
   useEffect(() => {
     // 1. Mostrar burbuja de bienvenida (solo una vez por sesión)
