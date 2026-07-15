@@ -3,10 +3,14 @@ import { createContext, useContext, useState, useEffect } from 'react';
 const TimeContext = createContext(new Date());
 
 export function TimeProvider({ children }) {
+  // 🕒 CENTRAL DE TIEMPO (FECHA DE PRUEBA)
+  // Cambia "2026-07-20T12:00:00" por "new Date()" para volver al tiempo real
   const [ahora, setAhora] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => setAhora(new Date()), 30000);
+    const timer = setInterval(() => {
+      setAhora(prev => new Date(prev.getTime() + 3000));
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
 

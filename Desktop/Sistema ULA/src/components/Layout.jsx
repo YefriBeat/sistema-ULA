@@ -1,12 +1,14 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { useUser } from './UserContext';
+import { useTime } from './TimeContext';
 import Swal from 'sweetalert2';
 import logo from './logo.png';
 
 export default function Layout() {
   const location = useLocation();
   const { usuario } = useUser();
+  const ahora = useTime();
 
   // Estado para controlar el menú en celulares y tablets
   const [menuAbierto, setMenuAbierto] = useState(false);
@@ -24,6 +26,8 @@ export default function Layout() {
   // Estado dinámico para calendarios pendientes
   const [calendariosPendientes, setCalendariosPendientes] = useState([]);
 
+  const fechaActualStr = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}-${String(ahora.getDate()).padStart(2, '0')}`;
+
   useEffect(() => {
     const fetchPendientes = async () => {
       const requeridos = [
@@ -35,7 +39,12 @@ export default function Layout() {
       const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
 
       try {
-        const res = await fetch(`${API_URL}/api/calendarios`);
+        // Obtener ciclo actual para filtrar
+        const cicloRes = await fetch(`${API_URL}/api/ciclos-disponibles?fecha=${fechaActualStr}`);
+        const cicloData = await cicloRes.json();
+        const cicloActual = cicloData.ciclo_actual || '';
+
+        const res = await fetch(`${API_URL}/api/calendarios?ciclo_escolar=${cicloActual}`);
         const cargados = await res.json();
         
         if (!Array.isArray(cargados)) {
@@ -56,16 +65,21 @@ export default function Layout() {
     };
 
     fetchPendientes();
-  }, [location.pathname]);
+  }, [location.pathname, fechaActualStr]);
 
   // Cargar estado académico
   useEffect(() => {
     const cargarEstado = async () => {
       try {
+        const y = ahora.getFullYear();
+        const m = String(ahora.getMonth() + 1).padStart(2, '0');
+        const d = String(ahora.getDate()).padStart(2, '0');
+        const hoyStr = `${y}-${m}-${d}`;
+
         const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
         const [resSem, resCuat] = await Promise.all([
-          fetch(`${API_URL}/api/estado-academico?plan=semestral`),
-          fetch(`${API_URL}/api/estado-academico?plan=cuatrimestral`)
+          fetch(`${API_URL}/api/estado-academico?plan=semestral&fecha=${hoyStr}`),
+          fetch(`${API_URL}/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`)
         ]);
         const dataSem = await resSem.json();
         const dataCuat = await resCuat.json();
@@ -79,7 +93,7 @@ export default function Layout() {
       }
     };
     cargarEstado();
-  }, []);
+  }, [ahora]);
 
   useEffect(() => {
     // 1. Mostrar burbuja de bienvenida (solo una vez por sesión)
@@ -198,6 +212,19 @@ export default function Layout() {
     }`;
   };
 
+  const formatEstadoAcademico = (estadoObj) => {
+    if (!estadoObj) return '';
+    if (estadoObj.estado === 'clases') return 'Clases Regulares';
+    if (estadoObj.estado === 'receso') return 'Receso';
+    
+    // Si la descripción es muy larga por "Inhábil:", la acortamos
+    let desc = estadoObj.descripcion;
+    if (desc && desc.startsWith('Inhábil: ')) {
+      desc = desc.replace('Inhábil: ', '');
+    }
+    return desc || (estadoObj.estado ? estadoObj.estado.replace(/_/g, ' ') : '');
+  };
+
   return (
     <div className="bg-[#faf9fc] text-[#1b1c1e] antialiased flex flex-col min-h-screen font-manrope">
       <style>{`
@@ -240,22 +267,22 @@ export default function Layout() {
               {estadoAcademico.semestral && (
                 <div className="flex items-center gap-1.5 border-r border-[#c5c6cf]/30 pr-3">
                   <span className="relative flex h-2 w-2">
-                    {!estadoAcademico.semestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>}
-                    <span className={`relative inline-flex rounded-full h-2 w-2 ${estadoAcademico.semestral.hay_clases ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                    {!estadoAcademico.semestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#fdbb11] opacity-75"></span>}
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${estadoAcademico.semestral.hay_clases ? 'bg-[#1c355e]' : 'bg-[#fdbb11]'}`}></span>
                   </span>
                   <span className="text-[11px] font-medium text-slate-500 tracking-wide uppercase">
-                    Sem: <span className={`font-bold ${estadoAcademico.semestral.hay_clases ? 'text-emerald-600' : 'text-red-600'}`}>{estadoAcademico.semestral.estado}</span>
+                    Sem: <span className={`font-bold ${estadoAcademico.semestral.hay_clases ? 'text-[#1c355e]' : 'text-[#e8a906]'}`}>{formatEstadoAcademico(estadoAcademico.semestral)}</span>
                   </span>
                 </div>
               )}
               {estadoAcademico.cuatrimestral && (
                 <div className="flex items-center gap-1.5">
                   <span className="relative flex h-2 w-2">
-                    {!estadoAcademico.cuatrimestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>}
-                    <span className={`relative inline-flex rounded-full h-2 w-2 ${estadoAcademico.cuatrimestral.hay_clases ? 'bg-fuchsia-500' : 'bg-red-500'}`}></span>
+                    {!estadoAcademico.cuatrimestral.hay_clases && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#fdbb11] opacity-75"></span>}
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${estadoAcademico.cuatrimestral.hay_clases ? 'bg-[#1c355e]' : 'bg-[#fdbb11]'}`}></span>
                   </span>
                   <span className="text-[11px] font-medium text-slate-500 tracking-wide uppercase">
-                    Cuat: <span className={`font-bold ${estadoAcademico.cuatrimestral.hay_clases ? 'text-fuchsia-600' : 'text-red-600'}`}>{estadoAcademico.cuatrimestral.estado}</span>
+                    Cuat: <span className={`font-bold ${estadoAcademico.cuatrimestral.hay_clases ? 'text-[#1c355e]' : 'text-[#e8a906]'}`}>{formatEstadoAcademico(estadoAcademico.cuatrimestral)}</span>
                   </span>
                 </div>
               )}
@@ -374,9 +401,6 @@ export default function Layout() {
               )}
             </div>
 
-            <Link to="/configuracion-perfil" className="p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" title="Configuración de Perfil">
-              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">settings</span>
-            </Link>
           </div>
 
           <div className="flex flex-col items-end justify-center min-w-0 hidden sm:flex">
@@ -387,9 +411,9 @@ export default function Layout() {
               {usuario.turno}
             </p>
           </div>
-          <div className="h-9 w-9 sm:h-10 sm:w-10 flex-shrink-0 rounded-full bg-[#0e2045] text-white flex items-center justify-center border border-[#c5c6cf]/30 font-bold text-base sm:text-lg uppercase shadow-sm">
+          <Link to="/configuracion-perfil" className="h-9 w-9 sm:h-10 sm:w-10 flex-shrink-0 rounded-full bg-[#0e2045] text-white flex items-center justify-center border border-[#c5c6cf]/30 font-bold text-base sm:text-lg uppercase shadow-sm hover:scale-105 hover:bg-[#1c355e] transition-all cursor-pointer" title="Configuración de Perfil">
             {usuario.nombre.charAt(0)}
-          </div>
+          </Link>
         </div>
       </header>
 

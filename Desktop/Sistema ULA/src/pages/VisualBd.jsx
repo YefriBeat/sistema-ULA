@@ -96,7 +96,7 @@ const getBloqueEstandar = (inicio) => {
 
 const groupConsecutiveClasses = (clases) => {
   if (!clases.length) return clases;
-  const estadoPrioridad = { en_curso: 0, proxima: 1, finalizada: 2, programada: 3 };
+  const estadoPrioridad = { examen_ordinario: -1, en_curso: 0, proxima: 1, finalizada: 2, programada: 3 };
   const mapGrupos = new Map();
   clases.forEach(clase => {
     const key = [clase.diaOriginal, clase.docente, clase.licenciatura, clase.asignatura, clase.aula_asignada || ''].join('||');
@@ -116,6 +116,7 @@ const groupConsecutiveClasses = (clases) => {
           actual.estadoTiempo = siguiente.estadoTiempo;
         }
         actual._ids.push(String(siguiente.id));
+        if (siguiente.tieneExamenHoy) actual.tieneExamenHoy = true;
       } else {
         resultado.push(actual);
         actual = { ...siguiente, _ids: [String(siguiente.id)] };
@@ -142,6 +143,11 @@ export default function VisualBd() {
   const [filtroHora, setFiltroHora] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('en_curso');
   const [cargando, setCargando] = useState(true);
+  const [examenesHoy, setExamenesHoy] = useState([]);
+  const [estadoAcademico, setEstadoAcademico] = useState({
+    semestral: { hay_clases: true, estado: 'clases' },
+    cuatrimestral: { hay_clases: true, estado: 'clases' }
+  });
 
   const ahora = useTime();
   const [errorConexion, setErrorConexion] = useState(false);
@@ -172,6 +178,41 @@ export default function VisualBd() {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch estado academico y examenes de hoy para la lógica temporal
+  useEffect(() => {
+    const fetchEstado = async () => {
+      try {
+        const y = ahora.getFullYear();
+        const m = String(ahora.getMonth() + 1).padStart(2, '0');
+        const d = String(ahora.getDate()).padStart(2, '0');
+        const hoyStr = `${y}-${m}-${d}`;
+        
+        const formatter = new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'long' });
+        const fechaStrFormat = formatter.format(ahora);
+
+        const [resSem, resCuat, resExamenes] = await Promise.all([
+          fetch(`/api/estado-academico?plan=semestral&fecha=${hoyStr}`),
+          fetch(`/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`),
+          fetch(`/api/examenes-hoy?fecha=${encodeURIComponent(fechaStrFormat)}`)
+        ]);
+
+        if (resSem.ok && resCuat.ok) {
+          setEstadoAcademico({
+            semestral: await resSem.json(),
+            cuatrimestral: await resCuat.json()
+          });
+        }
+        if (resExamenes.ok) {
+          const dataEx = await resExamenes.json();
+          setExamenesHoy(Array.isArray(dataEx) ? dataEx : []);
+        }
+      } catch (e) {
+        console.error("Error cargando contexto académico:", e);
+      }
+    };
+    fetchEstado();
+  }, [ahora]);
+
   // Fetch aulas para el donut chart
   useEffect(() => {
     fetch('/api/aulas')
@@ -197,9 +238,17 @@ export default function VisualBd() {
   const asignaturasConEstado = useMemo(() => {
     const diaActualIndex = ahora.getDay();
     const minutosActuales = (ahora.getHours() * 60) + ahora.getMinutes();
+    
     return asignaturas.map(clase => {
       const { dia, inicio, fin, textoHora } = parsearHorario(clase.horario);
       const diaClaseIndex = dia ? diasSemanaMap[dia] : undefined;
+      
+      const isCuatri = (clase.cuatrimestre && clase.cuatrimestre !== '');
+      const planStr = isCuatri ? 'cuatrimestral' : 'semestral';
+      const academico = estadoAcademico[planStr];
+      const hayClasesPlan = academico?.hay_clases !== false;
+      const estadoRazon = academico?.estado || 'receso';
+
       let estadoTiempo = 'programada';
       if (diaClaseIndex === undefined || inicio === null || fin === null) {
         estadoTiempo = 'programada';
@@ -208,16 +257,48 @@ export default function VisualBd() {
       } else if (diaClaseIndex > diaActualIndex) {
         estadoTiempo = 'programada';
       } else {
-        if (minutosActuales > fin) estadoTiempo = 'finalizada';
-        else if (minutosActuales >= inicio && minutosActuales <= fin) estadoTiempo = 'en_curso';
-        else estadoTiempo = 'proxima';
+        // Es una clase del día de HOY
+        if (!hayClasesPlan) {
+          estadoTiempo = 'suspendida';
+        } else if (minutosActuales > fin) {
+          estadoTiempo = 'finalizada';
+        } else if (minutosActuales >= inicio && minutosActuales <= fin) {
+          estadoTiempo = 'en_curso';
+        } else {
+          estadoTiempo = 'proxima';
+        }
       }
-      return { ...clase, estadoTiempo, textoHora, diaClaseIndex, inicio, fin, diaOriginal: dia };
+
+      // Detectar si la clase tiene examen programado para hoy (tiene precedencia si hay clases)
+      const norm = (s) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      const asigNorm = norm(clase.asignatura);
+      const tieneExamenHoy = examenesHoy.some(ex => {
+        let matReal = ex.materia;
+        try { matReal = decodeURIComponent(escape(ex.materia)); } catch (e) {}
+        const matNorm = norm(matReal);
+        return asigNorm.includes(matNorm) || matNorm.includes(asigNorm);
+      });
+
+      if (tieneExamenHoy && estadoTiempo === 'en_curso' && hayClasesPlan) {
+        estadoTiempo = 'examen_ordinario';
+      }
+
+      return { 
+        ...clase, 
+        estadoTiempo, 
+        estadoRazon: estadoTiempo === 'suspendida' ? estadoRazon : undefined,
+        textoHora, 
+        diaClaseIndex, 
+        inicio, 
+        fin, 
+        diaOriginal: dia, 
+        tieneExamenHoy 
+      };
     }).sort((a, b) => {
       if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex ?? 99) - (b.diaClaseIndex ?? 99);
       return (a.inicio ?? 0) - (b.inicio ?? 0);
     });
-  }, [asignaturas, ahora]);
+  }, [asignaturas, ahora, estadoAcademico, examenesHoy]);
 
   // Todas las suplencias de hoy → filas sintéticas con estado calculado en tiempo real
   const filasSuplencias = useMemo(() => {
@@ -646,6 +727,7 @@ export default function VisualBd() {
             <option value="en_curso">▶ En Curso</option>
             <option value="proxima">Próximas (hoy)</option>
             <option value="finalizada">Finalizadas (hoy)</option>
+            <option value="suspendida">Suspendidas (Asueto)</option>
           </select>
 
           <select
@@ -750,17 +832,23 @@ export default function VisualBd() {
                       </span>
                     ) : (
                       <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap flex-shrink-0 ${
-                        item.estadoTiempo === 'en_curso'   ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                        item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-blue-200' :
-                        item.estadoTiempo === 'proxima'    ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                        item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-700 border-red-200' :
+                        item.estadoTiempo === 'en_curso'         ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                        item.estadoTiempo === 'finalizada'       ? 'bg-gray-50 text-gray-600 border-blue-200' :
+                        item.estadoTiempo === 'suspendida'       ? 'bg-red-50 text-red-600 border-red-200 opacity-80' :
+                        item.estadoTiempo === 'proxima'          ? 'bg-amber-50 text-amber-700 border-amber-200' :
                         'bg-slate-50 text-slate-500 border-slate-200'
                       }`}>
                         <span className="material-symbols-outlined text-[11px]">
-                          {item.estadoTiempo === 'en_curso'   ? 'play_circle' :
-                           item.estadoTiempo === 'finalizada' ? 'stop_circle' :
-                           item.estadoTiempo === 'proxima'    ? 'schedule' : 'event'}
+                          {item.estadoTiempo === 'examen_ordinario' ? 'edit_document' :
+                           item.estadoTiempo === 'suspendida'       ? 'block' :
+                           item.estadoTiempo === 'en_curso'         ? 'play_circle' :
+                           item.estadoTiempo === 'finalizada'       ? 'stop_circle' :
+                           item.estadoTiempo === 'proxima'          ? 'schedule' : 'event'}
                         </span>
-                        {item.estadoTiempo === 'programada' ? 'Programada' : item.estadoTiempo.replace('_', ' ')}
+                        {item.estadoTiempo === 'programada' ? 'Programada' : 
+                         item.estadoTiempo === 'suspendida' ? `Sin Clases (${item.estadoRazon || 'Asueto'})` : 
+                         item.estadoTiempo.replace('_', ' ')}
                       </span>
                     )}
                   </div>
@@ -770,6 +858,12 @@ export default function VisualBd() {
                     <span className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5 mt-0.5">
                       <span className="material-symbols-outlined text-[10px]">swap_horiz</span>
                       Cubre a {item.docente_ausente}
+                    </span>
+                  )}
+                  {item.tieneExamenHoy && (
+                    <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider mt-1.5 border border-red-200">
+                      <span className="material-symbols-outlined text-[12px]">edit_document</span>
+                      EXAMEN HOY
                     </span>
                   )}
                   {/* Licenciatura */}
@@ -868,7 +962,15 @@ export default function VisualBd() {
                         {item.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Gpo: {item.grupo}</span>}
                       </div>
                     </td>
-                    <td className="py-3.5 px-5 font-medium text-[#44464e] break-words text-xs">{item.asignatura}</td>
+                    <td className="py-3.5 px-5 font-medium text-[#44464e] break-words text-xs">
+                      {item.asignatura}
+                      {item.tieneExamenHoy && (
+                        <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider mt-1.5 border border-red-200 block w-max">
+                          <span className="material-symbols-outlined text-[10px]">edit_document</span>
+                          EXAMEN HOY
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3.5 px-5 font-mono text-[#1c355e] font-bold text-xs whitespace-nowrap">{item.textoHora}</td>
                     <td className="py-3.5 px-5">
                       {item.aula_reasignada ? (
@@ -895,17 +997,23 @@ export default function VisualBd() {
                         </span>
                       ) : (
                         <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap ${
-                          item.estadoTiempo === 'en_curso'   ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                          item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-gray-200' :
-                          item.estadoTiempo === 'proxima'    ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                          item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-700 border-red-200' :
+                          item.estadoTiempo === 'en_curso'         ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                          item.estadoTiempo === 'finalizada'       ? 'bg-gray-50 text-gray-600 border-gray-200' :
+                          item.estadoTiempo === 'suspendida'       ? 'bg-red-50 text-red-600 border-red-200 opacity-80' :
+                          item.estadoTiempo === 'proxima'          ? 'bg-amber-50 text-amber-700 border-amber-200' :
                           'bg-slate-50 text-slate-500 border-slate-200'
                         }`}>
                           <span className="material-symbols-outlined text-[11px]">
-                            {item.estadoTiempo === 'en_curso'   ? 'play_circle' :
-                             item.estadoTiempo === 'finalizada' ? 'stop_circle' :
-                             item.estadoTiempo === 'proxima'    ? 'schedule' : 'event'}
+                            {item.estadoTiempo === 'examen_ordinario' ? 'edit_document' :
+                             item.estadoTiempo === 'suspendida'       ? 'block' :
+                             item.estadoTiempo === 'en_curso'         ? 'play_circle' :
+                             item.estadoTiempo === 'finalizada'       ? 'stop_circle' :
+                             item.estadoTiempo === 'proxima'          ? 'schedule' : 'event'}
                           </span>
-                          {item.estadoTiempo === 'programada' ? 'Programada' : item.estadoTiempo.replace('_', ' ')}
+                          {item.estadoTiempo === 'programada' ? 'Programada' : 
+                           item.estadoTiempo === 'suspendida' ? `Sin Clases (${item.estadoRazon || 'Asueto'})` : 
+                           item.estadoTiempo.replace('_', ' ')}
                         </span>
                       )}
                     </td>
