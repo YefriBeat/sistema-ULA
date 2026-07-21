@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { TimeProvider } from './components/TimeContext';
 import { UserProvider } from './components/UserContext';
 import ErrorBoundary from './components/ErrorBoundary';
+import TimeTravelDebugger from './components/TimeTravelDebugger';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Registro from './pages/Registro';
@@ -98,6 +99,7 @@ export default function App() {
             </Routes>
           </BrowserRouter>
         </UserProvider>
+        <TimeTravelDebugger />
       </TimeProvider>
     </ErrorBoundary>
   );

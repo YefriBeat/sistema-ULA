@@ -195,18 +195,26 @@ def seed_calendario_institucional():
                 ('cuatrimestral','2025-2026',2,'inicio_periodo','Inicio de Cuatrimestre','2026-05-04','2026-05-04',False),
                 ('cuatrimestral','2025-2026',2,'inhabil','Inhábil: Día del trabajo (Recorrido)','2026-05-05','2026-05-05',True),
                 ('cuatrimestral','2025-2026',2,'inhabil','Inhábil: Día del Maestro','2026-05-15','2026-05-15',True),
-                ('cuatrimestral','2025-2026',2,'examen_parcial','Primer Parcial','2026-06-15','2026-06-20',False),
-                ('cuatrimestral','2025-2026',2,'examen_parcial','Segundo Parcial','2026-07-20','2026-07-25',False),
-                ('cuatrimestral','2025-2026',2,'examen_ordinario','Exámenes Finales','2026-08-10','2026-08-15',False),
-                ('cuatrimestral','2025-2026',2,'fin_periodo','Fin de Cuatrimestre','2026-08-20','2026-08-20',False),
-                
-                # ── CUATRIMESTRE 3 (Septiembre-Diciembre 2026) ──
-                ('cuatrimestral','2026-2027',3,'inicio_periodo','Inicio de Cuatrimestre','2026-09-07','2026-09-07',False),
+                ('cuatrimestral','2025-2026',2,'examen_parcial','Primer Parcial','2026-06-08','2026-06-15',False),
+                ('cuatrimestral','2025-2026',2,'evaluacion','Evaluación docente','2026-07-06','2026-07-09',False),
+                ('cuatrimestral','2025-2026',2,'examen_parcial','Segundo Parcial','2026-07-20','2026-07-27',False),
+                ('cuatrimestral','2025-2026',2,'examen_ordinario','Exámenes ordinarios','2026-08-03','2026-08-10',False),
+                ('cuatrimestral','2025-2026',2,'inscripcion','Inscripción a exámenes extraordinarios','2026-08-11','2026-08-12',False),
+                ('cuatrimestral','2025-2026',2,'examen_extraordinario','Exámenes extraordinarios','2026-08-14','2026-08-21',False),
+                ('cuatrimestral','2025-2026',2,'fin_periodo','Fin de Cuatrimestre','2026-08-31','2026-08-31',False),
+                # ── CUATRIMESTRE 3 (Septiembre-Diciembre 2026) ── según PDF del usuario
+                ('cuatrimestral','2026-2027',3,'inicio_periodo','Inicio de Cuatrimestre','2026-08-31','2026-08-31',False),
                 ('cuatrimestral','2026-2027',3,'inhabil','Inhábil: Independencia de México','2026-09-16','2026-09-16',True),
+                ('cuatrimestral','2026-2027',3,'examen_parcial','Primer examen parcial','2026-09-28','2026-10-05',False),
+                ('cuatrimestral','2026-2027',3,'evaluacion','Evaluación docente','2026-10-26','2026-10-29',False),
                 ('cuatrimestral','2026-2027',3,'inhabil','Inhábil: Día de muertos','2026-11-02','2026-11-02',True),
+                ('cuatrimestral','2026-2027',3,'examen_parcial','Segundo examen parcial','2026-11-03','2026-11-10',False),
                 ('cuatrimestral','2026-2027',3,'inhabil','Inhábil: Revolución Mexicana','2026-11-16','2026-11-16',True),
-                ('cuatrimestral','2026-2027',3,'vacaciones','Vacaciones navideñas','2026-12-21','2027-01-01',True),
-                ('cuatrimestral','2026-2027',3,'fin_periodo','Fin de Cuatrimestre','2026-12-18','2026-12-18',False),
+                ('cuatrimestral','2026-2027',3,'examen_ordinario','Exámenes ordinarios','2026-11-30','2026-12-07',False),
+                ('cuatrimestral','2026-2027',3,'inscripcion','Inscripción a exámenes extraordinarios','2026-12-04','2026-12-11',False),
+                ('cuatrimestral','2026-2027',3,'examen_extraordinario','Exámenes extraordinarios','2026-12-10','2026-12-17',False),
+                ('cuatrimestral','2026-2027',3,'vacaciones','Vacaciones navideñas','2026-12-21','2026-12-31',True),
+                ('cuatrimestral','2026-2027',3,'fin_periodo','Fin de Cuatrimestre','2026-12-31','2026-12-31',False),
 
                 # ── CUATRIMESTRE 1 (Enero-Abril 2027) ──
                 ('cuatrimestral','2026-2027',1,'inicio_periodo','Inicio de Cuatrimestre','2027-01-04','2027-01-04',False),
@@ -239,6 +247,20 @@ def seed_calendario_institucional():
         print(f"Advertencia en seed calendario: {e}")
     finally:
         connection.close()
+
+
+def force_reseed_calendario():
+    """Limpia TODOS los datos del calendario y reinserta el seed limpio."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM calendario_institucional")
+        connection.commit()
+        print("Calendario institucional limpiado.")
+    finally:
+        connection.close()
+    # Ahora el seed se insertará porque la tabla está vacía
+    seed_calendario_institucional()
 
 
 @asynccontextmanager
@@ -853,6 +875,17 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
                     return 2
                 else:
                     return 3
+                    
+        # Fallback para Cuatrimestral basado en texto
+        if plan == 'cuatrimestral':
+            text_l = text.lower()
+            if 'sep-dic' in text_l or 'septiembre' in text_l and 'diciembre' in text_l:
+                return 3
+            if 'may-ago' in text_l or 'mayo' in text_l and 'agosto' in text_l:
+                return 2
+            if 'ene-abr' in text_l or 'enero' in text_l and 'abril' in text_l:
+                return 1
+                
         return 1
     
     def calcular_anio_mes(plan, periodo, mes_actual_num, anio_base, anio_siguiente):
@@ -892,13 +925,11 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
                     tabla_actividades = table
                     break
         
-        if not tabla_actividades:
-            continue
-        
+
         text_lower = text.lower()
-        if 'cuatrimestral' in text_lower:
+        if 'cuatrimestral' in text_lower or 'cuatrimestre' in text_lower:
             plan = 'cuatrimestral'
-        elif 'semestral' in text_lower:
+        elif 'semestral' in text_lower or 'semestre' in text_lower:
             plan = 'semestral'
         else:
             continue
@@ -909,6 +940,9 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
             anio_base = int(ciclo_match.group(1))
             anio_siguiente = int(ciclo_match.group(2))
         else:
+            continue
+        
+        if not tabla_actividades:
             continue
         
         periodo = detectar_periodo(text, plan, MESES)
@@ -979,20 +1013,27 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
 
 
 def _guardar_eventos_calendario(eventos):
-    """Guarda la lista de eventos en la BD, reemplazando los existentes solo para ese ciclo."""
+    """Guarda la lista de eventos en la BD con deduplicación inteligente (no borra el seed)."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            ciclos = set(ev[1] for ev in eventos if len(ev) > 1)
-            for c in ciclos:
-                cursor.execute("DELETE FROM calendario_institucional WHERE ciclo = %s", (c,))
-                
+            insertados = 0
             for ev in eventos:
-                cursor.execute(
-                    "INSERT INTO calendario_institucional (plan,ciclo,periodo,tipo_evento,descripcion,fecha_inicio,fecha_fin,suspende_clases) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                    ev
-                )
+                plan, ciclo, periodo, tipo_evento, desc, fi, ff, susp = ev
+                # Verificar si ya existe un evento similar (mismo plan, ciclo, periodo, tipo, rango de fechas)
+                cursor.execute("""
+                    SELECT id FROM calendario_institucional
+                    WHERE plan=%s AND ciclo=%s AND periodo=%s AND tipo_evento=%s AND fecha_inicio=%s AND fecha_fin=%s
+                    LIMIT 1
+                """, (plan, ciclo, periodo, tipo_evento, fi, ff))
+                if not cursor.fetchone():
+                    cursor.execute(
+                        "INSERT INTO calendario_institucional (plan,ciclo,periodo,tipo_evento,descripcion,fecha_inicio,fecha_fin,suspende_clases) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                        ev
+                    )
+                    insertados += 1
         connection.commit()
+        return insertados
     finally:
         connection.close()
 
@@ -1016,9 +1057,9 @@ def sincronizar_calendario_desde_bd(ciclo_escolar: str):
     if not eventos:
         raise HTTPException(status_code=400, detail="No se pudieron extraer eventos del PDF. Verifica que el archivo sea un Calendario Institucional válido.")
     
-    _guardar_eventos_calendario(eventos)
+    insertados = _guardar_eventos_calendario(eventos)
     
-    return {"status": "success", "message": f"Se extrajeron y guardaron {len(eventos)} eventos del calendario institucional."}
+    return {"status": "success", "message": f"Se extrajeron {len(eventos)} eventos del PDF. {insertados} nuevos insertados (sin duplicar el seed)."}
 
 @app.get("/api/calendario-institucional/eventos")
 def obtener_eventos_institucionales():
@@ -1026,7 +1067,7 @@ def obtener_eventos_institucionales():
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT plan, ciclo, periodo, tipo_evento, descripcion, fecha_inicio, fecha_fin, suspende_clases FROM calendario_institucional ORDER BY fecha_inicio ASC")
+            cursor.execute("SELECT id, plan, ciclo, periodo, tipo_evento, descripcion, fecha_inicio, fecha_fin, suspende_clases FROM calendario_institucional ORDER BY fecha_inicio ASC")
             eventos = cursor.fetchall()
             # Convertir fechas a string si es necesario
             for ev in eventos:
@@ -1210,15 +1251,13 @@ def obtener_examenes_calendario(carrera: str):
 
 
 @app.get("/api/examenes-hoy")
-def examenes_hoy(fecha: str):
-    """Retorna todos los exámenes programados para una fecha específica (ej: '09 de julio')"""
+def examenes_hoy():
+    """Retorna todos los exámenes programados"""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Usamos LIKE porque la fecha en la DB puede tener espacios extra
             cursor.execute(
-                "SELECT carrera, materia, semestre, dia, fecha FROM examenes_calendario WHERE fecha LIKE %s ORDER BY carrera, semestre",
-                (f"%{fecha}%",)
+                "SELECT DISTINCT carrera, materia, periodo, semestre, dia, fecha FROM examenes_calendario ORDER BY carrera, semestre"
             )
             datos = cursor.fetchall()
         return datos
@@ -1254,6 +1293,95 @@ def ver_calendario(tipo: str, ciclo_escolar: str = "", carrera: str = ""):
                 media_type="application/pdf",
                 headers={"Content-Disposition": f'inline; filename="{row["archivo_nombre"]}"'}
             )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.post("/api/calendario-institucional/reseed")
+def reseed_calendario():
+    """Limpia el calendario y reinserta los datos del seed limpio."""
+    try:
+        force_reseed_calendario()
+        return {"status": "success", "message": "Calendario reiniciado con datos limpios del seed."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── CRUD de Eventos del Calendario ──
+
+@app.post("/api/calendario-institucional/evento")
+def crear_evento_calendario(evento: dict):
+    """Crea un nuevo evento en el calendario institucional."""
+    required = ['plan', 'ciclo', 'periodo', 'tipo_evento', 'descripcion', 'fecha_inicio', 'fecha_fin']
+    for field in required:
+        if field not in evento:
+            raise HTTPException(status_code=400, detail=f"Campo requerido: {field}")
+    
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO calendario_institucional (plan, ciclo, periodo, tipo_evento, descripcion, fecha_inicio, fecha_fin, suspende_clases)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                evento['plan'], evento['ciclo'], int(evento['periodo']),
+                evento['tipo_evento'], evento['descripcion'],
+                evento['fecha_inicio'], evento['fecha_fin'],
+                1 if evento.get('suspende_clases', False) else 0
+            ))
+        connection.commit()
+        return {"status": "success", "message": "Evento creado exitosamente."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.put("/api/calendario-institucional/evento/{evento_id}")
+def actualizar_evento_calendario(evento_id: int, evento: dict):
+    """Actualiza un evento existente."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                UPDATE calendario_institucional
+                SET plan=%s, ciclo=%s, periodo=%s, tipo_evento=%s, descripcion=%s,
+                    fecha_inicio=%s, fecha_fin=%s, suspende_clases=%s
+                WHERE id=%s
+            """, (
+                evento.get('plan'), evento.get('ciclo'), int(evento.get('periodo', 1)),
+                evento.get('tipo_evento'), evento.get('descripcion'),
+                evento.get('fecha_inicio'), evento.get('fecha_fin'),
+                1 if evento.get('suspende_clases', False) else 0,
+                evento_id
+            ))
+        connection.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Evento no encontrado.")
+        return {"status": "success", "message": "Evento actualizado exitosamente."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.delete("/api/calendario-institucional/evento/{evento_id}")
+def eliminar_evento_calendario(evento_id: int):
+    """Elimina un evento del calendario."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM calendario_institucional WHERE id=%s", (evento_id,))
+        connection.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Evento no encontrado.")
+        return {"status": "success", "message": "Evento eliminado exitosamente."}
     except HTTPException:
         raise
     except Exception as e:
@@ -1335,14 +1463,28 @@ def estado_academico(plan: str = "semestral", fecha: str = None):
             hay_clases = True
             estado = 'clases'
             descripcion = 'Día de clases regular'
+
+            # Las clases regulares finalizan cuando inician los exámenes ordinarios
+            if en_periodo and periodo_info:
+                cursor.execute("""
+                    SELECT fecha_inicio FROM calendario_institucional
+                    WHERE plan = %s AND ciclo = %s AND periodo = %s AND tipo_evento = 'examen_ordinario'
+                    ORDER BY fecha_inicio ASC LIMIT 1
+                """, (plan, periodo_info['ciclo'], periodo_info['periodo']))
+                ord_inicio = cursor.fetchone()
+                if ord_inicio and today >= ord_inicio['fecha_inicio']:
+                    hay_clases = False
+                    estado = 'receso'
+                    descripcion = 'Periodo de Evaluación Final'
+
             for ev in eventos_hoy:
                 if ev['suspende_clases']:
                     hay_clases = False
                     estado = ev['tipo_evento']
                     descripcion = ev['descripcion']
                     break
-                # Si hay exámenes, informar pero no suspender
-                if 'examen' in ev['tipo_evento']:
+                # Si hay eventos como exámenes, inscripciones, entregas, etc. actualizamos estado pero respetamos la suspensión de clases final
+                if 'examen' in ev['tipo_evento'] or ev['tipo_evento'] in ['inscripcion', 'entrega', 'evaluacion']:
                     estado = ev['tipo_evento']
                     descripcion = ev['descripcion']
 

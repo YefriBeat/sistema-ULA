@@ -116,7 +116,10 @@ const groupConsecutiveClasses = (clases) => {
           actual.estadoTiempo = siguiente.estadoTiempo;
         }
         actual._ids.push(String(siguiente.id));
-        if (siguiente.tieneExamenHoy) actual.tieneExamenHoy = true;
+        if (siguiente.tieneExamenHoy) {
+          actual.tieneExamenHoy = true;
+          if (!actual.nombreExamen && siguiente.nombreExamen) actual.nombreExamen = siguiente.nombreExamen;
+        }
       } else {
         resultado.push(actual);
         actual = { ...siguiente, _ids: [String(siguiente.id)] };
@@ -128,6 +131,51 @@ const groupConsecutiveClasses = (clases) => {
     if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex ?? 99) - (b.diaClaseIndex ?? 99);
     return (a.inicio ?? 0) - (b.inicio ?? 0);
   });
+};
+
+const MESES_REGEX_ARRAY = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'].map(m => new RegExp(`\\b${m}\\b`));
+
+// Función altamente optimizada para determinar si un examen es HOY basado en strings
+const isExamToday = (ex, day, month, monthShort, dayRegex) => {
+  if (!ex.fecha) return false;
+  
+  const fechaStr = String(ex.fecha).toLowerCase();
+  const periodoStr = String(ex.periodo || '').toLowerCase();
+  const diaStr = String(ex.dia || '').toLowerCase();
+  
+  let hasDay = false;
+  const match = fechaStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
+  if (match) {
+     const start = parseInt(match[1], 10);
+     const end = parseInt(match[2], 10);
+     if (day >= start && day <= end) hasDay = true;
+  }
+  if (!hasDay) {
+     hasDay = dayRegex.test(fechaStr) || dayRegex.test(diaStr);
+  }
+  
+  const containsAnyMonth = MESES_REGEX_ARRAY.some(regex => regex.test(fechaStr) || regex.test(diaStr));
+  const hasMonth = fechaStr.includes(month) || fechaStr.includes(monthShort) || diaStr.includes(month) || diaStr.includes(monthShort);
+  
+  if (containsAnyMonth) {
+    return hasDay && hasMonth;
+  } else {
+    const hasPeriodMonth = periodoStr.includes(month) || periodoStr.includes(monthShort);
+    if (hasPeriodMonth) return hasDay;
+    return hasDay; // fallback
+  }
+};
+
+// Función para limpiar y estandarizar nombres de exámenes a formato corto (ej. "SEGUNDO EXAMEN PARCIAL" -> "Parcial 2")
+const formatearNombreExamen = (nombre) => {
+  if (!nombre) return 'Examen';
+  const str = String(nombre).toLowerCase();
+  if (str.includes('primer') || str.includes('1er')) return 'Parcial 1';
+  if (str.includes('segundo') || str.includes('2do')) return 'Parcial 2';
+  if (str.includes('extraordinario')) return 'Extraordinarios';
+  if (str.includes('ordinario')) return 'Ordinarios';
+  if (str.includes('parcial')) return 'Parcial';
+  return nombre.charAt(0).toUpperCase() + nombre.slice(1).toLowerCase();
 };
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -198,7 +246,7 @@ export default function VisualBd() {
         const [resSem, resCuat, resExamenes] = await Promise.all([
           fetch(`/api/estado-academico?plan=semestral&fecha=${hoyStr}`),
           fetch(`/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`),
-          fetch(`/api/examenes-hoy?fecha=${encodeURIComponent(fechaStrFormat)}`)
+          fetch(`/api/examenes-hoy`)
         ]);
 
         if (resSem.ok && resCuat.ok) {
@@ -244,6 +292,13 @@ export default function VisualBd() {
     const diaActualIndex = ahora.getDay();
     const minutosActuales = (ahora.getHours() * 60) + ahora.getMinutes();
     
+    // Pre-calcular valores y pre-filtrar exámenes para evitar congelamiento de la app
+    const dayNum = ahora.getDate();
+    const monthStr = ahora.toLocaleString('es-ES', { month: 'long' }).toLowerCase();
+    const monthShortStr = ahora.toLocaleString('es-ES', { month: 'short' }).toLowerCase();
+    const dayRegex = new RegExp(`\\b0?${dayNum}\\b`);
+    const examenesHoyValidos = examenesHoy.filter(ex => isExamToday(ex, dayNum, monthStr, monthShortStr, dayRegex));
+    
     return asignaturas.map(clase => {
       const { dia, inicio, fin, textoHora } = parsearHorario(clase.horario);
       const diaClaseIndex = dia ? diasSemanaMap[dia] : undefined;
@@ -251,8 +306,31 @@ export default function VisualBd() {
       const isCuatri = (clase.cuatrimestre && clase.cuatrimestre !== '');
       const planStr = isCuatri ? 'cuatrimestral' : 'semestral';
       const academico = estadoAcademico[planStr];
-      const hayClasesPlan = academico?.hay_clases !== false;
-      const estadoRazon = academico?.estado || 'receso';
+      const esPeriodoFinales = academico?.estado?.includes('ordinario') || academico?.estado?.includes('extraordinario');
+      
+      // En periodo de ordinarios/extraordinarios NO hay clases regulares, solo aplican los exámenes
+      const hayClasesPlan = (academico?.hay_clases !== false) && !esPeriodoFinales;
+      const estadoRazon = esPeriodoFinales ? 'Periodo de Evaluación Final' : (academico?.descripcion || 'Receso/Vacaciones');
+
+      // Detectar si la clase tiene examen programado para hoy
+      const norm = (s) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      const asigNorm = norm(clase.asignatura);
+      let nombreExamen = null;
+      let tieneExamenHoy = false;
+      
+      if (diaClaseIndex === diaActualIndex) {
+        tieneExamenHoy = examenesHoyValidos.some(ex => {
+          let matReal = ex.materia;
+          try { matReal = decodeURIComponent(escape(ex.materia)); } catch (e) {}
+          const matNorm = norm(matReal);
+          if (!matNorm || matNorm.length < 3) return false;
+          if (asigNorm.includes(matNorm) || matNorm.includes(asigNorm)) {
+            nombreExamen = ex.periodo || 'EXAMEN';
+            return true;
+          }
+          return false;
+        });
+      }
 
       let estadoTiempo = 'programada';
       if (diaClaseIndex === undefined || inicio === null || fin === null) {
@@ -263,35 +341,26 @@ export default function VisualBd() {
         estadoTiempo = 'programada';
       } else {
         // Es una clase del día de HOY
-        if (!hayClasesPlan) {
-          estadoTiempo = 'suspendida';
-        } else if (minutosActuales > fin) {
-          estadoTiempo = 'finalizada';
+        if (minutosActuales > fin) {
+          estadoTiempo = !tieneExamenHoy && !hayClasesPlan ? 'suspendida' : 'finalizada';
         } else if (minutosActuales >= inicio && minutosActuales <= fin) {
-          estadoTiempo = 'en_curso';
+          if (tieneExamenHoy) {
+            estadoTiempo = 'examen_ordinario';
+          } else if (hayClasesPlan) {
+            estadoTiempo = 'en_curso';
+          } else {
+            estadoTiempo = 'suspendida';
+          }
         } else {
-          estadoTiempo = 'proxima';
+          estadoTiempo = !tieneExamenHoy && !hayClasesPlan ? 'suspendida' : 'proxima';
         }
-      }
-
-      // Detectar si la clase tiene examen programado para hoy (tiene precedencia si hay clases)
-      const norm = (s) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-      const asigNorm = norm(clase.asignatura);
-      const tieneExamenHoy = examenesHoy.some(ex => {
-        let matReal = ex.materia;
-        try { matReal = decodeURIComponent(escape(ex.materia)); } catch (e) {}
-        const matNorm = norm(matReal);
-        return asigNorm.includes(matNorm) || matNorm.includes(asigNorm);
-      });
-
-      if (tieneExamenHoy && estadoTiempo === 'en_curso' && hayClasesPlan) {
-        estadoTiempo = 'examen_ordinario';
       }
 
       return { 
         ...clase, 
         estadoTiempo, 
         estadoRazon: estadoTiempo === 'suspendida' ? estadoRazon : undefined,
+        nombreExamen,
         textoHora, 
         diaClaseIndex, 
         inicio, 
@@ -378,6 +447,8 @@ export default function VisualBd() {
     if (filtroEstado !== 'todas') {
       const diaHoy = ahora.getDay();
       resultado = resultado.filter(item => {
+        // Si buscamos 'en_curso', también debemos incluir los 'examen_ordinario' porque ocurren ahora mismo
+        if (filtroEstado === 'en_curso' && item.estadoTiempo === 'examen_ordinario') return true;
         if (item.estadoTiempo !== filtroEstado) return false;
         // "Finalizadas" → solo clases del día actual; las de días anteriores van a BD Total
         if (filtroEstado === 'finalizada') return item.diaClaseIndex === diaHoy;
@@ -406,13 +477,13 @@ export default function VisualBd() {
 
   const stats = useMemo(() => {
     const diaHoy      = ahora.getDay();
-    const enCurso     = todosAgrupados.filter(c => c.estadoTiempo === 'en_curso').length;
+    const enCurso     = todosAgrupados.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').length;
     const proximas    = todosAgrupados.filter(c => c.estadoTiempo === 'proxima').length;
     // Solo clases del día actual que ya concluyeron (no días anteriores de la semana)
     const finalizadas = todosAgrupados.filter(c => c.estadoTiempo === 'finalizada' && c.diaClaseIndex === diaHoy).length;
     const programadas = todosAgrupados.filter(c => c.estadoTiempo === 'programada').length;
     const total       = todosAgrupados.length;
-    const docentesEnCurso = new Set(todosAgrupados.filter(c => c.estadoTiempo === 'en_curso').map(c => c.docente)).size;
+    const docentesEnCurso = new Set(todosAgrupados.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').map(c => c.docente)).size;
     const docentesTotales = new Set(todosAgrupados.map(c => c.docente)).size;
     return { enCurso, proximas, finalizadas, programadas, total, docentesEnCurso, docentesTotales };
   }, [todosAgrupados, ahora]);
@@ -425,12 +496,12 @@ export default function VisualBd() {
     const total = aulasNormales.length;
     const aulasEnCursoSet = new Set(
       todosAgrupados
-        .filter(c => c.estadoTiempo === 'en_curso' && c.aula_asignada && c.aula_asignada !== 'Por asignar' && !esLaboratorio(c.aula_asignada))
+        .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && c.aula_asignada && c.aula_asignada !== 'Por asignar' && !esLaboratorio(c.aula_asignada))
         .map(c => c.aula_asignada)
     );
     const labsEnCursoSet = new Set(
       todosAgrupados
-        .filter(c => c.estadoTiempo === 'en_curso' && c.aula_asignada && c.aula_asignada !== 'Por asignar' && esLaboratorio(c.aula_asignada))
+        .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && c.aula_asignada && c.aula_asignada !== 'Por asignar' && esLaboratorio(c.aula_asignada))
         .map(c => c.aula_asignada)
     );
 
@@ -827,7 +898,7 @@ export default function VisualBd() {
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <span className="text-xs font-black text-[#44464e] uppercase tracking-wider capitalize">{item.diaOriginal || '—'}</span>
                     {item.es_suplencia ? (
-                      <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap flex-shrink-0 ${
+                      <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 ${
                         item.estadoTiempo === 'en_curso'   ? 'bg-blue-50 text-blue-700 border-blue-200' :
                         item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-gray-200' :
                         'bg-amber-50 text-amber-700 border-amber-200'
@@ -836,8 +907,8 @@ export default function VisualBd() {
                         {item.estadoTiempo === 'en_curso' ? 'Suplencia' : item.estadoTiempo === 'finalizada' ? 'Finalizada' : 'Próxima'}
                       </span>
                     ) : (
-                      <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap flex-shrink-0 ${
-                        item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-700 border-red-200' :
+                      <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 ${
+                        item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-600 border-red-200/60 shadow-sm' :
                         item.estadoTiempo === 'en_curso'         ? 'bg-blue-50 text-blue-700 border-blue-200' :
                         item.estadoTiempo === 'finalizada'       ? 'bg-gray-50 text-gray-600 border-blue-200' :
                         item.estadoTiempo === 'suspendida'       ? 'bg-red-50 text-red-600 border-red-200 opacity-80' :
@@ -852,8 +923,13 @@ export default function VisualBd() {
                            item.estadoTiempo === 'proxima'          ? 'schedule' : 'event'}
                         </span>
                         {item.estadoTiempo === 'programada' ? 'Programada' : 
-                         item.estadoTiempo === 'suspendida' ? `Sin Clases (${item.estadoRazon || 'Asueto'})` : 
-                         item.estadoTiempo.replace('_', ' ')}
+                         item.estadoTiempo === 'suspendida' ? `En Pausa (${item.estadoRazon || 'Asueto'})` : 
+                         item.estadoTiempo === 'examen_ordinario' && item.nombreExamen ? (
+                           <span className="truncate max-w-[140px]" title={item.nombreExamen}>
+                             {formatearNombreExamen(item.nombreExamen)}
+                           </span>
+                         ) :
+                         <span className="capitalize">{item.estadoTiempo.replace('_', ' ')}</span>}
                       </span>
                     )}
                   </div>
@@ -865,12 +941,7 @@ export default function VisualBd() {
                       Cubre a {item.docente_ausente}
                     </span>
                   )}
-                  {item.tieneExamenHoy && (
-                    <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider mt-1.5 border border-red-200">
-                      <span className="material-symbols-outlined text-[12px]">edit_document</span>
-                      EXAMEN HOY
-                    </span>
-                  )}
+
                   {/* Licenciatura */}
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     <span className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase border break-words ${obtenerColorLicenciatura(item.licenciatura)}`}>
@@ -881,7 +952,12 @@ export default function VisualBd() {
                     {item.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Gpo: {item.grupo}</span>}
                   </div>
                   {/* Asignatura */}
-                  <p className="text-xs font-medium text-[#44464e] mt-1 leading-snug">{item.asignatura}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs font-medium text-[#44464e] leading-snug">{item.asignatura}</p>
+                    {item.tieneExamenHoy && (
+                      <div title="Examen programado para hoy" className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)] animate-pulse ml-1 flex-shrink-0"></div>
+                    )}
+                  </div>
                   {/* Horario + Aula */}
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#f0f0f4]">
                     <span className="font-mono text-xs font-bold text-[#1c355e]">{item.textoHora}</span>
@@ -967,14 +1043,13 @@ export default function VisualBd() {
                         {item.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Gpo: {item.grupo}</span>}
                       </div>
                     </td>
-                    <td className="py-3.5 px-5 font-medium text-[#44464e] break-words text-xs">
-                      {item.asignatura}
-                      {item.tieneExamenHoy && (
-                        <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider mt-1.5 border border-red-200 block w-max">
-                          <span className="material-symbols-outlined text-[10px]">edit_document</span>
-                          EXAMEN HOY
-                        </span>
-                      )}
+                    <td className="py-3.5 px-5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-[#44464e] break-words text-xs">{item.asignatura}</span>
+                        {item.tieneExamenHoy && (
+                          <div title="Examen programado para hoy" className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)] animate-pulse ml-1 flex-shrink-0"></div>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3.5 px-5 font-mono text-[#1c355e] font-bold text-xs whitespace-nowrap">{item.textoHora}</td>
                     <td className="py-3.5 px-5">
@@ -992,7 +1067,7 @@ export default function VisualBd() {
                     </td>
                     <td className="py-3.5 px-5">
                       {item.es_suplencia ? (
-                        <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap ${
+                        <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 ${
                           item.estadoTiempo === 'en_curso'   ? 'bg-blue-50 text-blue-700 border-blue-200' :
                           item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-gray-200' :
                           'bg-amber-50 text-amber-700 border-amber-200'
@@ -1001,8 +1076,8 @@ export default function VisualBd() {
                           {item.estadoTiempo === 'en_curso' ? 'Suplencia' : item.estadoTiempo === 'finalizada' ? 'Finalizada' : 'Próxima'}
                         </span>
                       ) : (
-                        <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border whitespace-nowrap ${
-                          item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-700 border-red-200' :
+                        <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 ${
+                          item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-600 border-red-200/60 shadow-sm' :
                           item.estadoTiempo === 'en_curso'         ? 'bg-blue-50 text-blue-700 border-blue-200' :
                           item.estadoTiempo === 'finalizada'       ? 'bg-gray-50 text-gray-600 border-gray-200' :
                           item.estadoTiempo === 'suspendida'       ? 'bg-red-50 text-red-600 border-red-200 opacity-80' :
@@ -1017,8 +1092,13 @@ export default function VisualBd() {
                              item.estadoTiempo === 'proxima'          ? 'schedule' : 'event'}
                           </span>
                           {item.estadoTiempo === 'programada' ? 'Programada' : 
-                           item.estadoTiempo === 'suspendida' ? `Sin Clases (${item.estadoRazon || 'Asueto'})` : 
-                           item.estadoTiempo.replace('_', ' ')}
+                           item.estadoTiempo === 'suspendida' ? `En Pausa (${item.estadoRazon || 'Asueto'})` : 
+                           item.estadoTiempo === 'examen_ordinario' && item.nombreExamen ? (
+                             <span className="truncate max-w-[140px]" title={item.nombreExamen}>
+                               {formatearNombreExamen(item.nombreExamen)}
+                             </span>
+                           ) :
+                           <span className="capitalize">{item.estadoTiempo.replace('_', ' ')}</span>}
                         </span>
                       )}
                     </td>

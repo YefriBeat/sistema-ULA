@@ -128,6 +128,82 @@ export default function Calendarios() {
     }
   };
 
+  // ── NUEVO: CRUD Modal Eventos ──
+  const [modalAbierto, setModalAbierto] = useState(false);
+  const [eventoEditar, setEventoEditar] = useState(null);
+  const [formData, setFormData] = useState({
+    plan: 'cuatrimestral', ciclo: '', periodo: 1, tipo_evento: 'inicio_periodo',
+    descripcion: '', fecha_inicio: '', fecha_fin: '', suspende_clases: 0
+  });
+
+  const abrirModalNuevo = () => {
+    setEventoEditar(null);
+    setFormData({
+      plan: 'cuatrimestral', ciclo: cicloSeleccionado, periodo: 1, tipo_evento: 'inicio_periodo',
+      descripcion: '', fecha_inicio: fechaActualStr, fecha_fin: fechaActualStr, suspende_clases: 0
+    });
+    setModalAbierto(true);
+  };
+
+  const abrirModalEditar = (ev) => {
+    setEventoEditar(ev);
+    setFormData({
+      plan: ev.plan, ciclo: ev.ciclo, periodo: ev.periodo, tipo_evento: ev.tipo_evento,
+      descripcion: ev.descripcion, fecha_inicio: ev.fecha_inicio, fecha_fin: ev.fecha_fin, suspende_clases: ev.suspende_clases
+    });
+    setModalAbierto(true);
+  };
+
+  const guardarEvento = async (e) => {
+    e.preventDefault();
+    try {
+      const url = eventoEditar 
+        ? `${API_URL}/api/calendario-institucional/evento/${eventoEditar.id}`
+        : `${API_URL}/api/calendario-institucional/evento`;
+      
+      const res = await fetch(url, {
+        method: eventoEditar ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      
+      if (res.ok) {
+        Swal.fire('¡Éxito!', 'Evento guardado correctamente', 'success');
+        setModalAbierto(false);
+        fetchCalendarios();
+      } else {
+        const error = await res.json();
+        Swal.fire('Error', error.detail || 'No se pudo guardar', 'error');
+      }
+    } catch (err) {
+      Swal.fire('Error', 'Error de conexión', 'error');
+    }
+  };
+
+  const eliminarEvento = async (id) => {
+    const result = await Swal.fire({
+      title: '¿Eliminar evento?',
+      text: "Esta acción no se puede deshacer.",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonText: 'Cancelar'
+    });
+    if (result.isConfirmed) {
+      try {
+        const res = await fetch(`${API_URL}/api/calendario-institucional/evento/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          Swal.fire('Eliminado', 'Evento eliminado', 'success');
+          fetchCalendarios();
+        } else {
+          Swal.fire('Error', 'No se pudo eliminar', 'error');
+        }
+      } catch (err) {
+        Swal.fire('Error', 'Error de conexión', 'error');
+      }
+    }
+  };
+
   const fetchExamenesCarrera = async (carrera) => {
     try {
       const res = await fetch(`${API_URL}/api/examenes-calendario/${carrera}`);
@@ -465,12 +541,21 @@ export default function Calendarios() {
           {/* Columna derecha: Visualización de eventos sincronizados */}
           <div className="w-full lg:w-2/3">
             <div className="bg-white rounded-2xl shadow-sm border border-[#c5c6cf]/30 overflow-hidden">
-              <div className="bg-[#1c355e] p-5">
-                <h3 className="font-black text-white text-lg flex items-center gap-2">
-                  <span className="material-symbols-outlined">event_available</span>
-                  Memoria del Sistema ({cicloSeleccionado})
-                </h3>
-                <p className="text-white/80 text-sm mt-1">Fechas extraídas que el sistema está utilizando actualmente.</p>
+              <div className="bg-[#1c355e] p-5 flex justify-between items-center">
+                <div>
+                  <h3 className="font-black text-white text-lg flex items-center gap-2">
+                    <span className="material-symbols-outlined">event_available</span>
+                    Memoria del Sistema ({cicloSeleccionado})
+                  </h3>
+                  <p className="text-white/80 text-sm mt-1">Fechas extraídas que el sistema está utilizando actualmente.</p>
+                </div>
+                <button 
+                  onClick={abrirModalNuevo}
+                  className="bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all"
+                >
+                  <span className="material-symbols-outlined text-[18px]">add</span>
+                  Nuevo Evento
+                </button>
               </div>
               <div className="p-0 max-h-[500px] overflow-y-auto custom-scrollbar">
                 {eventosSincronizados.filter(e => e.ciclo === cicloSeleccionado).length === 0 ? (
@@ -487,6 +572,7 @@ export default function Calendarios() {
                         <th className="px-4 py-3 font-semibold text-slate-700">Periodo</th>
                         <th className="px-4 py-3 font-semibold text-slate-700">Evento</th>
                         <th className="px-4 py-3 font-semibold text-slate-700">Fechas</th>
+                        <th className="px-4 py-3 font-semibold text-slate-700 text-right">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -569,6 +655,24 @@ export default function Calendarios() {
                                   <span className={`font-medium ${dateClass}`}>
                                     {ev.fecha_inicio === ev.fecha_fin ? ev.fecha_inicio : `${ev.fecha_inicio} al ${ev.fecha_fin}`}
                                   </span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex justify-end gap-2">
+                                  <button 
+                                    onClick={() => abrirModalEditar(ev)}
+                                    className="p-1.5 rounded-lg bg-indigo-50 text-indigo-500 hover:bg-indigo-500 hover:text-white transition-colors"
+                                    title="Editar"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                                  </button>
+                                  <button 
+                                    onClick={() => eliminarEvento(ev.id)}
+                                    className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors"
+                                    title="Eliminar"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -732,6 +836,87 @@ export default function Calendarios() {
           </div>
         )}
       </div>
+
+      {/* Modal CRUD Evento */}
+      {modalAbierto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-100">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-[#1c355e] flex items-center gap-2">
+                <span className="material-symbols-outlined text-[#fdbb11]">event</span>
+                {eventoEditar ? 'Editar Evento' : 'Nuevo Evento'}
+              </h2>
+              <button onClick={() => setModalAbierto(false)} className="text-slate-400 hover:bg-slate-200 p-1.5 rounded-xl transition-colors">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            
+            <form onSubmit={guardarEvento} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Plan</label>
+                  <select value={formData.plan} onChange={e => setFormData({...formData, plan: e.target.value})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium">
+                    <option value="cuatrimestral">Cuatrimestral</option>
+                    <option value="semestral">Semestral</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Periodo</label>
+                  <input type="number" min="1" max="6" value={formData.periodo} onChange={e => setFormData({...formData, periodo: parseInt(e.target.value)})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Tipo de Evento</label>
+                <select value={formData.tipo_evento} onChange={e => setFormData({...formData, tipo_evento: e.target.value})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium">
+                  <option value="inicio_periodo">Inicio de Periodo / Ciclo</option>
+                  <option value="fin_periodo">Fin de Periodo / Ciclo</option>
+                  <option value="examen_parcial">Examen Parcial</option>
+                  <option value="examen_ordinario">Examen Ordinario</option>
+                  <option value="examen_extraordinario">Examen Extraordinario</option>
+                  <option value="inscripcion">Inscripción</option>
+                  <option value="evaluacion">Evaluación Docente</option>
+                  <option value="inhabil">Día Inhábil</option>
+                  <option value="vacaciones">Vacaciones</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Descripción</label>
+                <input type="text" required value={formData.descripcion} onChange={e => setFormData({...formData, descripcion: e.target.value})} placeholder="Ej: Primer examen parcial" className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Fecha Inicio</label>
+                  <input type="date" required value={formData.fecha_inicio} onChange={e => setFormData({...formData, fecha_inicio: e.target.value})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Fecha Fin</label>
+                  <input type="date" required value={formData.fecha_fin} onChange={e => setFormData({...formData, fecha_fin: e.target.value})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium" />
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center gap-3">
+                <input type="checkbox" id="suspende" checked={formData.suspende_clases === 1} onChange={e => setFormData({...formData, suspende_clases: e.target.checked ? 1 : 0})} className="w-5 h-5 accent-indigo-500 cursor-pointer" />
+                <label htmlFor="suspende" className="text-sm font-bold text-slate-700 cursor-pointer">
+                  ¿Suspende clases regulares?
+                </label>
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button type="button" onClick={() => setModalAbierto(false)} className="flex-1 p-3 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition-colors">
+                  Cancelar
+                </button>
+                <button type="submit" className="flex-1 p-3 rounded-xl bg-indigo-600 font-bold text-white hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200">
+                  Guardar Evento
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

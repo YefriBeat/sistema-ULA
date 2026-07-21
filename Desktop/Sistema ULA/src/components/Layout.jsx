@@ -109,39 +109,90 @@ export default function Layout() {
     // 2. Cargar notificaciones de exámenes para el día de hoy
     const cargarExamenesHoy = async () => {
       try {
-        const formatter = new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'long' });
-        // Ejemplo de formato: "09 de julio"
-        const fechaHoy = formatter.format(new Date()); 
+        const dayNum = ahora.getDate();
+        const monthStr = ahora.toLocaleString('es-ES', { month: 'long' }).toLowerCase();
+        const monthShortStr = ahora.toLocaleString('es-ES', { month: 'short' }).toLowerCase();
+        const dayRegex = new RegExp(`\\b0?${dayNum}\\b`);
         
+        const isExamToday = (ex) => {
+          if (!ex.fecha) return false;
+          
+          const fechaStr = String(ex.fecha).toLowerCase();
+          const periodoStr = String(ex.periodo || '').toLowerCase();
+          const diaStr = String(ex.dia || '').toLowerCase();
+          
+          let hasDay = false;
+          const match = fechaStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
+          if (match) {
+             const start = parseInt(match[1], 10);
+             const end = parseInt(match[2], 10);
+             if (dayNum >= start && dayNum <= end) hasDay = true;
+          }
+          if (!hasDay) {
+             hasDay = dayRegex.test(fechaStr) || dayRegex.test(diaStr);
+          }
+          
+          const MESES_REGEX = [/\benero\b/, /\bfebrero\b/, /\bmarzo\b/, /\babril\b/, /\bmayo\b/, /\bjunio\b/, /\bjulio\b/, /\bagosto\b/, /\bseptiembre\b/, /\boctubre\b/, /\bnoviembre\b/, /\bdiciembre\b/];
+          const containsAnyMonth = MESES_REGEX.some(regex => regex.test(fechaStr) || regex.test(diaStr));
+          const hasMonth = fechaStr.includes(monthStr) || fechaStr.includes(monthShortStr) || diaStr.includes(monthStr) || diaStr.includes(monthShortStr);
+          
+          if (containsAnyMonth) {
+            return hasDay && hasMonth;
+          } else {
+            const hasPeriodMonth = periodoStr.includes(monthStr) || periodoStr.includes(monthShortStr);
+            if (hasPeriodMonth) return hasDay;
+            return hasDay; // fallback
+          }
+        };
+
         const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
-        const res = await fetch(`${API_URL}/api/examenes-hoy?fecha=${encodeURIComponent(fechaHoy)}`);
+        const res = await fetch(`${API_URL}/api/examenes-hoy`);
         const data = await res.json();
         
         if (Array.isArray(data) && data.length > 0) {
-          const nuevasNotis = data.map((ex, i) => ({
-            id: `exam-${i}`,
-            titulo: `Examen: ${ex.materia}`,
-            subtitulo: `${ex.carrera} - ${ex.semestre}`,
-            tipo: 'examen',
-            fecha: fechaHoy
-          }));
-          setNotificaciones(nuevasNotis);
+          const examenesDeHoy = data.filter(ex => isExamToday(ex));
+          
+          if (examenesDeHoy.length > 0) {
+            let nuevasNotis = examenesDeHoy.map((ex, i) => ({
+              id: `exam-${i}`,
+              titulo: `Examen: ${ex.materia}`,
+              subtitulo: `${ex.carrera} - ${ex.semestre}`,
+              tipo: 'examen',
+              fecha: fechaActualStr
+            }));
 
-          // Mostrar burbuja de alerta si hay exámenes y no se ha mostrado en esta sesión
-          const hasSeenExamsAlert = sessionStorage.getItem('examsAlertShown');
-          if (!hasSeenExamsAlert) {
-            setTimeout(() => {
-              Swal.fire({
-                toast: true,
-                position: 'top-end',
-                showConfirmButton: false,
-                timer: 5000,
-                timerProgressBar: true,
-                icon: 'info',
-                title: `Hoy hay ${data.length} exámenes programados`,
-              });
-              sessionStorage.setItem('examsAlertShown', 'true');
-            }, 1500); // Dar 1.5 segundos de espacio después del mensaje de bienvenida
+            // Deduplicar notificaciones por título y subtítulo
+            const notisUnicas = [];
+            const seen = new Set();
+            for (const noti of nuevasNotis) {
+              const hash = `${noti.titulo}|${noti.subtitulo}`;
+              if (!seen.has(hash)) {
+                seen.add(hash);
+                notisUnicas.push(noti);
+              }
+            }
+            
+            setNotificaciones(notisUnicas);
+
+            // Mostrar burbuja de alerta si hay exámenes (con key por fecha para no spammear)
+            const alertKey = `examsAlertShown_${fechaActualStr}`;
+            const hasSeenExamsAlert = sessionStorage.getItem(alertKey);
+            if (!hasSeenExamsAlert) {
+              setTimeout(() => {
+                Swal.fire({
+                  toast: true,
+                  position: 'top-end',
+                  showConfirmButton: false,
+                  timer: 5000,
+                  timerProgressBar: true,
+                  icon: 'info',
+                  title: `Hoy hay ${notisUnicas.length} exámenes programados`,
+                });
+                sessionStorage.setItem(alertKey, 'true');
+              }, 1500); 
+            }
+          } else {
+            setNotificaciones([]);
           }
         } else {
           setNotificaciones([]);
