@@ -95,6 +95,13 @@ export default function GestionAulas() {
     return true;
   };
 
+  // Mantenimiento programado = flag true PERO inicio es futuro
+  const tieneMantProgramado = (aula) => {
+    if (!aula.en_mantenimiento) return false;
+    if (!aula.inicio_mantenimiento) return false;
+    return new Date(aula.inicio_mantenimiento) > new Date();
+  };
+
   const handleEliminar = (id) => {
     setConfirmacion({
       mensaje: "¿Estás seguro de que deseas eliminar esta aula?",
@@ -519,22 +526,25 @@ export default function GestionAulas() {
         ) : (
           aulasFiltradas.map((aula) => {
             const enMant        = estaEnMantenimiento(aula);
+            const mantProg      = tieneMantProgramado(aula);
             const claseActiva   = !enMant ? obtenerClaseEnCurso(aula.nombre) : null;
             const estadoHorario = enMant ? 'mantenimiento' : obtenerEstadoAula(aula.nombre);
 
-            // Prioridad visual: mantenimiento > en_clase > estado por horario
+            // Prioridad visual: mantenimiento > mant_programado > en_clase > estado por horario
             const BADGE = {
-              mantenimiento: { cls: 'bg-orange-100 text-orange-600',  icon: 'construction', label: 'Mantenimiento' },
-              en_clase:      { cls: 'bg-blue-100 text-blue-700',      icon: 'play_circle',  label: 'En Curso'      },
-              disponible:    { cls: 'bg-[#1c9c72]/10 text-[#1c9c72]', icon: 'check_circle', label: 'Disponible'    },
-              matutino:      { cls: 'bg-amber-100 text-amber-700',    icon: 'wb_sunny',     label: 'Ocupado: Matutino'  },
-              vespertino:    { cls: 'bg-indigo-100 text-indigo-700',  icon: 'nights_stay',  label: 'Ocupado: Vespertino' },
-              bloqueada:     { cls: 'bg-purple-100 text-purple-700',  icon: 'domain',       label: 'Ocupado: Ambos'     },
+              mantenimiento:   { cls: 'bg-orange-100 text-orange-600',  icon: 'construction',    label: 'Mantenimiento' },
+              mant_programado: { cls: 'bg-yellow-100 text-yellow-700',  icon: 'event_upcoming',  label: 'Mant. Programado' },
+              en_clase:        { cls: 'bg-blue-100 text-blue-700',      icon: 'play_circle',     label: 'En Curso'      },
+              disponible:      { cls: 'bg-[#1c9c72]/10 text-[#1c9c72]', icon: 'check_circle',   label: 'Disponible'    },
+              matutino:        { cls: 'bg-amber-100 text-amber-700',    icon: 'wb_sunny',        label: 'Ocupado: Matutino'  },
+              vespertino:      { cls: 'bg-indigo-100 text-indigo-700',  icon: 'nights_stay',     label: 'Ocupado: Vespertino' },
+              bloqueada:       { cls: 'bg-purple-100 text-purple-700',  icon: 'domain',          label: 'Ocupado: Ambos'     },
             };
-            const badgeKey = enMant ? 'mantenimiento' : claseActiva ? 'en_clase' : estadoHorario;
+            const badgeKey = enMant ? 'mantenimiento' : mantProg ? 'mant_programado' : claseActiva ? 'en_clase' : estadoHorario;
             const badge    = BADGE[badgeKey] || BADGE.disponible;
 
             const borderClass = enMant        ? 'border-orange-200'
+                              : mantProg      ? 'border-yellow-300 border-dashed'
                               : claseActiva   ? 'border-blue-300'
                               : estadoHorario === 'bloqueada' ? 'border-red-200'
                               : 'border-[#c5c6cf]/30';
@@ -546,6 +556,12 @@ export default function GestionAulas() {
                     <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
                     {claseActiva && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0 shadow-sm" />}
                   </div>
+                  {mantProg && aula.inicio_mantenimiento && (
+                    <p className="text-[10px] text-yellow-700 font-semibold flex items-center gap-1 mt-0.5">
+                      <span className="material-symbols-outlined text-[12px]">schedule</span>
+                      Inicia: {new Date(aula.inicio_mantenimiento).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
                   <div className="flex flex-col items-end gap-2">
                     {/* Badge con prioridad: tiempo real > horario programado */}
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${badge.cls}`}>
