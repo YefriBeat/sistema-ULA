@@ -64,8 +64,53 @@ export default function GestionDocentes() {
     return () => clearInterval(interval);
   }, []);
 
+  const [estadoAcademico, setEstadoAcademico] = useState({ semestral: null, cuatrimestral: null });
+  const hoyStr = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}-${String(ahora.getDate()).padStart(2, '0')}`;
+
+  useEffect(() => {
+    const fetchEstado = async () => {
+      try {
+        const [resSem, resCuat] = await Promise.all([
+          fetch(`/api/estado-academico?plan=semestral&fecha=${hoyStr}`),
+          fetch(`/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`)
+        ]);
+        if (resSem.ok && resCuat.ok) {
+          setEstadoAcademico({
+            semestral: await resSem.json(),
+            cuatrimestral: await resCuat.json()
+          });
+        }
+      } catch (e) {
+        console.error("Error al cargar estado académico:", e);
+      }
+    };
+    fetchEstado();
+  }, [hoyStr]);
+
+  const hayClasesHoy = useMemo(() => {
+    const diaHoy = ahora.getDay();
+    if (diaHoy === 0) return false;
+    if (estadoAcademico.semestral?.hay_clases === false && estadoAcademico.cuatrimestral?.hay_clases === false) return false;
+    return true;
+  }, [ahora, estadoAcademico]);
+
+  const descripcionCalendario = useMemo(() => {
+    if (ahora.getDay() === 0) return 'Domingo (Sin Actividad Académica Programada)';
+    return estadoAcademico.semestral?.descripcion || estadoAcademico.cuatrimestral?.descripcion || 'Día sin clases regulares programadas';
+  }, [ahora, estadoAcademico]);
+
   // ── Motor de estado en tiempo real (recalcula cada vez que cambia ahora) ─
   const docentesConEstado = useMemo(() => {
+    if (!hayClasesHoy) {
+      return docentes.map(doc => ({
+        ...doc,
+        estado: 'sin_clases_calendario',
+        suplencia_activa: null,
+        cubriendo_suplencia: null,
+        horarios_hoy: []
+      }));
+    }
+
     const diaHoy    = ahora.getDay(); // 0=Dom,1=Lun,...,6=Sab — igual que dia_index del backend
     const minsAhora = ahora.getHours() * 60 + ahora.getMinutes();
 
@@ -119,15 +164,16 @@ export default function GestionDocentes() {
 
       return { ...doc, estado: 'disponible', suplencia_activa: null, cubriendo_suplencia: null, horarios_hoy };
     });
-  }, [docentes, ahora]);
+  }, [docentes, ahora, hayClasesHoy]);
 
   // ── Badge visual ─────────────────────────────────────────────────────────
   const getBadge = (estado) => {
     switch (estado) {
-      case 'en_clase':          return { label: 'En Clase',          cls: 'bg-red-100 text-red-600',        icon: 'cast_for_education' };
-      case 'por_entrar':        return { label: 'Por Entrar',         cls: 'bg-amber-100 text-amber-700',    icon: 'schedule' };
-      case 'suplente_asignado': return { label: 'Suplente Asignado', cls: 'bg-orange-100 text-orange-600',  icon: 'swap_horiz' };
-      default:                  return { label: 'Disponible',         cls: 'bg-[#1c9c72]/10 text-[#1c9c72]', icon: 'check_circle' };
+      case 'en_clase':               return { label: 'En Clase',               cls: 'bg-red-100 text-red-600',         icon: 'cast_for_education' };
+      case 'por_entrar':             return { label: 'Por Entrar',              cls: 'bg-amber-100 text-amber-700',     icon: 'schedule' };
+      case 'suplente_asignado':      return { label: 'Suplente Asignado',      cls: 'bg-orange-100 text-orange-600',   icon: 'swap_horiz' };
+      case 'sin_clases_calendario':  return { label: 'Sin Clases Regulares',   cls: 'bg-slate-100 text-slate-600',     icon: 'event_busy' };
+      default:                       return { label: 'Disponible',              cls: 'bg-[#1c9c72]/10 text-[#1c9c72]',  icon: 'check_circle' };
     }
   };
 
@@ -270,6 +316,17 @@ export default function GestionDocentes() {
           />
         </div>
       </div>
+
+      {/* ── BANNER CALENDARIO ACADÉMICO ──────────────────────────────────── */}
+      {!hayClasesHoy && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-amber-800 shadow-sm">
+          <span className="material-symbols-outlined text-amber-600 text-2xl flex-shrink-0">event_busy</span>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Calendario Académico Institucional</p>
+            <p className="text-sm font-semibold">{descripcionCalendario}</p>
+          </div>
+        </div>
+      )}
 
       {/* ── MODAL ASIGNAR SUPLENTE ─────────────────────────────────────────── */}
       {modalSuplente && (

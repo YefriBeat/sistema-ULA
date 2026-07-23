@@ -2596,20 +2596,42 @@ def obtener_horarios():
 
 
 @app.get("/api/clases-hoy")
-def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None):
+def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fecha: Optional[str] = None):
     """
     Clases EN CURSO ahora mismo.
-    dia  = getDay() JS (0=Dom…6=Sab). Si se omite, usa el día real del servidor.
-    mins = minutos desde medianoche.  Si se omite, usa la hora real del servidor.
+    dia   = getDay() JS (0=Dom…6=Sab). Si se omite, usa el día real del servidor.
+    mins  = minutos desde medianoche. Si se omite, usa la hora real del servidor.
+    fecha = fecha ISO (YYYY-MM-DD). Para consultar eventos del calendario institucional.
     """
     ahora = datetime.now()
     dia_hoy   = dia  if dia  is not None else (ahora.isoweekday() % 7)
     mins_ahora = mins if mins is not None else (ahora.hour * 60 + ahora.minute)
 
+    # Si es domingo, no hay clases regulares en curso
+    if dia_hoy == 0:
+        return []
+
+    if fecha:
+        try:
+            date_obj = datetime.strptime(fecha, "%Y-%m-%d").date()
+        except Exception:
+            date_obj = ahora.date()
+    else:
+        date_obj = ahora.date()
+
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Sin filtro por fecha: usamos el campo horario (día semana + hora)
+            # Verificar si hay suspensión de clases en el calendario institucional para la fecha
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM calendario_institucional
+                WHERE fecha_inicio <= %s AND fecha_fin >= %s AND suspende_clases = TRUE
+            """, (date_obj, date_obj))
+            susp = cursor.fetchone()
+            if susp and susp.get('cnt', 0) > 0:
+                return []
+
+            # Sin suspensión: obtenemos todas las clases del día/hora
             cursor.execute("""
                 SELECT h.docente, h.asignatura, h.horario, h.aula_asignada,
                        a.en_mantenimiento, a.inicio_mantenimiento, a.fin_mantenimiento, a.aula_temporal

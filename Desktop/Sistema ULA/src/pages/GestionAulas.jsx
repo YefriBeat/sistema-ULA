@@ -28,6 +28,29 @@ export default function GestionAulas() {
 
   const [formData, setFormData] = useState({ nombre: '', edificio: '', capacidad: '', equipos: [] });
 
+  const [estadoAcademico, setEstadoAcademico] = useState({ semestral: null, cuatrimestral: null });
+  const hoyStr = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}-${String(ahora.getDate()).padStart(2, '0')}`;
+
+  useEffect(() => {
+    const fetchEstado = async () => {
+      try {
+        const [resSem, resCuat] = await Promise.all([
+          fetch(`/api/estado-academico?plan=semestral&fecha=${hoyStr}`),
+          fetch(`/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`)
+        ]);
+        if (resSem.ok && resCuat.ok) {
+          setEstadoAcademico({
+            semestral: await resSem.json(),
+            cuatrimestral: await resCuat.json()
+          });
+        }
+      } catch (e) {
+        console.error("Error al cargar estado académico:", e);
+      }
+    };
+    fetchEstado();
+  }, [hoyStr]);
+
   const fetchAulas = async () => {
     try {
       const r = await fetch('/api/aulas');
@@ -44,11 +67,12 @@ export default function GestionAulas() {
   };
 
   const fetchClasesAhora = async (t) => {
-    const ref = t || new Date();
+    const ref = t || ahora;
     const dia  = ref.getDay();
     const mins = ref.getHours() * 60 + ref.getMinutes();
+    const refFechaStr = `${ref.getFullYear()}-${String(ref.getMonth() + 1).padStart(2, '0')}-${String(ref.getDate()).padStart(2, '0')}`;
     try {
-      const r = await fetch(`/api/clases-hoy?dia=${dia}&mins=${mins}`);
+      const r = await fetch(`/api/clases-hoy?dia=${dia}&mins=${mins}&fecha=${refFechaStr}`);
       if (r.ok) setClases(await r.json());
     } catch (e) { console.error("Error al cargar clases en tiempo real:", e); }
   };
@@ -57,14 +81,14 @@ export default function GestionAulas() {
   useEffect(() => {
     fetchAulas();
     fetchOcupacion();
-    fetchClasesAhora(new Date());
+    fetchClasesAhora(ahora);
     const intervalo = setInterval(() => {
       fetchAulas();
       fetchOcupacion();
-      fetchClasesAhora(new Date());
+      fetchClasesAhora(ahora);
     }, 30000);
     return () => clearInterval(intervalo);
-  }, []);
+  }, [hoyStr]);
 
   // Re-evalúa clases en tiempo real cuando el reloj del contexto avanza (cada 60 s)
   useEffect(() => { fetchClasesAhora(ahora); }, [ahora]);
@@ -488,6 +512,19 @@ export default function GestionAulas() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BANNER CALENDARIO ACADÉMICO */}
+      {(!((estadoAcademico.semestral?.hay_clases !== false || estadoAcademico.cuatrimestral?.hay_clases !== false) && ahora.getDay() !== 0)) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-amber-800">
+          <span className="material-symbols-outlined text-amber-600 text-2xl">event_busy</span>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Calendario Académico Institucional</p>
+            <p className="text-sm font-semibold">
+              {estadoAcademico.semestral?.descripcion || estadoAcademico.cuatrimestral?.descripcion || (ahora.getDay() === 0 ? 'Domingo (Sin Actividad Académica)' : 'Día sin clases regulares programadas')}
+            </p>
           </div>
         </div>
       )}
