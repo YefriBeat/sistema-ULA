@@ -2598,16 +2598,16 @@ def obtener_horarios():
 @app.get("/api/clases-hoy")
 def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fecha: Optional[str] = None):
     """
-    Clases EN CURSO ahora mismo.
+    Clases EN CURSO ahora mismo, respetando el calendario académico por plan.
     dia   = getDay() JS (0=Dom…6=Sab). Si se omite, usa el día real del servidor.
     mins  = minutos desde medianoche. Si se omite, usa la hora real del servidor.
     fecha = fecha ISO (YYYY-MM-DD). Para consultar eventos del calendario institucional.
     """
     ahora = datetime.now()
-    dia_hoy   = dia  if dia  is not None else (ahora.isoweekday() % 7)
+    dia_hoy    = dia  if dia  is not None else (ahora.isoweekday() % 7)
     mins_ahora = mins if mins is not None else (ahora.hour * 60 + ahora.minute)
 
-    # Si es domingo, no hay clases regulares en curso
+    # Domingo → no hay clases regulares
     if dia_hoy == 0:
         return []
 
@@ -2622,33 +2622,96 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Verificar si hay suspensión de clases en el calendario institucional para la fecha
-            cursor.execute("""
-                SELECT COUNT(*) as cnt FROM calendario_institucional
-                WHERE fecha_inicio <= %s AND fecha_fin >= %s AND suspende_clases = TRUE
-            """, (date_obj, date_obj))
-            susp = cursor.fetchone()
-            if susp and susp.get('cnt', 0) > 0:
+            # ── 1) Obtener estado académico de cada plan ──────────────────
+            hay_clases_plan = {}
+            for plan in ('semestral', 'cuatrimestral'):
+                # Verificar suspensión de clases por evento
+                cursor.execute("""
+                    SELECT tipo_evento, suspende_clases FROM calendario_institucional
+                    WHERE plan = %s AND fecha_inicio <= %s AND fecha_fin >= %s
+                    ORDER BY suspende_clases DESC
+                """, (plan, date_obj, date_obj))
+                eventos = cursor.fetchall()
+
+                clases_ok = True
+
+                # Si algún evento suspende clases → sin clases para ese plan
+                for ev in eventos:
+                    if ev.get('suspende_clases'):
+                        clases_ok = False
+                        break
+
+                # Verificar si estamos en periodo activo
+                if clases_ok:
+                    cursor.execute("""
+                        SELECT ciclo, periodo FROM calendario_institucional
+                        WHERE plan = %s AND tipo_evento = 'inicio_periodo' AND fecha_inicio <= %s
+                        ORDER BY fecha_inicio DESC LIMIT 1
+                    """, (plan, date_obj))
+                    ultimo_inicio = cursor.fetchone()
+
+                    cursor.execute("""
+                        SELECT ciclo, periodo FROM calendario_institucional
+                        WHERE plan = %s AND tipo_evento = 'fin_periodo' AND fecha_fin >= %s
+                        ORDER BY fecha_fin ASC LIMIT 1
+                    """, (plan, date_obj))
+                    proximo_fin = cursor.fetchone()
+
+                    en_periodo = False
+                    periodo_info = None
+                    if ultimo_inicio and proximo_fin:
+                        if ultimo_inicio['ciclo'] == proximo_fin['ciclo'] and ultimo_inicio['periodo'] == proximo_fin['periodo']:
+                            en_periodo = True
+                            periodo_info = {'ciclo': ultimo_inicio['ciclo'], 'periodo': ultimo_inicio['periodo']}
+
+                    if not en_periodo and not eventos:
+                        clases_ok = False  # Receso
+
+                    # Verificar si estamos en periodo de exámenes ordinarios/extraordinarios
+                    if en_periodo and periodo_info:
+                        cursor.execute("""
+                            SELECT fecha_inicio FROM calendario_institucional
+                            WHERE plan = %s AND ciclo = %s AND periodo = %s
+                              AND (tipo_evento = 'examen_ordinario' OR tipo_evento = 'examen_extraordinario')
+                            ORDER BY fecha_inicio ASC LIMIT 1
+                        """, (plan, periodo_info['ciclo'], periodo_info['periodo']))
+                        ord_inicio = cursor.fetchone()
+                        if ord_inicio and date_obj >= ord_inicio['fecha_inicio']:
+                            clases_ok = False  # Periodo de evaluación final
+
+                hay_clases_plan[plan] = clases_ok
+
+            # Si NINGÚN plan tiene clases hoy → lista vacía
+            if not hay_clases_plan['semestral'] and not hay_clases_plan['cuatrimestral']:
                 return []
 
-            # Sin suspensión: obtenemos todas las clases del día/hora
+            # ── 2) Obtener clases con campo cuatrimestre para determinar plan ─
             cursor.execute("""
                 SELECT h.docente, h.asignatura, h.horario, h.aula_asignada,
+                       MAX(NULLIF(TRIM(h.cuatrimestre), '')) as cuatrimestre,
                        a.en_mantenimiento, a.inicio_mantenimiento, a.fin_mantenimiento, a.aula_temporal
-                FROM (
-                    SELECT docente, asignatura, horario, aula_asignada
-                    FROM horarios
-                    WHERE docente IS NOT NULL AND TRIM(docente) != ''
-                    GROUP BY docente, asignatura, horario, aula_asignada
-                ) h
+                FROM horarios h
                 LEFT JOIN aulas a ON a.nombre = h.aula_asignada
+                WHERE h.docente IS NOT NULL AND TRIM(h.docente) != ''
+                GROUP BY h.docente, h.asignatura, h.horario, h.aula_asignada,
+                         a.en_mantenimiento, a.inicio_mantenimiento, a.fin_mantenimiento, a.aula_temporal
             """)
             todas = cursor.fetchall()
 
         en_curso = []
         for clase in (todas or []):
             dia_idx, inicio, fin = _parse_horario_minutos(clase.get('horario', ''))
-            if dia_idx == dia_hoy and inicio is not None and inicio <= mins_ahora <= fin:
+            if dia_idx != dia_hoy or inicio is None or not (inicio <= mins_ahora <= fin):
+                continue
+
+            # Determinar plan de la clase
+            es_cuatri = bool(clase.get('cuatrimestre'))
+            plan_clase = 'cuatrimestral' if es_cuatri else 'semestral'
+
+            # Solo incluir si el plan de esta clase tiene clases hoy
+            if hay_clases_plan.get(plan_clase, False):
+                # Limpiar campo auxiliar antes de enviar al frontend
+                clase.pop('cuatrimestre', None)
                 en_curso.append(clase)
 
         return _aplicar_mantenimiento(en_curso)
@@ -3201,10 +3264,12 @@ def obtener_docentes_horarios():
 
             # Todos los horarios semanales (sin filtro de fecha) para cálculo client-side
             cursor.execute("""
-                SELECT DISTINCT docente, horario, asignatura
+                SELECT docente, horario, asignatura,
+                       MAX(NULLIF(TRIM(cuatrimestre), '')) as cuatrimestre
                 FROM horarios
                 WHERE docente IS NOT NULL AND TRIM(docente) != ''
                   AND TRIM(docente) != 'Sin especificar'
+                GROUP BY docente, horario, asignatura
             """)
             clases_hoy_raw = cursor.fetchall()
 
@@ -3225,6 +3290,7 @@ def obtener_docentes_horarios():
                     'dia_index':   dia_idx,   # 0=Dom,1=Lun...6=Sab (igual que JS getDay())
                     'inicio_mins': inicio,
                     'fin_mins':    fin,
+                    'es_cuatri':   bool(c.get('cuatrimestre')),
                 })
 
         # Suplencias hoy por docente (con horas convertidas a string)

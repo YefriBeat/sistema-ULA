@@ -99,9 +99,26 @@ export default function GestionDocentes() {
     return estadoAcademico.semestral?.descripcion || estadoAcademico.cuatrimestral?.descripcion || 'Día sin clases regulares programadas';
   }, [ahora, estadoAcademico]);
 
+  // Determinar si un plan tiene clases hoy según el calendario
+  const planTieneClases = (planStr) => {
+    const academico = estadoAcademico[planStr];
+    if (!academico) return true; // sin datos → asumir que sí
+    if (academico.hay_clases === false) return false;
+    const esPeriodoFinales = academico?.estado?.includes('ordinario') || academico?.estado?.includes('extraordinario');
+    return !esPeriodoFinales;
+  };
+
   // ── Motor de estado en tiempo real (recalcula cada vez que cambia ahora) ─
   const docentesConEstado = useMemo(() => {
-    if (!hayClasesHoy) {
+    const diaHoy    = ahora.getDay(); // 0=Dom,1=Lun,...,6=Sab — igual que dia_index del backend
+    const minsAhora = ahora.getHours() * 60 + ahora.getMinutes();
+
+    const semClases  = planTieneClases('semestral');
+    const cuatClases = planTieneClases('cuatrimestral');
+    const ningunPlanTieneClases = !semClases && !cuatClases;
+
+    // Si es domingo o ningún plan tiene clases → todos sin clases
+    if (diaHoy === 0 || ningunPlanTieneClases) {
       return docentes.map(doc => ({
         ...doc,
         estado: 'sin_clases_calendario',
@@ -110,9 +127,6 @@ export default function GestionDocentes() {
         horarios_hoy: []
       }));
     }
-
-    const diaHoy    = ahora.getDay(); // 0=Dom,1=Lun,...,6=Sab — igual que dia_index del backend
-    const minsAhora = ahora.getHours() * 60 + ahora.getMinutes();
 
     // Mapa: suplente_nombre → info de la suplencia que está cubriendo ahora
     const suplentesActivos = new Map();
@@ -137,9 +151,14 @@ export default function GestionDocentes() {
         return { ...doc, estado: 'suplente_asignado', suplencia_activa: suplencia, cubriendo_suplencia: null };
       }
 
-      // Filtrar solo los horarios del día de hoy, ordenar y agrupar bloques consecutivos
+      // Filtrar solo los horarios del día de hoy que tengan clases según su plan
       const horarios_hoy_raw = (doc.horarios_semana || [])
-        .filter(h => h.dia_index === diaHoy)
+        .filter(h => {
+          if (h.dia_index !== diaHoy) return false;
+          // Filtrar por plan: si es cuatrimestral y su plan no tiene clases hoy, excluir
+          const planH = h.es_cuatri ? 'cuatrimestral' : 'semestral';
+          return planTieneClases(planH);
+        })
         .sort((a, b) => a.inicio_mins - b.inicio_mins);
       const horarios_hoy = agruparClases(horarios_hoy_raw);
 
@@ -164,7 +183,7 @@ export default function GestionDocentes() {
 
       return { ...doc, estado: 'disponible', suplencia_activa: null, cubriendo_suplencia: null, horarios_hoy };
     });
-  }, [docentes, ahora, hayClasesHoy]);
+  }, [docentes, ahora, estadoAcademico]);
 
   // ── Badge visual ─────────────────────────────────────────────────────────
   const getBadge = (estado) => {
@@ -318,15 +337,31 @@ export default function GestionDocentes() {
       </div>
 
       {/* ── BANNER CALENDARIO ACADÉMICO ──────────────────────────────────── */}
-      {!hayClasesHoy && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-amber-800 shadow-sm">
-          <span className="material-symbols-outlined text-amber-600 text-2xl flex-shrink-0">event_busy</span>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Calendario Académico Institucional</p>
-            <p className="text-sm font-semibold">{descripcionCalendario}</p>
+      {(() => {
+        const semClases = planTieneClases('semestral');
+        const cuatClases = planTieneClases('cuatrimestral');
+        const esDomingo = ahora.getDay() === 0;
+        const mostrar = esDomingo || !semClases || !cuatClases;
+        if (!mostrar) return null;
+
+        const partes = [];
+        if (esDomingo) {
+          partes.push('Domingo — Sin actividad académica');
+        } else {
+          if (!semClases) partes.push(`SEM: ${estadoAcademico.semestral?.descripcion || 'Sin clases regulares'}`);
+          if (!cuatClases) partes.push(`CUAT: ${estadoAcademico.cuatrimestral?.descripcion || 'Sin clases regulares'}`);
+        }
+
+        return (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-amber-800 shadow-sm">
+            <span className="material-symbols-outlined text-amber-600 text-2xl flex-shrink-0">event_busy</span>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Calendario Académico Institucional</p>
+              <p className="text-sm font-semibold">{partes.join(' · ')}</p>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── MODAL ASIGNAR SUPLENTE ─────────────────────────────────────────── */}
       {modalSuplente && (
