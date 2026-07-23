@@ -36,6 +36,7 @@ def migrar_columnas_verificacion():
                 "ALTER TABLE usuarios ADD COLUMN verification_code VARCHAR(6) NULL",
                 "ALTER TABLE usuarios ADD COLUMN reset_code VARCHAR(6) NULL",
                 "ALTER TABLE aulas ADD COLUMN en_mantenimiento BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE aulas ADD COLUMN inicio_mantenimiento DATETIME NULL",
                 "ALTER TABLE aulas ADD COLUMN fin_mantenimiento DATETIME NULL",
                 "ALTER TABLE aulas ADD COLUMN aula_temporal VARCHAR(100) NULL",
                 "ALTER TABLE usuarios ADD COLUMN verification_code_expira DATETIME NULL",
@@ -423,7 +424,8 @@ class Aula(BaseModel):
 
 class MantenimientoUpdate(BaseModel):
     en_mantenimiento: bool
-    fin_mantenimiento: Optional[str] = None  # ISO datetime, ej: "2026-05-25T18:00"
+    inicio_mantenimiento: Optional[str] = None  # ISO datetime, ej: "2026-05-25T08:00"
+    fin_mantenimiento: Optional[str] = None     # ISO datetime, ej: "2026-05-25T18:00"
     aula_temporal: Optional[str] = None
 
 class Docente(BaseModel):
@@ -497,22 +499,38 @@ def _aplicar_mantenimiento(horarios: list) -> list:
     ahora = datetime.now()
     for h in horarios:
         en_mant = h.pop('en_mantenimiento', None)
+        inicio_mant = h.pop('inicio_mantenimiento', None)
         fin_mant = h.pop('fin_mantenimiento', None)
         aula_temp = h.pop('aula_temporal', None)
         if not en_mant or not aula_temp:
             continue
-        # Sin fecha de fin → mantenimiento indefinido (siempre activo)
-        if fin_mant is None:
-            vigente = True
-        else:
+
+        inicio_dt = None
+        if inicio_mant:
+            if isinstance(inicio_mant, datetime):
+                inicio_dt = inicio_mant
+            else:
+                try:
+                    inicio_dt = datetime.fromisoformat(str(inicio_mant))
+                except Exception:
+                    pass
+
+        fin_dt = None
+        if fin_mant:
             if isinstance(fin_mant, datetime):
                 fin_dt = fin_mant
             else:
                 try:
                     fin_dt = datetime.fromisoformat(str(fin_mant))
                 except Exception:
-                    fin_dt = None
-            vigente = bool(fin_dt and fin_dt > ahora)
+                    pass
+
+        vigente = True
+        if inicio_dt and ahora < inicio_dt:
+            vigente = False
+        if fin_dt and ahora > fin_dt:
+            vigente = False
+
         if vigente:
             h['aula_original'] = h['aula_asignada']
             h['aula_asignada'] = aula_temp
@@ -2554,6 +2572,7 @@ def obtener_horarios():
                     MAX(h.cuatrimestre) AS cuatrimestre,
                     MAX(h.grupo)        AS grupo,
                     a.en_mantenimiento,
+                    a.inicio_mantenimiento,
                     a.fin_mantenimiento,
                     a.aula_temporal
                 FROM horarios h
@@ -2564,7 +2583,7 @@ def obtener_horarios():
                 GROUP BY
                     h.docente, h.licenciatura, h.asignatura,
                     h.horario, h.aula_asignada,
-                    a.en_mantenimiento, a.fin_mantenimiento, a.aula_temporal
+                    a.en_mantenimiento, a.inicio_mantenimiento, a.fin_mantenimiento, a.aula_temporal
                 ORDER BY h.horario
                 LIMIT 1000
             """)
@@ -2593,7 +2612,7 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None):
             # Sin filtro por fecha: usamos el campo horario (día semana + hora)
             cursor.execute("""
                 SELECT h.docente, h.asignatura, h.horario, h.aula_asignada,
-                       a.en_mantenimiento, a.fin_mantenimiento, a.aula_temporal
+                       a.en_mantenimiento, a.inicio_mantenimiento, a.fin_mantenimiento, a.aula_temporal
                 FROM (
                     SELECT docente, asignatura, horario, aula_asignada
                     FROM horarios
@@ -2668,7 +2687,7 @@ def obtener_aulas():
         with connection.cursor() as cursor:
             cursor.execute("""
                 SELECT id, nombre, edificio, capacidad, equipos, estado,
-                       en_mantenimiento, fin_mantenimiento, aula_temporal
+                       en_mantenimiento, inicio_mantenimiento, fin_mantenimiento, aula_temporal
                 FROM aulas ORDER BY nombre
             """)
             aulas = cursor.fetchall()
@@ -2679,7 +2698,9 @@ def obtener_aulas():
                     aula['equipos'] = json.loads(aula['equipos'])
                 except Exception:
                     aula['equipos'] = []
-            # Serializar datetime para JSON
+            # Serializar datetimes para JSON
+            if aula.get('inicio_mantenimiento') and isinstance(aula['inicio_mantenimiento'], datetime):
+                aula['inicio_mantenimiento'] = aula['inicio_mantenimiento'].isoformat()
             if aula.get('fin_mantenimiento') and isinstance(aula['fin_mantenimiento'], datetime):
                 aula['fin_mantenimiento'] = aula['fin_mantenimiento'].isoformat()
         return aulas if aulas else []
@@ -2737,18 +2758,32 @@ def actualizar_aula(aula_id: int, aula: Aula):
 
 @app.post("/api/aulas/{aula_id}/mantenimiento")
 def actualizar_mantenimiento(aula_id: int, datos: MantenimientoUpdate):
+    inicio_dt = None
+    if datos.inicio_mantenimiento:
+        try:
+            inicio_dt = datetime.fromisoformat(datos.inicio_mantenimiento)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha de inicio inválido.")
+
     fin_dt = None
     if datos.fin_mantenimiento:
         try:
             fin_dt = datetime.fromisoformat(datos.fin_mantenimiento)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa ISO 8601: YYYY-MM-DDTHH:MM")
+            raise HTTPException(status_code=400, detail="Formato de fecha de fin inválido.")
+
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "UPDATE aulas SET en_mantenimiento=%s, fin_mantenimiento=%s, aula_temporal=%s WHERE id=%s",
-                (datos.en_mantenimiento, fin_dt, datos.aula_temporal if datos.en_mantenimiento else None, aula_id)
+                "UPDATE aulas SET en_mantenimiento=%s, inicio_mantenimiento=%s, fin_mantenimiento=%s, aula_temporal=%s WHERE id=%s",
+                (
+                    datos.en_mantenimiento,
+                    inicio_dt if datos.en_mantenimiento else None,
+                    fin_dt if datos.en_mantenimiento else None,
+                    datos.aula_temporal if datos.en_mantenimiento else None,
+                    aula_id
+                )
             )
         connection.commit()
         return {"message": "Estado de mantenimiento actualizado"}

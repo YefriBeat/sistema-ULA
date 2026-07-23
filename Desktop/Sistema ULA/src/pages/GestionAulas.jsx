@@ -18,7 +18,7 @@ export default function GestionAulas() {
 
   // Estado para el modal de mantenimiento
   const [modalMantAula, setModalMantAula] = useState(null);
-  const [formMant, setFormMant] = useState({ en_mantenimiento: false, fin_mantenimiento: '', aula_temporal: '' });
+  const [formMant, setFormMant] = useState({ en_mantenimiento: false, inicio_mantenimiento: '', fin_mantenimiento: '', aula_temporal: '' });
   const [guardandoMant, setGuardandoMant] = useState(false);
 
   // Estado para el modal de edición
@@ -86,11 +86,13 @@ export default function GestionAulas() {
     return 'disponible';
   };
 
-  // Mantenimiento vigente = flag true Y fecha futura
+  // Mantenimiento vigente = flag true Y dentro del rango [inicio, fin]
   const estaEnMantenimiento = (aula) => {
     if (!aula.en_mantenimiento) return false;
-    if (!aula.fin_mantenimiento) return aula.en_mantenimiento;
-    return new Date(aula.fin_mantenimiento) > new Date();
+    const ahora = new Date();
+    if (aula.inicio_mantenimiento && new Date(aula.inicio_mantenimiento) > ahora) return false;
+    if (aula.fin_mantenimiento && new Date(aula.fin_mantenimiento) < ahora) return false;
+    return true;
   };
 
   const handleEliminar = (id) => {
@@ -163,6 +165,7 @@ export default function GestionAulas() {
     setModalMantAula(aula);
     setFormMant({
       en_mantenimiento: aula.en_mantenimiento || false,
+      inicio_mantenimiento: aula.inicio_mantenimiento ? aula.inicio_mantenimiento.slice(0, 16) : '',
       fin_mantenimiento: aula.fin_mantenimiento ? aula.fin_mantenimiento.slice(0, 16) : '',
       aula_temporal: aula.aula_temporal || ''
     });
@@ -175,14 +178,19 @@ export default function GestionAulas() {
       const response = await fetch(`/api/aulas/${modalMantAula.id}/mantenimiento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formMant)
+        body: JSON.stringify({
+          en_mantenimiento: formMant.en_mantenimiento,
+          inicio_mantenimiento: formMant.en_mantenimiento && formMant.inicio_mantenimiento ? formMant.inicio_mantenimiento : null,
+          fin_mantenimiento: formMant.en_mantenimiento && formMant.fin_mantenimiento ? formMant.fin_mantenimiento : null,
+          aula_temporal: formMant.en_mantenimiento ? formMant.aula_temporal : null,
+        }),
       });
       if (response.ok) {
         setModalMantAula(null);
         fetchAulas();
         toast("Estado de mantenimiento actualizado", "exito");
       } else {
-        const err = await response.json();
+        const err = await response.json().catch(() => ({}));
         toast(err.detail || "Error al guardar mantenimiento", "error");
       }
     } catch (error) {
@@ -430,14 +438,25 @@ export default function GestionAulas() {
 
               {formMant.en_mantenimiento && (
                 <>
-                  <div>
-                    <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Fecha y Hora de Fin</label>
-                    <input
-                      type="datetime-local"
-                      value={formMant.fin_mantenimiento}
-                      onChange={e => setFormMant(prev => ({ ...prev, fin_mantenimiento: e.target.value }))}
-                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Fecha y Hora de Inicio</label>
+                      <input
+                        type="datetime-local"
+                        value={formMant.inicio_mantenimiento}
+                        onChange={e => setFormMant(prev => ({ ...prev, inicio_mantenimiento: e.target.value }))}
+                        className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Fecha y Hora de Fin</label>
+                      <input
+                        type="datetime-local"
+                        value={formMant.fin_mantenimiento}
+                        onChange={e => setFormMant(prev => ({ ...prev, fin_mantenimiento: e.target.value }))}
+                        className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                      />
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Aula Temporal / Alterna</label>

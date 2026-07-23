@@ -379,7 +379,7 @@ export default function ManualUsuario() {
               <div className="space-y-3 mt-1">
                 <Paso numero={1} titulo="En la lista de aulas, ubica la tarjeta del espacio a modificar." />
                 <Paso numero={2} titulo='Haz clic en el ícono de llave inglesa ("Mantenimiento").' />
-                <Paso numero={3} titulo="Activa el interruptor de fuera de servicio e ingresa la fecha estimada de conclusión." />
+                <Paso numero={3} titulo="Activa el interruptor e ingresa la fecha/hora de inicio y la fecha/hora de fin del mantenimiento." />
                 <Paso numero={4} titulo="Opcional: Asigna un aula temporal de sustitución para mover las clases agendadas." />
                 <Paso numero={5} titulo='Presiona "Guardar".' />
               </div>
