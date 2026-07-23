@@ -516,34 +516,6 @@ export default function GestionAulas() {
         </div>
       )}
 
-      {/* BANNER CALENDARIO ACADÉMICO */}
-      {(() => {
-        const esDomingo = ahora.getDay() === 0;
-        const semAcad = estadoAcademico.semestral;
-        const cuatAcad = estadoAcademico.cuatrimestral;
-        const semSinClases = semAcad && (semAcad.hay_clases === false || semAcad?.estado?.includes('ordinario') || semAcad?.estado?.includes('extraordinario'));
-        const cuatSinClases = cuatAcad && (cuatAcad.hay_clases === false || cuatAcad?.estado?.includes('ordinario') || cuatAcad?.estado?.includes('extraordinario'));
-        const mostrar = esDomingo || semSinClases || cuatSinClases;
-        if (!mostrar) return null;
-
-        const partes = [];
-        if (esDomingo) {
-          partes.push('Domingo — Sin actividad académica');
-        } else {
-          if (semSinClases) partes.push(`SEM: ${semAcad?.descripcion || 'Sin clases regulares'}`);
-          if (cuatSinClases) partes.push(`CUAT: ${cuatAcad?.descripcion || 'Sin clases regulares'}`);
-        }
-
-        return (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-amber-800 shadow-sm">
-            <span className="material-symbols-outlined text-amber-600 text-2xl flex-shrink-0">event_busy</span>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Calendario Académico Institucional</p>
-              <p className="text-sm font-semibold">{partes.join(' · ')}</p>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* FILTROS */}
       <div className="flex gap-3 flex-wrap">

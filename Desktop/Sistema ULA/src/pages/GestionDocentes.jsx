@@ -336,32 +336,6 @@ export default function GestionDocentes() {
         </div>
       </div>
 
-      {/* ── BANNER CALENDARIO ACADÉMICO ──────────────────────────────────── */}
-      {(() => {
-        const semClases = planTieneClases('semestral');
-        const cuatClases = planTieneClases('cuatrimestral');
-        const esDomingo = ahora.getDay() === 0;
-        const mostrar = esDomingo || !semClases || !cuatClases;
-        if (!mostrar) return null;
-
-        const partes = [];
-        if (esDomingo) {
-          partes.push('Domingo — Sin actividad académica');
-        } else {
-          if (!semClases) partes.push(`SEM: ${estadoAcademico.semestral?.descripcion || 'Sin clases regulares'}`);
-          if (!cuatClases) partes.push(`CUAT: ${estadoAcademico.cuatrimestral?.descripcion || 'Sin clases regulares'}`);
-        }
-
-        return (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-amber-800 shadow-sm">
-            <span className="material-symbols-outlined text-amber-600 text-2xl flex-shrink-0">event_busy</span>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Calendario Académico Institucional</p>
-              <p className="text-sm font-semibold">{partes.join(' · ')}</p>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* ── MODAL ASIGNAR SUPLENTE ─────────────────────────────────────────── */}
       {modalSuplente && (
