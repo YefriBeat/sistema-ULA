@@ -2,7 +2,7 @@ import logo from '../components/logo.png';
 
 export default function SoporteTecnico() {
   return (
-    <div className="min-h-screen bg-[#faf9fc]">
+    <div className="bg-[#faf9fc] w-full">
 
       {/* ── CABECERA ── */}
       <div style={{ background: 'linear-gradient(135deg, #1c355e 0%, #162c50 100%)' }} className="px-6 py-10 text-white">
@@ -56,7 +56,7 @@ export default function SoporteTecnico() {
             </a>
 
             <a
-              href="mailto:mooefrendjx@gmail.com"
+              href="mailto:soporte.sipref.software@gmail.com"
               className="flex items-center gap-4 px-6 py-4 hover:bg-[#faf9fc] transition-colors group"
             >
               <div className="w-9 h-9 rounded-xl bg-[#1c355e]/8 flex items-center justify-center flex-shrink-0 group-hover:bg-[#1c355e]/15 transition-colors">
@@ -64,7 +64,7 @@ export default function SoporteTecnico() {
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-widest text-[#75777f] font-bold">Correo electrónico</p>
-                <p className="text-sm font-bold text-[#1b1c1e] mt-0.5 truncate">mooefrendjx@gmail.com</p>
+                <p className="text-sm font-bold text-[#1b1c1e] mt-0.5 truncate">soporte.sipref.software@gmail.com</p>
               </div>
               <span className="material-symbols-outlined text-[16px] text-[#c5c6cf] ml-auto flex-shrink-0 group-hover:text-[#1c355e] transition-colors">chevron_right</span>
             </a>

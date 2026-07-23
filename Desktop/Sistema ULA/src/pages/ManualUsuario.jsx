@@ -116,7 +116,7 @@ export default function ManualUsuario() {
   };
 
   return (
-    <div className="min-h-screen bg-[#faf9fc]">
+    <div className="bg-[#faf9fc] w-full">
 
       {/* ── CABECERA ── */}
       <div style={{ background: 'linear-gradient(135deg, #1c355e 0%, #162c50 100%)' }} className="px-6 py-10 text-white">
