@@ -9,7 +9,6 @@ const SECCIONES = [
   { id: 'aulas',        icono: 'door_open',       titulo: 'Gestión de aulas' },
   { id: 'docentes',     icono: 'group',           titulo: 'Gestión de docentes' },
   { id: 'calendarios',  icono: 'calendar_month',  titulo: 'Calendarios académicos' },
-  { id: 'simulacion',   icono: 'history',         titulo: 'Simulador de fecha/hora' },
   { id: 'perfil',       icono: 'manage_accounts', titulo: 'Configuración de perfil' },
   { id: 'soporte',      icono: 'support_agent',   titulo: 'Soporte técnico' },
   { id: 'faq',          icono: 'help',            titulo: 'Preguntas frecuentes' },
@@ -212,7 +211,7 @@ export default function ManualUsuario() {
                 { icono: 'door_open',      titulo: 'Control de Aulas y Labs',     desc: 'Gestión diferenciada de salones y laboratorios con control de mantenimiento.' },
                 { icono: 'group',          titulo: 'Gestión de Docentes',         desc: 'Directorio académico, clases agrupadas cronológicamente y registro de suplencias.' },
                 { icono: 'calendar_month', titulo: 'Calendarios Oficiales',      desc: 'Consulta de calendarios escolares e importación de exámenes parciales por carrera.' },
-                { icono: 'history',        titulo: 'Simulador de Tiempo',         desc: 'Herramienta de depuración para probar el estado del sistema en cualquier fecha u hora.' },
+                { icono: 'picture_as_pdf', titulo: 'Exportación a PDF',         desc: 'Descarga rápida del manual y de calendarios en formato PDF oficial.' },
                 { icono: 'cloud_sync',     titulo: 'Conexión TiDB Cloud',         desc: 'Sincronización en la nube mediante TiDB Cloud (MySQL) de alta disponibilidad.' },
               ].map(f => (
                 <div key={f.titulo} className="bg-white border border-[#c5c6cf]/30 rounded-xl p-4 shadow-sm">
@@ -449,27 +448,7 @@ export default function ManualUsuario() {
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 8. SIMULADOR DE FECHA Y HORA ══ */}
-          <Seccion id="simulacion" icono="history" titulo="Simulador de fecha y hora (Time Travel)">
-            <Tarjeta>
-              <p className="text-sm text-[#44464e] leading-relaxed">
-                El <strong className="text-[#1b1c1e]">Time Travel Debugger</strong> es una herramienta de simulación diseñada para revisar el comportamiento del sistema en cualquier punto del tiempo.
-              </p>
-            </Tarjeta>
-
-            <Tarjeta titulo="¿Cómo utilizar el simulador?" icono="tune">
-              <div className="space-y-3 mt-1">
-                <Paso numero={1} titulo="Localiza la barra flotante de depuración en la parte inferior de la pantalla." />
-                <Paso numero={2} titulo="Haz clic sobre la fecha u hora para desplegar el selector." />
-                <Paso numero={3} titulo="Elige cualquier día o momento del día que desees verificar." />
-                <Paso numero={4} titulo="Observa cómo todo el sistema (Dashboard, Aulas, Docentes) actualiza sus estados en tiempo real al momento elegido." />
-                <Paso numero={5} titulo='Presiona "Restablecer" o "Tiempo Real" para regresar a la hora actual del servidor.' />
-              </div>
-              <Aviso tipo="info" texto="Esta simulación es únicamente de lectura para pruebas y no altera los registros reales almacenados en la base de datos." />
-            </Tarjeta>
-          </Seccion>
-
-          {/* ══ 9. CONFIGURACIÓN DE PERFIL ══ */}
+          {/* ══ 8. CONFIGURACIÓN DE PERFIL ══ */}
           <Seccion id="perfil" icono="manage_accounts" titulo="Configuración de perfil y sistema">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
@@ -487,7 +466,7 @@ export default function ManualUsuario() {
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 10. SOPORTE TÉCNICO ══ */}
+          {/* ══ 9. SOPORTE TÉCNICO ══ */}
           <Seccion id="soporte" icono="support_agent" titulo="Soporte técnico">
             <Tarjeta titulo="Canales Oficiales de Atención" icono="contact_support">
               <p className="text-xs text-[#44464e] leading-relaxed mb-4">
@@ -528,7 +507,7 @@ export default function ManualUsuario() {
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 11. PREGUNTAS FRECUENTES ══ */}
+          {/* ══ 10. PREGUNTAS FRECUENTES ══ */}
           <Seccion id="faq" icono="help" titulo="Preguntas frecuentes">
             {[
               {
