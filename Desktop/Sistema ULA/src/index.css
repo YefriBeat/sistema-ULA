@@ -3,12 +3,69 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Estilos base globales ─────────────────────────────────────────────────── */
+/* ── Estilos base globales y Ajuste Automático Responsivo ──────────────────── */
 @layer base {
-  body {
+  html, body, #root {
     font-family: 'Manrope', sans-serif;
     background-color: #faf9fc;
     color: #1b1c1e;
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Asegurar que imágenes, modales y multimedia se adapten siempre al contenedor */
+  img, svg, video, canvas {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Evitar desbordamiento de textos en móviles y tablets sin romper palabras cortas */
+  p, h1, h2, h3, h4, h5, h6 {
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+}
+
+@layer components {
+  /* Contenedores de tablas automáticos para móvil/tablet/computadora */
+  div:has(> table) {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    width: 100%;
+    max-width: 100%;
+    border-collapse: collapse;
+  }
+
+  /* Adaptación de modales de SweetAlert en dispositivos móviles y tabletas */
+  .swal2-popup {
+    max-width: 92vw !important;
+    padding: 1.25rem !important;
+    border-radius: 1rem !important;
+  }
+
+  @media (min-width: 640px) {
+    .swal2-popup {
+      max-width: 32rem !important;
+      padding: 1.75rem !important;
+    }
+  }
+
+  /* Ajuste de controles de formulario para una experiencia táctil en móvil/tablet */
+  @media (max-width: 639px) {
+    input[type="text"],
+    input[type="search"],
+    input[type="date"],
+    input[type="time"],
+    select {
+      font-size: 16px !important; /* Previene auto-zoom en iPhone/iOS y móviles */
+    }
   }
 }
 

@@ -492,7 +492,7 @@ export default function Layout() {
       )}
 
       {/* pt-16 = espacio del header. En móvil, si hay barra de estado académico, sumamos pt-[88px] para no tapar contenido */}
-      <div className={`flex flex-1 pt-16 ${estadoAcademico && (estadoAcademico.semestral || estadoAcademico.cuatrimestral) ? 'max-sm:pt-[88px]' : ''}`}>
+      <div className={`flex flex-1 pt-16 w-full max-w-full min-w-0 ${estadoAcademico && (estadoAcademico.semestral || estadoAcademico.cuatrimestral) ? 'max-sm:pt-[88px]' : ''}`}>
 
         {/* SIDEBAR (MENÚ LATERAL) */}
         <aside
@@ -552,14 +552,14 @@ export default function Layout() {
           </div>
         </aside>
 
-        {/* CONTENIDO PRINCIPAL */}
-        <main className="flex-1 lg:ml-64 p-4 sm:p-8">
+        {/* CONTENIDO PRINCIPAL - RESPONSIVO MÓVIL / TABLET / COMPUTADORA */}
+        <main className="flex-1 lg:ml-64 p-3 sm:p-6 lg:p-8 w-full max-w-full min-w-0 overflow-x-hidden transition-all duration-300">
           <Outlet />
         </main>
       </div>
 
-      {/* FOOTER */}
-      <footer className="bg-[#1c2738] w-full py-5 px-4 sm:px-8 flex flex-col md:flex-row justify-between items-center z-20 relative mt-auto border-t border-white/5 lg:pl-[288px] gap-4 md:gap-0">
+      {/* FOOTER RESPONSIVO */}
+      <footer className="bg-[#1c2738] w-full py-5 px-4 sm:px-8 flex flex-col md:flex-row justify-between items-center z-20 relative mt-auto border-t border-white/5 lg:pl-[288px] gap-4 md:gap-0 max-w-full overflow-hidden">
         <div className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] text-center md:text-left">
           © 2026 UNIVERSIDAD LATINO - SIPREF
         </div>
