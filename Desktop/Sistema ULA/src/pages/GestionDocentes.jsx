@@ -290,6 +290,32 @@ export default function GestionDocentes() {
     });
   };
 
+  // ── Cancelar reprogramación por ID ───────────────────────────────────────
+  const handleCancelarReprogramacionPorId = (claseId, nombreDocente) => {
+    if (!claseId) return;
+    setConfirmacion({
+      mensaje: `¿Estás seguro de cancelar y revertir la reprogramación del docente ${nombreDocente || ''}?`,
+      onConfirmar: async () => {
+        setGuardandoReprogramacion(true);
+        try {
+          const res = await fetch(`/api/reprogramaciones/${claseId}`, { method: 'DELETE' });
+          if (res.ok) {
+            setModalReprogramar(null);
+            await fetchDocentes();
+            toast("Reprogramación cancelada y revertida correctamente", "exito");
+          } else {
+            const err = await res.json();
+            toast(err.detail || "Error al cancelar la reprogramación", "error");
+          }
+        } catch {
+          toast("Error de conexión con el servidor", "error");
+        } finally {
+          setGuardandoReprogramacion(false);
+        }
+      }
+    });
+  };
+
   // ── Modal suplente ────────────────────────────────────────────────────────
   // ── Helpers de fecha/hora ─────────────────────────────────────────────────
   const proxFechaDesDia = (diaIndex) => {
@@ -546,27 +572,9 @@ export default function GestionDocentes() {
     }
   };
 
-  const handleCancelarReprogramacion = async () => {
+  const handleCancelarReprogramacion = () => {
     if (!formReprogramar.clase_original_id) return;
-    if (!confirm("¿Estás seguro de cancelar esta reprogramación y eliminar la clase de reposición?")) return;
-    setGuardandoReprogramacion(true);
-    try {
-      const res = await fetch(`/api/reprogramaciones/${formReprogramar.clase_original_id}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        setModalReprogramar(null);
-        await fetchDocentes();
-        toast("Reprogramación cancelada y reposición eliminada de la base de datos", "exito");
-      } else {
-        const err = await res.json();
-        toast(err.detail || "Error al cancelar la reprogramación", "error");
-      }
-    } catch {
-      toast("Error de conexión con el servidor", "error");
-    } finally {
-      setGuardandoReprogramacion(false);
-    }
+    handleCancelarReprogramacionPorId(formReprogramar.clase_original_id, modalReprogramar?.nombre);
   };
 
   // ── Filtros ───────────────────────────────────────────────────────────────
@@ -650,6 +658,32 @@ export default function GestionDocentes() {
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
+
+            {/* Si ya tiene una suplencia activa este docente, botón para cancelarla */}
+            {(modalSuplente.suplencia_activa || modalSuplente.cubriendo_suplencia) && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between gap-2">
+                <div className="text-xs text-red-800">
+                  <p className="font-bold">¡Suplencia actualmente asignada!</p>
+                  <p className="text-[11px] opacity-90 mt-0.5">
+                    {modalSuplente.suplencia_activa
+                      ? `Cubre: ${modalSuplente.suplencia_activa.suplente_nombre} (${modalSuplente.suplencia_activa.hora_inicio}–${modalSuplente.suplencia_activa.hora_fin})`
+                      : `Cubriendo a: ${modalSuplente.cubriendo_suplencia.docente_ausente}`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sid = modalSuplente.suplencia_activa?.id || modalSuplente.cubriendo_suplencia?.id;
+                    handleCancelarSuplencia(sid, modalSuplente.nombre);
+                    setModalSuplente(null);
+                  }}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1 shadow-xs flex-shrink-0"
+                >
+                  <span className="material-symbols-outlined text-[15px]">cancel</span>
+                  Cancelar Suplencia
+                </button>
+              </div>
+            )}
 
             <div className="space-y-4">
               <div>
@@ -849,6 +883,50 @@ export default function GestionDocentes() {
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
+
+            {/* Si ya tiene reprogramaciones activas este docente, listarlas con botón de cancelar */}
+            {(modalReprogramar.clases_reprogramadas?.length > 0 || clasesDocenteSemana.some(c => c.estado_slug === 'pospuesta')) && (
+              <div className="mb-5 p-3.5 bg-indigo-50/90 border border-indigo-200 rounded-xl space-y-2">
+                <div className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px]">calendar_add_on</span>
+                  <span>Reprogramaciones / Pospuestas activas de este docente</span>
+                </div>
+                {modalReprogramar.clases_reprogramadas?.map((rep, idx) => (
+                  <div key={idx} className="flex items-center justify-between gap-2 p-2 bg-white rounded-lg border border-indigo-100 text-xs shadow-2xs">
+                    <div className="min-w-0">
+                      <p className="font-bold text-indigo-950 truncate">{rep.asignatura || 'Clase Reprogramada'} <span className="font-mono text-[11px] font-normal text-indigo-700">({rep.horario})</span></p>
+                      {rep.aula_asignada && <p className="text-[10px] text-indigo-700">Aula: {rep.aula_asignada} · {rep.fecha_reposicion}</p>}
+                    </div>
+                    {rep.id && (
+                      <button
+                        type="button"
+                        onClick={() => handleCancelarReprogramacionPorId(rep.id, modalReprogramar.nombre)}
+                        className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-lg transition-colors flex items-center gap-1 flex-shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">event_busy</span>
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {clasesDocenteSemana.filter(c => c.estado_slug === 'pospuesta').map(c => (
+                  <div key={`posp-${c.id}`} className="flex items-center justify-between gap-2 p-2 bg-white rounded-lg border border-purple-100 text-xs shadow-2xs">
+                    <div className="min-w-0">
+                      <p className="font-bold text-purple-950 truncate">{c.asignatura} <span className="font-mono text-[11px] font-normal text-purple-700">({c.horario})</span></p>
+                      <p className="text-[10px] text-purple-700">Estado: Pospuesta</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCancelarReprogramacionPorId(c.id, modalReprogramar.nombre)}
+                      className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-lg transition-colors flex items-center gap-1 flex-shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">undo</span>
+                      Revertir
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <form onSubmit={handleSubmitReprogramacion} className="space-y-4">
               {/* 1. Clase original a posponer */}
@@ -1134,20 +1212,22 @@ export default function GestionDocentes() {
 
                     {/* ── Banner suplencia activa ── */}
                     {esSuplente && docente.suplencia_activa && (
-                      <div className="flex items-center justify-between gap-2 text-xs text-orange-600 font-semibold bg-orange-50 border border-orange-100 px-3 py-2 rounded-xl">
+                      <div className="flex items-center justify-between gap-2 text-xs text-orange-700 font-semibold bg-orange-50 border border-orange-200 px-3 py-2 rounded-xl">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="material-symbols-outlined text-[14px] flex-shrink-0">swap_horiz</span>
+                          <span className="material-symbols-outlined text-[15px] flex-shrink-0">swap_horiz</span>
                           <span className="truncate">
                             Cubre: <span className="font-bold">{docente.suplencia_activa.suplente_nombre}</span>
                           </span>
-                          <span className="font-mono opacity-70 flex-shrink-0">{docente.suplencia_activa.hora_inicio}–{docente.suplencia_activa.hora_fin}</span>
+                          <span className="font-mono opacity-80 flex-shrink-0">{docente.suplencia_activa.hora_inicio}–{docente.suplencia_activa.hora_fin}</span>
                         </div>
                         <button
+                          type="button"
                           onClick={() => handleCancelarSuplencia(docente.suplencia_activa.id, docente.nombre)}
-                          title="Cancelar suplencia"
-                          className="text-orange-300 hover:text-red-500 transition-colors flex-shrink-0"
+                          title="Cancelar y eliminar esta suplencia"
+                          className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded-lg text-[11px] transition-colors flex items-center gap-1 flex-shrink-0 shadow-2xs"
                         >
-                          <span className="material-symbols-outlined text-[16px]">cancel</span>
+                          <span className="material-symbols-outlined text-[13px]">cancel</span>
+                          Cancelar Suplencia
                         </button>
                       </div>
                     )}
@@ -1165,15 +1245,26 @@ export default function GestionDocentes() {
 
                     {/* ── Banner cubriendo suplencia ── */}
                     {docente.cubriendo_suplencia && (
-                      <div className="flex items-center gap-1.5 text-xs text-blue-700 font-semibold bg-blue-50 border border-blue-100 px-3 py-2 rounded-xl">
-                        <span className="material-symbols-outlined text-[14px] flex-shrink-0">swap_horiz</span>
-                        <span className="truncate">
-                          Cubriendo a <span className="font-bold">{docente.cubriendo_suplencia.docente_ausente}</span>
-                          {docente.cubriendo_suplencia.materia ? ` · ${docente.cubriendo_suplencia.materia}` : ''}
-                        </span>
-                        <span className="font-mono opacity-70 flex-shrink-0 ml-auto">
-                          {docente.cubriendo_suplencia.hora_inicio}–{docente.cubriendo_suplencia.hora_fin}
-                        </span>
+                      <div className="flex items-center justify-between gap-2 text-xs text-blue-700 font-semibold bg-blue-50 border border-blue-200 px-3 py-2 rounded-xl">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="material-symbols-outlined text-[15px] flex-shrink-0">swap_horiz</span>
+                          <span className="truncate">
+                            Cubriendo a <span className="font-bold">{docente.cubriendo_suplencia.docente_ausente}</span>
+                            {docente.cubriendo_suplencia.materia ? ` · ${docente.cubriendo_suplencia.materia}` : ''}
+                          </span>
+                          <span className="font-mono opacity-80 flex-shrink-0">
+                            {docente.cubriendo_suplencia.hora_inicio}–{docente.cubriendo_suplencia.hora_fin}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelarSuplencia(docente.cubriendo_suplencia.id, docente.cubriendo_suplencia.docente_ausente)}
+                          title="Cancelar y eliminar esta suplencia"
+                          className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded-lg text-[11px] transition-colors flex items-center gap-1 flex-shrink-0 shadow-2xs"
+                        >
+                          <span className="material-symbols-outlined text-[13px]">cancel</span>
+                          Cancelar Suplencia
+                        </button>
                       </div>
                     )}
 
@@ -1190,10 +1281,23 @@ export default function GestionDocentes() {
                           </span>
                         </div>
                         {docente.clases_reprogramadas.map((rep, idx) => (
-                          <div key={idx} className="flex flex-col gap-0.5 text-indigo-950 mt-1 border-t border-indigo-200/60 pt-1.5 first:border-0 first:pt-0">
-                            <div className="flex items-center justify-between font-semibold">
-                              <span>{rep.asignatura || 'Clase Reprogramada'}</span>
-                              <span className="font-mono text-[11px] bg-white/90 px-1.5 py-0.5 rounded border border-indigo-200 font-bold">{rep.horario}</span>
+                          <div key={idx} className="flex flex-col gap-1 text-indigo-950 mt-1 border-t border-indigo-200/60 pt-2 first:border-0 first:pt-0">
+                            <div className="flex items-center justify-between gap-2 font-semibold">
+                              <span className="truncate">{rep.asignatura || 'Clase Reprogramada'}</span>
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <span className="font-mono text-[11px] bg-white/90 px-1.5 py-0.5 rounded border border-indigo-200 font-bold">{rep.horario}</span>
+                                {rep.id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelarReprogramacionPorId(rep.id, docente.nombre)}
+                                    title="Cancelar reprogramación"
+                                    className="px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded text-[10px] transition-colors flex items-center gap-0.5 shadow-2xs"
+                                  >
+                                    <span className="material-symbols-outlined text-[12px]">event_busy</span>
+                                    Cancelar
+                                  </button>
+                                )}
+                              </div>
                             </div>
                             {rep.aula_asignada && (
                               <div className="text-[11px] text-indigo-700 flex items-center gap-1">
@@ -1209,6 +1313,28 @@ export default function GestionDocentes() {
                             )}
                           </div>
                         ))}
+                      </div>
+                    )}
+
+                    {/* ── Banner de Clase Pospuesta (Sin Reposición) ── */}
+                    {(!docente.clases_reprogramadas || docente.clases_reprogramadas.length === 0) && docente.horarios_hoy?.some(h => h.estado_slug === 'pospuesta') && (
+                      <div className="flex items-center justify-between gap-2 text-xs text-purple-900 bg-purple-50 border border-purple-200 px-3 py-2 rounded-xl">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="material-symbols-outlined text-[15px] text-purple-600">event_busy</span>
+                          <span className="font-semibold truncate">Clase Pospuesta (Sin reposición asignada)</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const posp = docente.horarios_hoy.find(h => h.estado_slug === 'pospuesta');
+                            handleCancelarReprogramacionPorId(posp?.id, docente.nombre);
+                          }}
+                          title="Revertir clase pospuesta al estado normal"
+                          className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded-lg text-[11px] transition-colors flex items-center gap-1 flex-shrink-0 shadow-2xs"
+                        >
+                          <span className="material-symbols-outlined text-[13px]">undo</span>
+                          Revertir
+                        </button>
                       </div>
                     )}
                     {!docente.clases_reprogramadas?.length && docentesConNuevaClase[docente.nombre] && (

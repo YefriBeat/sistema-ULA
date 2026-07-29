@@ -3823,38 +3823,42 @@ def crear_reprogramacion(req: ReprogramacionRequest):
         connection.close()
 
 
-@app.delete("/api/reprogramaciones/{clase_original_id}")
-def cancelar_reprogramacion(clase_original_id: int):
+@app.delete("/api/reprogramaciones/{clase_id}")
+def cancelar_reprogramacion(clase_id: int):
     """
-    Revoca la reprogramación de una clase:
+    Revoca la reprogramación de una clase (ya sea por ID de clase pospuesta o por ID de clase de reposición):
     1. Reestablece la clase original a estado programada (sin nota de pospuesta).
-    2. Elimina en BD el registro de la clase de reposición asociada.
+    2. Elimina en BD el registro de la clase de reposición asociada del docente.
     """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM horarios WHERE id = %s", (clase_original_id,))
-            orig = cursor.fetchone()
-            if not orig:
-                raise HTTPException(status_code=404, detail="No se encontró la clase original.")
+            cursor.execute("SELECT * FROM horarios WHERE id = %s", (clase_id,))
+            item = cursor.fetchone()
+            if not item:
+                raise HTTPException(status_code=404, detail="No se encontró la clase en la base de datos.")
 
-            docente = orig['docente']
-            horario_orig = orig['horario']
-            like_nota = f"Reposición de {horario_orig}%"
+            docente = item['docente']
 
-            cursor.execute("""
-                UPDATE horarios
-                SET estado_slug = NULL,
-                    nota_reprogramacion = NULL
-                WHERE id = %s
-            """, (clase_original_id,))
-
-            cursor.execute("""
-                DELETE FROM horarios
-                WHERE docente = %s
-                  AND es_reposicion = TRUE
-                  AND nota_reprogramacion LIKE %s
-            """, (docente, like_nota))
+            if item.get('es_reposicion') or item.get('estado_slug') == 'reposicion_programada':
+                cursor.execute("DELETE FROM horarios WHERE id = %s", (clase_id,))
+                cursor.execute("""
+                    UPDATE horarios
+                    SET estado_slug = NULL,
+                        nota_reprogramacion = NULL
+                    WHERE docente = %s AND (estado_slug = 'pospuesta' OR nota_reprogramacion LIKE 'Pospuesta%%')
+                """, (docente,))
+            else:
+                cursor.execute("""
+                    UPDATE horarios
+                    SET estado_slug = NULL,
+                        nota_reprogramacion = NULL
+                    WHERE id = %s
+                """, (clase_id,))
+                cursor.execute("""
+                    DELETE FROM horarios
+                    WHERE docente = %s AND (es_reposicion = TRUE OR estado_slug = 'reposicion_programada')
+                """, (docente,))
 
         connection.commit()
         return {"message": "Reprogramación cancelada y revertida en la base de datos."}
@@ -4111,7 +4115,7 @@ def obtener_docentes_horarios(fecha_ref: Optional[str] = None):
 
             # Clases reprogramadas o reposiciones programadas (nueva clase)
             cursor.execute("""
-                SELECT docente, asignatura, horario, aula_asignada, fecha_reposicion, nota_reprogramacion, estado_slug
+                SELECT id, docente, asignatura, horario, aula_asignada, fecha_reposicion, nota_reprogramacion, estado_slug
                 FROM horarios
                 WHERE (estado_slug = 'reposicion_programada' OR es_reposicion = TRUE OR (nota_reprogramacion IS NOT NULL AND TRIM(nota_reprogramacion) != '' AND (estado_slug IS NULL OR estado_slug != 'pospuesta')))
                   AND docente IS NOT NULL AND TRIM(docente) != ''
@@ -4176,6 +4180,7 @@ def obtener_docentes_horarios(fecha_ref: Optional[str] = None):
             raw_n = cr['docente']
             canon_n = mapa_canonico.get(raw_n, _normalizar_nombre_formato(raw_n))
             docentes_dict[canon_n]['clases_reprogramadas'].append({
+                'id':                  cr.get('id'),
                 'asignatura':          cr.get('asignatura') or '',
                 'horario':             cr.get('horario') or '',
                 'aula_asignada':       cr.get('aula_asignada') or '',
