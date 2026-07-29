@@ -5,7 +5,7 @@ const SECCIONES = [
   { id: 'introduccion', icono: 'info',            titulo: 'Introducción' },
   { id: 'acceso',       icono: 'login',           titulo: 'Acceso al sistema' },
   { id: 'dashboard',    icono: 'dashboard',       titulo: 'Panel principal' },
-  { id: 'horarios',     icono: 'schedule',        titulo: 'Gestión de horarios' },
+  { id: 'horarios',     icono: 'schedule',        titulo: 'Gestión de horarios por grupos' },
   { id: 'aulas',        icono: 'door_open',       titulo: 'Gestión de aulas' },
   { id: 'docentes',     icono: 'group',           titulo: 'Gestión de docentes' },
   { id: 'calendarios',  icono: 'calendar_month',  titulo: 'Calendarios académicos' },
@@ -315,7 +315,7 @@ export default function ManualUsuario() {
           </Seccion>
 
           {/* ══ 4. GESTIÓN DE HORARIOS ══ */}
-          <Seccion id="horarios" icono="schedule" titulo="Gestión de horarios">
+          <Seccion id="horarios" icono="schedule" titulo="Gestión de horarios por grupos">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
                 Permite la importación de archivos de horarios académicos, asignación inteligente de aulas, edición puntual de asignaturas y mantenimiento de archivos.
@@ -324,7 +324,7 @@ export default function ManualUsuario() {
 
             <Tarjeta titulo="Importar horarios (PDF / Excel)" icono="upload_file">
               <div className="space-y-3 mt-1">
-                <Paso numero={1} titulo='En el menú principal, abre "Gestión de Horarios".' />
+                <Paso numero={1} titulo='En el menú principal, abre "Gestión de Horarios por Grupos".' />
                 <Paso numero={2} titulo='Selecciona la pestaña "Cargar Horario".' />
                 <Paso numero={3} titulo="Sube el archivo en formato PDF o Excel oficial facilitado por la universidad." />
                 <Paso numero={4} titulo="Revisa la vista previa de datos extraídos (docente, materia, horas, días y grupo)." />

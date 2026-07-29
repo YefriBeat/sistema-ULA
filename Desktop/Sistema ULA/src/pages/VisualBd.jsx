@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTime } from '../components/TimeContext';
+import { useToast, ToastContainer } from '../components/useToast';
 
 // ─── Parser de horario ────────────────────────────────────────────────────────
 const parsearHorario = (horarioCompleto) => {
@@ -120,6 +121,10 @@ const groupConsecutiveClasses = (clases) => {
           actual.tieneExamenHoy = true;
           if (!actual.nombreExamen && siguiente.nombreExamen) actual.nombreExamen = siguiente.nombreExamen;
         }
+        if (siguiente.esAulaLiberada) {
+          actual.esAulaLiberada = true;
+          if (!actual.infoLiberacion) actual.infoLiberacion = siguiente.infoLiberacion;
+        }
       } else {
         resultado.push(actual);
         actual = { ...siguiente, _ids: [String(siguiente.id)] };
@@ -180,6 +185,7 @@ const formatearNombreExamen = (nombre) => {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 export default function VisualBd() {
+  const { toast, toasts } = useToast();
   const [asignaturas, setAsignaturas] = useState([]);
   const [aulasData, setAulasData] = useState([]);
   const [suplenciasActivas, setSuplenciasActivas] = useState([]);
@@ -190,12 +196,87 @@ export default function VisualBd() {
   const [filtroDia, setFiltroDia] = useState('');
   const [filtroHora, setFiltroHora] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('en_curso');
+  const [filtroPlan, setFiltroPlan] = useState('todos'); // 'todos' | 'semestral' | 'cuatrimestral'
   const [cargando, setCargando] = useState(true);
   const [examenesHoy, setExamenesHoy] = useState([]);
+  const [liberacionesActivas, setLiberacionesActivas] = useState([]);
   const [estadoAcademico, setEstadoAcademico] = useState({
     semestral: { hay_clases: true, estado: 'clases' },
     cuatrimestral: { hay_clases: true, estado: 'clases' }
   });
+
+  const [mostrarMenuExportar, setMostrarMenuExportar] = useState(false);
+  const [modalEmail, setModalEmail] = useState(false);
+  const [formEmail, setFormEmail] = useState({
+    destinatarios: '',
+    cc: '',
+    cco: '',
+    asunto: 'Reporte de Horarios y Eventos Académicos — ULA',
+    mensaje: '',
+    adjuntar_pdf: true,
+    adjuntar_excel: false,
+    es_historial: false
+  });
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [usuariosRegistrados, setUsuariosRegistrados] = useState([]);
+  const [mostrarSugerenciasEmails, setMostrarSugerenciasEmails] = useState(true);
+  const [campoDestino, setCampoDestino] = useState('destinatarios');
+
+  const renderBadgesCampo = (nombreCampo, valorCampo) => {
+    if (!valorCampo || !valorCampo.trim()) return null;
+    const correos = valorCampo.split(',').map(e => e.trim()).filter(Boolean);
+    if (correos.length === 0) return null;
+
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {correos.map((correo, idx) => {
+          const esReg = usuariosRegistrados.some(u => u.correo?.toLowerCase() === correo.toLowerCase());
+          return (
+            <span
+              key={idx}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold border ${
+                esReg
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                  : 'bg-sky-50 text-sky-800 border-sky-300'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[11px]">
+                {esReg ? 'verified' : 'mail'}
+              </span>
+              <span className="truncate max-w-[130px]" title={correo}>{correo}</span>
+              <span className={`px-1 py-0.2 rounded text-[8px] uppercase font-extrabold ${esReg ? 'bg-emerald-200 text-emerald-900' : 'bg-sky-200 text-sky-900'}`}>
+                {esReg ? 'Registrado' : 'Externo'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const rest = valorCampo
+                    .split(',')
+                    .map(c => c.trim())
+                    .filter(c => c.toLowerCase() !== correo.toLowerCase())
+                    .join(', ');
+                  setFormEmail({ ...formEmail, [nombreCampo]: rest });
+                }}
+                className="ml-0.5 hover:text-red-600 font-extrabold text-[11px]"
+              >
+                ×
+              </button>
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    if (modalEmail) {
+      fetch('/api/usuarios')
+        .then(res => res.ok ? res.json() : [])
+        .then(data => setUsuariosRegistrados(Array.isArray(data) ? data : []))
+        .catch(() => setUsuariosRegistrados([]));
+    }
+  }, [modalEmail]);
 
   const ahoraRaw = useTime();
   // 🔧 Throttle: solo recalcular cuando cambia el MINUTO (no cada segundo)
@@ -287,10 +368,24 @@ export default function VisualBd() {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch liberaciones manuales de aulas hoy (polling cada 30s)
+  useEffect(() => {
+    const fetchLiberaciones = () => {
+      fetch(`/api/aulas/liberadas?fecha=${hoyStr}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setLiberacionesActivas(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    };
+    fetchLiberaciones();
+    const interval = setInterval(fetchLiberaciones, 30000);
+    return () => clearInterval(interval);
+  }, [hoyStr]);
+
   // Motor temporal
   const asignaturasConEstado = useMemo(() => {
     const diaActualIndex = ahora.getDay();
     const minutosActuales = (ahora.getHours() * 60) + ahora.getMinutes();
+    const liberacionesMap = new Map(liberacionesActivas.map(l => [l.aula_nombre, l]));
     
     // Pre-calcular valores y pre-filtrar exámenes para evitar congelamiento de la app
     const dayNum = ahora.getDate();
@@ -332,47 +427,69 @@ export default function VisualBd() {
         });
       }
 
+      const esHoraOriginalAhora = Boolean(
+        diaClaseIndex === diaActualIndex &&
+        inicio !== null && fin !== null &&
+        minutosActuales >= inicio &&
+        minutosActuales <= fin
+      );
+
       let estadoTiempo = 'programada';
-      if (diaClaseIndex === undefined || inicio === null || fin === null) {
+      if (clase.estado_slug === 'pospuesta') {
+        estadoTiempo = 'pospuesta';
+      } else if (diaClaseIndex === undefined || inicio === null || fin === null) {
         estadoTiempo = 'programada';
       } else if (diaClaseIndex < diaActualIndex) {
         estadoTiempo = 'finalizada';
+      } else if (!hayClasesPlan && !tieneExamenHoy) {
+        // Si el plan no tiene clases regulares (Receso / Inhábil / Vacaciones), las clases se marcan como suspendidas
+        estadoTiempo = 'suspendida';
       } else if (diaClaseIndex > diaActualIndex) {
         estadoTiempo = 'programada';
       } else {
         // Es una clase del día de HOY
         if (minutosActuales > fin) {
-          estadoTiempo = !tieneExamenHoy && !hayClasesPlan ? 'suspendida' : 'finalizada';
+          estadoTiempo = 'finalizada';
         } else if (minutosActuales >= inicio && minutosActuales <= fin) {
           if (tieneExamenHoy) {
             estadoTiempo = 'examen_ordinario';
-          } else if (hayClasesPlan) {
-            estadoTiempo = 'en_curso';
           } else {
-            estadoTiempo = 'suspendida';
+            estadoTiempo = 'en_curso';
           }
         } else {
-          estadoTiempo = !tieneExamenHoy && !hayClasesPlan ? 'suspendida' : 'proxima';
+          estadoTiempo = 'proxima';
         }
       }
+
+      const esAulaLiberada = Boolean(
+        diaClaseIndex === diaActualIndex &&
+        minutosActuales >= (inicio ?? 0) &&
+        minutosActuales <= (fin ?? 0) &&
+        clase.aula_asignada &&
+        liberacionesMap.has(clase.aula_asignada)
+      );
+      const infoLiberacion = esAulaLiberada ? liberacionesMap.get(clase.aula_asignada) : null;
 
       return { 
         ...clase, 
         estadoTiempo, 
-        estadoRazon: estadoTiempo === 'suspendida' ? estadoRazon : undefined,
+        estadoRazon: (estadoTiempo === 'suspendida' || estadoTiempo === 'pospuesta') ? (estadoTiempo === 'pospuesta' ? (clase.nota_reprogramacion || 'Pospuesta') : estadoRazon) : undefined,
+        esHoraOriginalAhora,
         nombreExamen,
         textoHora, 
         diaClaseIndex, 
         inicio, 
         fin, 
         diaOriginal: dia, 
-        tieneExamenHoy 
+        tieneExamenHoy,
+        esAulaLiberada,
+        infoLiberacion
       };
     }).sort((a, b) => {
       if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex ?? 99) - (b.diaClaseIndex ?? 99);
       return (a.inicio ?? 0) - (b.inicio ?? 0);
     });
-  }, [asignaturas, ahora, estadoAcademico, examenesHoy]);
+  }, [asignaturas, ahora, estadoAcademico, examenesHoy, liberacionesActivas]);
 
   // Todas las suplencias de hoy → filas sintéticas con estado calculado en tiempo real
   const filasSuplencias = useMemo(() => {
@@ -433,8 +550,19 @@ export default function VisualBd() {
     return [...new Set(base.map(a => getBloqueEstandar(a.inicio)).filter(Boolean))].sort();
   }, [datosPorLic, filtroAsignatura]);
 
+  const todosSegunPlan = useMemo(() => {
+    if (filtroPlan === 'todos') return todosAgrupados;
+    return todosAgrupados.filter(c => {
+      const esCuatri = Boolean(c.cuatrimestre && c.cuatrimestre !== '');
+      return filtroPlan === 'cuatrimestral' ? esCuatri : !esCuatri;
+    });
+  }, [todosAgrupados, filtroPlan]);
+
   const datosFiltrados = useMemo(() => {
     let resultado = todosAgrupados.filter(item => {
+      const esCuatri = Boolean(item.cuatrimestre && item.cuatrimestre !== '');
+      const coincidePlanFilter = filtroPlan === 'todos' || (filtroPlan === 'cuatrimestral' ? esCuatri : !esCuatri);
+
       const coincideBusqueda =
         item.docente?.toLowerCase().includes(busqueda.toLowerCase()) ||
         item.aula_asignada?.toLowerCase().includes(busqueda.toLowerCase());
@@ -442,21 +570,21 @@ export default function VisualBd() {
       const coincideAsignatura = filtroAsignatura === '' || item.asignatura  === filtroAsignatura;
       const coincideHora      = filtroHora      === '' || getBloqueEstandar(item.inicio) === filtroHora;
       const coincideDia       = filtroDia       === '' || item.diaOriginal  === filtroDia;
-      return coincideBusqueda && coincideLic && coincideAsignatura && coincideHora && coincideDia;
+      return coincidePlanFilter && coincideBusqueda && coincideLic && coincideAsignatura && coincideHora && coincideDia;
     });
     if (filtroEstado !== 'todas') {
       const diaHoy = ahora.getDay();
       resultado = resultado.filter(item => {
-        // Si buscamos 'en_curso', también debemos incluir los 'examen_ordinario' porque ocurren ahora mismo
         if (filtroEstado === 'en_curso' && item.estadoTiempo === 'examen_ordinario') return true;
+        if (filtroEstado === 'en_curso' && item.estadoTiempo === 'pospuesta' && item.esHoraOriginalAhora) return true;
         if (item.estadoTiempo !== filtroEstado) return false;
-        // "Finalizadas" → solo clases del día actual; las de días anteriores van a BD Total
         if (filtroEstado === 'finalizada') return item.diaClaseIndex === diaHoy;
         return true;
       });
     }
-    // Agregar filas de suplencias (filtradas por estado y criterios de búsqueda)
     const suplFiltradas = filasSuplencias.filter(s => {
+      const esCuatri = Boolean(s.cuatrimestre && s.cuatrimestre !== '');
+      const coincidePlanFilter = filtroPlan === 'todos' || (filtroPlan === 'cuatrimestral' ? esCuatri : !esCuatri);
       const coincideEstado     = filtroEstado === 'todas' || s.estadoTiempo === filtroEstado;
       const coincideBusqueda   = !busqueda ||
         s.docente?.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -464,29 +592,28 @@ export default function VisualBd() {
       const coincideLic        = filtroLic       === '' || extraerClaveLic(s.licenciatura) === filtroLic;
       const coincideAsignatura = filtroAsignatura === '' || s.asignatura  === filtroAsignatura;
       const coincideHora       = filtroHora      === '' || getBloqueEstandar(s.inicio) === filtroHora;
-      return coincideEstado && coincideBusqueda && coincideLic && coincideAsignatura && coincideHora;
+      return coincidePlanFilter && coincideEstado && coincideBusqueda && coincideLic && coincideAsignatura && coincideHora;
     });
     resultado = [...resultado, ...suplFiltradas];
     return resultado.sort((a, b) => {
       if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex ?? 99) - (b.diaClaseIndex ?? 99);
       return (a.inicio ?? 0) - (b.inicio ?? 0);
     });
-  }, [todosAgrupados, filasSuplencias, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, ahora]);
+  }, [todosAgrupados, filasSuplencias, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, filtroPlan, ahora]);
 
   const datosAgrupados = useMemo(() => datosFiltrados, [datosFiltrados]);
 
   const stats = useMemo(() => {
     const diaHoy      = ahora.getDay();
-    const enCurso     = todosAgrupados.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').length;
-    const proximas    = todosAgrupados.filter(c => c.estadoTiempo === 'proxima').length;
-    // Solo clases del día actual que ya concluyeron (no días anteriores de la semana)
-    const finalizadas = todosAgrupados.filter(c => c.estadoTiempo === 'finalizada' && c.diaClaseIndex === diaHoy).length;
-    const programadas = todosAgrupados.filter(c => c.estadoTiempo === 'programada').length;
-    const total       = todosAgrupados.length;
-    const docentesEnCurso = new Set(todosAgrupados.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').map(c => c.docente)).size;
-    const docentesTotales = new Set(todosAgrupados.map(c => c.docente)).size;
+    const enCurso     = todosSegunPlan.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').length;
+    const proximas    = todosSegunPlan.filter(c => c.estadoTiempo === 'proxima').length;
+    const finalizadas = todosSegunPlan.filter(c => c.estadoTiempo === 'finalizada' && c.diaClaseIndex === diaHoy).length;
+    const programadas = todosSegunPlan.filter(c => c.estadoTiempo === 'programada').length;
+    const total       = todosSegunPlan.length;
+    const docentesEnCurso = new Set(todosSegunPlan.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').map(c => c.docente)).size;
+    const docentesTotales = new Set(todosSegunPlan.map(c => c.docente)).size;
     return { enCurso, proximas, finalizadas, programadas, total, docentesEnCurso, docentesTotales };
-  }, [todosAgrupados, ahora]);
+  }, [todosSegunPlan, ahora]);
 
   const donutStats = useMemo(() => {
     const esLaboratorio = (nombre) => nombre?.toLowerCase().startsWith('lab');
@@ -495,13 +622,13 @@ export default function VisualBd() {
 
     const total = aulasNormales.length;
     const aulasEnCursoSet = new Set(
-      todosAgrupados
-        .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && c.aula_asignada && c.aula_asignada !== 'Por asignar' && !esLaboratorio(c.aula_asignada))
+      todosSegunPlan
+        .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && !c.esAulaLiberada && c.aula_asignada && c.aula_asignada !== 'Por asignar' && !esLaboratorio(c.aula_asignada))
         .map(c => c.aula_asignada)
     );
     const labsEnCursoSet = new Set(
-      todosAgrupados
-        .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && c.aula_asignada && c.aula_asignada !== 'Por asignar' && esLaboratorio(c.aula_asignada))
+      todosSegunPlan
+        .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && !c.esAulaLiberada && c.aula_asignada && c.aula_asignada !== 'Por asignar' && esLaboratorio(c.aula_asignada))
         .map(c => c.aula_asignada)
     );
 
@@ -513,7 +640,7 @@ export default function VisualBd() {
     const labsOcupados = labsEnCursoSet.size;
 
     return { total, ocupadas, disponibles, porcentaje, totalLabs, labsOcupados };
-  }, [aulasData, todosAgrupados]);
+  }, [aulasData, todosSegunPlan]);
 
   const RADIO_DONUT = 38;
   const CIRC_DONUT  = 2 * Math.PI * RADIO_DONUT;
@@ -531,6 +658,180 @@ export default function VisualBd() {
   const verClasesProximas    = () => { setFiltroEstado('proxima'); resetFiltros(); scrollToTable(); };
   const verClasesFinalizadas = () => { setFiltroEstado('finalizada'); resetFiltros(); scrollToTable(); };
 
+  const obtenerResumenFiltros = () => {
+    return {
+      Licenciatura: filtroLic || 'Todas',
+      Asignatura: filtroAsignatura || 'Todas',
+      Docente: busqueda || 'Todos',
+      Estado: filtroEstado,
+      Plan: filtroPlan,
+      Dia: filtroDia || 'Todos los días'
+    };
+  };
+
+  const getUrlExportarReposiciones = () => {
+    const params = new URLSearchParams();
+    if (busqueda) params.append('busqueda', busqueda);
+    if (filtroLic) params.append('licenciatura', filtroLic);
+    if (filtroAsignatura) params.append('asignatura', filtroAsignatura);
+    const qs = params.toString();
+    return `/api/reprogramaciones/exportar-historial-csv${qs ? `?${qs}` : ''}`;
+  };
+
+  const obtenerRegistrosAExportar = async (esHistorial) => {
+    if (esHistorial) {
+      try {
+        const res = await fetch('/api/clases-historico?rango_fecha=esta_semana');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const mapeados = data.map(r => ({
+              docente: r.docente_nombre,
+              licenciatura: r.licenciatura_codigo,
+              semestre: r.semestre,
+              grupo: r.grupo,
+              asignatura: r.asignatura_nombre,
+              textoHora: `${r.horario_inicio}-${r.horario_fin}`,
+              aula_asignada: r.aula_actual || r.aula_original,
+              estadoTiempo: r.estado_slug,
+              estadoRazon: r.estado_label,
+              diaOriginal: r.dia_semana
+            }));
+            const historicosFiltrados = mapeados.filter(item => {
+              const coincideBusqueda = !busqueda ||
+                item.docente?.toLowerCase().includes(busqueda.toLowerCase()) ||
+                item.aula_asignada?.toLowerCase().includes(busqueda.toLowerCase());
+              const coincideLic = filtroLic === '' || extraerClaveLic(item.licenciatura) === filtroLic;
+              const coincideAsignatura = filtroAsignatura === '' || item.asignatura === filtroAsignatura;
+              const coincideDia = filtroDia === '' || item.diaOriginal === filtroDia;
+              return coincideBusqueda && coincideLic && coincideAsignatura && coincideDia;
+            });
+            return historicosFiltrados.length > 0 ? historicosFiltrados : mapeados;
+          }
+        }
+      } catch (e) {
+        console.error("Error obteniendo histórico:", e);
+      }
+      return todosAgrupados;
+    }
+    return datosFiltrados.length > 0 ? datosFiltrados : todosAgrupados;
+  };
+
+  const handleExportarPDF = async (esHistorial = false) => {
+    setExportando(true);
+    const registrosAExportar = await obtenerRegistrosAExportar(esHistorial);
+    try {
+      const res = await fetch('/api/exportar/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario_nombre: 'Administrador',
+          usuario_correo: 'admin@universidadlatino.edu.mx',
+          es_historial_completo: esHistorial,
+          filtros_aplicados: obtenerResumenFiltros(),
+          registros: registrosAExportar
+        })
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = esHistorial ? `Bitacora_Eventos_${hoyStr}.pdf` : `Dashboard_Clases_${hoyStr}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        toast("Reporte PDF generado exitosamente", "exito");
+      } else {
+        toast("Error al generar reporte PDF", "error");
+      }
+    } catch {
+      toast("Error de conexión al generar PDF", "error");
+    } finally {
+      setExportando(false);
+    }
+  };
+
+  const handleExportarExcel = async (esHistorial = false) => {
+    setExportando(true);
+    const registrosAExportar = await obtenerRegistrosAExportar(esHistorial);
+    try {
+      const res = await fetch('/api/exportar/excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario_nombre: 'Administrador',
+          usuario_correo: 'admin@universidadlatino.edu.mx',
+          es_historial_completo: esHistorial,
+          filtros_aplicados: obtenerResumenFiltros(),
+          registros: registrosAExportar
+        })
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = esHistorial ? `Bitacora_Eventos_${hoyStr}.xlsx` : `Dashboard_Clases_${hoyStr}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        toast("Reporte Excel (.xlsx) generado exitosamente", "exito");
+      } else {
+        toast("Error al generar Excel", "error");
+      }
+    } catch {
+      toast("Error de conexión al generar Excel", "error");
+    } finally {
+      setExportando(false);
+    }
+  };
+
+  const handleEnviarEmailSubmit = async (e) => {
+    e.preventDefault();
+    if (!formEmail.destinatarios) {
+      toast("Especifica al menos un destinatario", "error");
+      return;
+    }
+    setEnviandoEmail(true);
+    const registrosAExportar = await obtenerRegistrosAExportar(formEmail.es_historial);
+    try {
+      const res = await fetch('/api/exportar/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario_nombre: 'Administrador',
+          usuario_correo: 'admin@universidadlatino.edu.mx',
+          destinatarios: formEmail.destinatarios,
+          cc: formEmail.cc,
+          cco: formEmail.cco,
+          asunto: formEmail.asunto,
+          mensaje: formEmail.mensaje,
+          adjuntar_pdf: formEmail.adjuntar_pdf,
+          adjuntar_excel: formEmail.adjuntar_excel,
+          es_historial_completo: formEmail.es_historial,
+          filtros_aplicados: obtenerResumenFiltros(),
+          registros: registrosAExportar
+        })
+      });
+      if (res.ok) {
+        setModalEmail(false);
+        toast("Reporte enviado por correo con éxito", "exito");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast(err.detail || "Error al enviar correo", "error");
+      }
+    } catch {
+      toast("Error de conexión al enviar correo", "error");
+    } finally {
+      setEnviandoEmail(false);
+    }
+  };
+
+  const handleImprimir = () => {
+    window.print();
+  };
+
   const fechaFormateada = ahora.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
 
@@ -538,37 +839,131 @@ export default function VisualBd() {
     <div className="max-w-[1400px] mx-auto space-y-5 font-manrope">
 
       
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-black text-[#1b1c1e] tracking-tight">Panel de Control</h1>
-            <p className="text-sm text-[#75777f] mt-1 font-medium">Gestión y seguimiento de horarios en tiempo real.</p>
+      {/* ENCABEZADO + CONTROLES Y FILTRO DE PLAN */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white border border-[#c5c6cf]/30 rounded-3xl p-5 shadow-sm">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black text-[#1b1c1e] tracking-tight">Panel de Control</h1>
+          <p className="text-xs sm:text-sm text-[#75777f] font-medium mt-0.5">Gestión y seguimiento de horarios en tiempo real.</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-between lg:justify-end">
+          {/* Selector de Plan */}
+          <div className="flex bg-[#f4f3f6] p-1 rounded-2xl border border-[#c5c6cf]/40">
+            <button
+              onClick={() => setFiltroPlan('todos')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filtroPlan === 'todos'
+                  ? 'bg-[#1c355e] text-white shadow-sm'
+                  : 'text-[#44464e] hover:text-[#1b1c1e]'
+              }`}
+            >
+              Todos los Planes
+            </button>
+            <button
+              onClick={() => setFiltroPlan('semestral')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filtroPlan === 'semestral'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-[#44464e] hover:text-[#1b1c1e]'
+              }`}
+            >
+              Semestral
+            </button>
+            <button
+              onClick={() => setFiltroPlan('cuatrimestral')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filtroPlan === 'cuatrimestral'
+                  ? 'bg-purple-600 text-white shadow-sm'
+                  : 'text-[#44464e] hover:text-[#1b1c1e]'
+              }`}
+            >
+              Cuatrimestral
+            </button>
           </div>
 
           {/* Indicador de estado */}
-        <div className={`flex items-center gap-3 bg-white rounded-2xl px-5 py-3 border shadow-sm ${errorConexion ? 'border-orange-300' : 'border-[#c5c6cf]/40'}`}>
-          {errorConexion ? (
-            <>
-              <span className="material-symbols-outlined text-orange-500 text-[18px]">wifi_off</span>
-              <div>
-                <p className="text-xs font-bold text-orange-600 uppercase tracking-wider">Sin conexión</p>
-                {ultimaSync && (
-                  <p className="text-[10px] text-[#75777f]">Última sync: {ultimaSync.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</p>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="relative">
-                <span className="material-symbols-outlined text-green-500 text-[18px]">sensors</span>
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-green-400 animate-ping" />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold text-[#75777f] uppercase tracking-wider">En Línea</p>
-                <p className="text-xs font-semibold text-[#1b1c1e] capitalize">{fechaFormateada}</p>
-              </div>
-            </>
-          )}
+          <div className={`flex items-center gap-2.5 bg-[#f4f3f6] rounded-2xl px-4 py-1.5 border ${errorConexion ? 'border-orange-300' : 'border-[#c5c6cf]/30'}`}>
+            {errorConexion ? (
+              <>
+                <span className="material-symbols-outlined text-orange-500 text-[16px]">wifi_off</span>
+                <span className="text-xs font-bold text-orange-600">Sin conexión</span>
+              </>
+            ) : (
+              <>
+                <div className="relative">
+                  <span className="material-symbols-outlined text-green-500 text-[16px]">sensors</span>
+                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-green-400 animate-ping" />
+                </div>
+                <span className="text-xs font-semibold text-[#1b1c1e] capitalize">{fechaFormateada}</span>
+              </>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* ══ ESTADO DEL CALENDARIO ACADÉMICO (RESUMEN COMPACTO) ════════════════ */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Plan Semestral */}
+        {(() => {
+          const sem = estadoAcademico.semestral;
+          const esReceso = sem?.estado === 'receso' || !sem?.hay_clases;
+          const esExamen = sem?.estado?.includes('ordinario') || sem?.estado?.includes('extraordinario') || sem?.estado?.includes('parcial');
+          return (
+            <div className={`px-4 py-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
+              esReceso ? 'bg-amber-50/60 border-amber-200/80' : esExamen ? 'bg-indigo-50/60 border-indigo-200/80' : 'bg-blue-50/50 border-blue-200/60'
+            }`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center flex-shrink-0 font-bold text-xs">
+                  SEM
+                </div>
+                <div className="min-w-0">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Plan Semestral</span>
+                  <p className="text-xs font-bold text-[#1c355e] truncate leading-tight">
+                    {sem?.descripcion || 'Seguimiento oficial de actividades.'}
+                  </p>
+                </div>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider flex-shrink-0 ${
+                esReceso ? 'bg-amber-100 text-amber-800 border border-amber-300/50' :
+                esExamen ? 'bg-indigo-100 text-indigo-800 border border-indigo-300/50' :
+                'bg-blue-100 text-blue-800 border border-blue-300/50'
+              }`}>
+                {sem?.hay_clases ? (sem?.estado?.toUpperCase() || 'CLASES REGULARES') : 'RECESO / INHÁBIL'}
+              </span>
+            </div>
+          );
+        })()}
+
+        {/* Plan Cuatrimestral */}
+        {(() => {
+          const cuat = estadoAcademico.cuatrimestral;
+          const esReceso = cuat?.estado === 'receso' || !cuat?.hay_clases;
+          const esExamen = cuat?.estado?.includes('ordinario') || cuat?.estado?.includes('extraordinario') || cuat?.estado?.includes('parcial');
+          return (
+            <div className={`px-4 py-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
+              esReceso ? 'bg-amber-50/60 border-amber-200/80' : esExamen ? 'bg-fuchsia-50/60 border-fuchsia-200/80' : 'bg-purple-50/50 border-purple-200/60'
+            }`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center flex-shrink-0 font-bold text-xs">
+                  CUAT
+                </div>
+                <div className="min-w-0">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Plan Cuatrimestral</span>
+                  <p className="text-xs font-bold text-purple-900 truncate leading-tight">
+                    {cuat?.descripcion || 'Seguimiento oficial de actividades.'}
+                  </p>
+                </div>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider flex-shrink-0 ${
+                esReceso ? 'bg-amber-100 text-amber-800 border border-amber-300/50' :
+                esExamen ? 'bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300/50' :
+                'bg-purple-100 text-purple-800 border border-purple-300/50'
+              }`}>
+                {cuat?.hay_clases ? (cuat?.estado?.toUpperCase() || 'CLASES REGULARES') : 'RECESO / INHÁBIL'}
+              </span>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ══ MÉTRICAS + DONUT ════════════════════════════════════════════════════ */}
@@ -767,7 +1162,7 @@ export default function VisualBd() {
               onChange={(e) => setBusqueda(e.target.value)}
             />
           </div>
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex items-center gap-2 ml-auto flex-wrap">
             <p className="text-[10px] font-bold text-[#75777f] uppercase tracking-wider hidden lg:block">Vista rápida:</p>
             <button
               onClick={verClasesEnCurso}
@@ -789,6 +1184,84 @@ export default function VisualBd() {
             >
               BD Total
             </button>
+
+            {/* ACCIONES DE EXPORTAR, EMAIL E IMPRIMIR */}
+            <div className="relative inline-block text-left">
+              <button
+                onClick={() => setMostrarMenuExportar(!mostrarMenuExportar)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-[#1c355e] text-white hover:bg-[#162c50] transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[16px]">download</span>
+                Exportar
+                <span className="material-symbols-outlined text-[16px]">expand_more</span>
+              </button>
+
+              {mostrarMenuExportar && (
+                <div className="absolute right-0 mt-2 w-72 bg-white border border-[#c5c6cf]/40 rounded-2xl shadow-xl z-50 py-2 space-y-1">
+                  <div className="px-3.5 py-1 text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider">
+                    Reporte por Filtros Activos
+                  </div>
+                  <button
+                    onClick={() => { setMostrarMenuExportar(false); handleExportarExcel(false); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-[#1b1c1e] hover:bg-emerald-50 hover:text-emerald-700 transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-emerald-600">table_chart</span>
+                    Exportar a Excel (Filtros Activos)
+                  </button>
+                  <button
+                    onClick={() => { setMostrarMenuExportar(false); handleExportarPDF(false); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-[#1b1c1e] hover:bg-blue-50 hover:text-blue-700 transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-red-500">picture_as_pdf</span>
+                    Exportar a PDF (Filtros Activos)
+                  </button>
+
+                  <div className="border-t border-[#c5c6cf]/20 my-1"></div>
+                  <div className="px-3.5 py-1 text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider">
+                    Reportes del Historial de la Semana
+                  </div>
+                  <button
+                    onClick={() => { setMostrarMenuExportar(false); handleExportarExcel(true); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-[#1b1c1e] hover:bg-emerald-50 hover:text-emerald-700 transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-emerald-600">table_chart</span>
+                    Exportar Historial de Clases (.xlsx)
+                  </button>
+                  <button
+                    onClick={() => { setMostrarMenuExportar(false); handleExportarPDF(true); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-[#1b1c1e] hover:bg-purple-50 hover:text-purple-700 transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-red-600">picture_as_pdf</span>
+                    Exportar Historial de Clases (.pdf)
+                  </button>
+                  <a
+                    href={getUrlExportarReposiciones()}
+                    download="reporte_reprogramaciones_semanal.csv"
+                    onClick={() => setMostrarMenuExportar(false)}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-[#1b1c1e] hover:bg-indigo-50 hover:text-indigo-700 transition-colors flex items-center gap-2 cursor-pointer block"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-indigo-600">history_edu</span>
+                    Reporte de Reposiciones (.CSV)
+                  </a>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setModalEmail(true)}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">mail</span>
+              Enviar por correo
+            </button>
+
+            <button
+              onClick={handleImprimir}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-700 text-white hover:bg-slate-800 transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">print</span>
+              Imprimir
+            </button>
           </div>
         </div>
 
@@ -804,6 +1277,7 @@ export default function VisualBd() {
             <option value="proxima">Próximas (hoy)</option>
             <option value="finalizada">Finalizadas (hoy)</option>
             <option value="suspendida">Suspendidas (Asueto)</option>
+            <option value="pospuesta">Pospuestas</option>
           </select>
 
           <select
@@ -909,6 +1383,7 @@ export default function VisualBd() {
                     ) : (
                       <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 ${
                         item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-600 border-red-200/60 shadow-sm' :
+                        item.estadoTiempo === 'pospuesta'        ? 'bg-purple-50 text-purple-700 border-purple-200 shadow-sm' :
                         item.estadoTiempo === 'en_curso'         ? 'bg-blue-50 text-blue-700 border-blue-200' :
                         item.estadoTiempo === 'finalizada'       ? 'bg-gray-50 text-gray-600 border-blue-200' :
                         item.estadoTiempo === 'suspendida'       ? 'bg-red-50 text-red-600 border-red-200 opacity-80' :
@@ -917,12 +1392,14 @@ export default function VisualBd() {
                       }`}>
                         <span className="material-symbols-outlined text-[11px]">
                           {item.estadoTiempo === 'examen_ordinario' ? 'edit_document' :
+                           item.estadoTiempo === 'pospuesta'        ? 'update' :
                            item.estadoTiempo === 'suspendida'       ? 'block' :
                            item.estadoTiempo === 'en_curso'         ? 'play_circle' :
                            item.estadoTiempo === 'finalizada'       ? 'stop_circle' :
                            item.estadoTiempo === 'proxima'          ? 'schedule' : 'event'}
                         </span>
                         {item.estadoTiempo === 'programada' ? 'Programada' : 
+                         item.estadoTiempo === 'pospuesta'  ? (item.estadoRazon || 'Pospuesta') :
                          item.estadoTiempo === 'suspendida' ? `En Pausa (${item.estadoRazon || 'Asueto'})` : 
                          item.estadoTiempo === 'examen_ordinario' && item.nombreExamen ? (
                            <span className="truncate max-w-[140px]" title={item.nombreExamen}>
@@ -932,6 +1409,12 @@ export default function VisualBd() {
                          <span className="capitalize">{item.estadoTiempo.replace('_', ' ')}</span>}
                       </span>
                     )}
+                    {Boolean(item.es_reposicion) && (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-1 rounded-md border bg-indigo-50 text-indigo-700 border-indigo-200 shadow-sm ml-1.5">
+                        <span className="material-symbols-outlined text-[11px]">event_repeat</span>
+                        Reposición
+                      </span>
+                    )}
                   </div>
                   {/* Docente */}
                   <p className="text-sm font-semibold text-[#1b1c1e] leading-tight">{item.docente || '—'}</p>
@@ -939,6 +1422,12 @@ export default function VisualBd() {
                     <span className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5 mt-0.5">
                       <span className="material-symbols-outlined text-[10px]">swap_horiz</span>
                       Cubre a {item.docente_ausente}
+                    </span>
+                  )}
+                  {Boolean(item.es_reposicion) && (
+                    <span className="text-[10px] text-indigo-600 font-medium flex items-center gap-0.5 mt-0.5" title={item.nota_reprogramacion}>
+                      <span className="material-symbols-outlined text-[10px]">event_repeat</span>
+                      {item.nota_reprogramacion || 'Clase de reposición'}
                     </span>
                   )}
 
@@ -961,7 +1450,15 @@ export default function VisualBd() {
                   {/* Horario + Aula */}
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#f0f0f4]">
                     <span className="font-mono text-xs font-bold text-[#1c355e]">{item.textoHora}</span>
-                    {item.aula_reasignada ? (
+                    {item.esAulaLiberada ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="font-bold text-emerald-700 flex items-center gap-1 text-xs">
+                          <span className="material-symbols-outlined text-[12px]">lock_open</span>
+                          Fuera del Salón
+                        </span>
+                        <span className="text-[9px] text-[#75777f] line-through">Salón {item.aula_asignada}</span>
+                      </div>
+                    ) : item.aula_reasignada ? (
                       <div className="flex flex-col items-end gap-0.5">
                         <span className="font-bold text-orange-600 flex items-center gap-1 text-xs">
                           <span className="material-symbols-outlined text-[12px]">construction</span>
@@ -1053,7 +1550,15 @@ export default function VisualBd() {
                     </td>
                     <td className="py-3.5 px-5 font-mono text-[#1c355e] font-bold text-xs whitespace-nowrap">{item.textoHora}</td>
                     <td className="py-3.5 px-5">
-                      {item.aula_reasignada ? (
+                      {item.esAulaLiberada ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-bold text-emerald-700 flex items-center gap-1 whitespace-nowrap text-xs">
+                            <span className="material-symbols-outlined text-[12px]">lock_open</span>
+                            Fuera de Aula
+                          </span>
+                          <span className="text-[9px] text-[#75777f] line-through">Salón {item.aula_asignada}</span>
+                        </div>
+                      ) : item.aula_reasignada ? (
                         <div className="flex flex-col gap-0.5">
                           <span className="font-bold text-orange-600 flex items-center gap-1 whitespace-nowrap text-xs">
                             <span className="material-symbols-outlined text-[12px]">construction</span>
@@ -1066,7 +1571,12 @@ export default function VisualBd() {
                       )}
                     </td>
                     <td className="py-3.5 px-5">
-                      {item.es_suplencia ? (
+                      {item.esAulaLiberada ? (
+                        <span className="inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm">
+                          <span className="material-symbols-outlined text-[11px]">lock_open</span>
+                          Aula Liberada ({item.infoLiberacion?.motivo || 'Fuera del salón'})
+                        </span>
+                      ) : item.es_suplencia ? (
                         <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 ${
                           item.estadoTiempo === 'en_curso'   ? 'bg-blue-50 text-blue-700 border-blue-200' :
                           item.estadoTiempo === 'finalizada' ? 'bg-gray-50 text-gray-600 border-gray-200' :
@@ -1078,6 +1588,7 @@ export default function VisualBd() {
                       ) : (
                         <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border flex-shrink-0 ${
                           item.estadoTiempo === 'examen_ordinario' ? 'bg-red-50 text-red-600 border-red-200/60 shadow-sm' :
+                          item.estadoTiempo === 'pospuesta'        ? 'bg-purple-50 text-purple-700 border-purple-200 shadow-sm' :
                           item.estadoTiempo === 'en_curso'         ? 'bg-blue-50 text-blue-700 border-blue-200' :
                           item.estadoTiempo === 'finalizada'       ? 'bg-gray-50 text-gray-600 border-gray-200' :
                           item.estadoTiempo === 'suspendida'       ? 'bg-red-50 text-red-600 border-red-200 opacity-80' :
@@ -1086,12 +1597,14 @@ export default function VisualBd() {
                         }`}>
                           <span className="material-symbols-outlined text-[11px]">
                             {item.estadoTiempo === 'examen_ordinario' ? 'edit_document' :
+                             item.estadoTiempo === 'pospuesta'        ? 'update' :
                              item.estadoTiempo === 'suspendida'       ? 'block' :
                              item.estadoTiempo === 'en_curso'         ? 'play_circle' :
                              item.estadoTiempo === 'finalizada'       ? 'stop_circle' :
                              item.estadoTiempo === 'proxima'          ? 'schedule' : 'event'}
                           </span>
                           {item.estadoTiempo === 'programada' ? 'Programada' : 
+                           item.estadoTiempo === 'pospuesta'  ? (item.estadoRazon || 'Pospuesta') :
                            item.estadoTiempo === 'suspendida' ? `En Pausa (${item.estadoRazon || 'Asueto'})` : 
                            item.estadoTiempo === 'examen_ordinario' && item.nombreExamen ? (
                              <span className="truncate max-w-[140px]" title={item.nombreExamen}>
@@ -1099,6 +1612,12 @@ export default function VisualBd() {
                              </span>
                            ) :
                            <span className="capitalize">{item.estadoTiempo.replace('_', ' ')}</span>}
+                        </span>
+                      )}
+                      {Boolean(item.es_reposicion) && (
+                        <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-1 rounded-md border bg-indigo-50 text-indigo-700 border-indigo-200 shadow-sm ml-1.5">
+                          <span className="material-symbols-outlined text-[11px]">event_repeat</span>
+                          Reposición
                         </span>
                       )}
                     </td>
@@ -1121,6 +1640,254 @@ export default function VisualBd() {
           </div>
         )}
       </div>
+
+      {/* MODAL ENVIAR REPORTES POR CORREO */}
+      {modalEmail && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100] p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-lg shadow-2xl space-y-4 font-manrope">
+            <div className="flex justify-between items-center border-b border-[#c5c6cf]/30 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[20px]">mail</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#1c355e]">Enviar Reporte por Correo</h3>
+                  <p className="text-xs text-[#75777f]">Distribución de informe académico institucional</p>
+                </div>
+              </div>
+              <button onClick={() => setModalEmail(false)} className="text-[#44464e] hover:text-[#1c355e] transition-colors cursor-pointer">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleEnviarEmailSubmit} className="space-y-3 text-xs">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block font-bold text-[#44464e] uppercase">Destinatario(s) *</label>
+                  {usuariosRegistrados.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarSugerenciasEmails(!mostrarSugerenciasEmails)}
+                      className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">how_to_reg</span>
+                      {mostrarSugerenciasEmails ? 'Ocultar usuarios' : `Ver registrados (${usuariosRegistrados.length})`}
+                    </button>
+                  )}
+                </div>
+
+                <input
+                  type="text"
+                  required
+                  placeholder="Escribe correos (registrados o externos) separados por coma..."
+                  value={formEmail.destinatarios}
+                  onFocus={() => setCampoDestino('destinatarios')}
+                  onChange={(e) => setFormEmail({ ...formEmail, destinatarios: e.target.value })}
+                  className={`w-full px-3.5 py-2.5 bg-[#f4f3f6] border rounded-xl text-sm outline-none transition-all font-medium ${
+                    campoDestino === 'destinatarios' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'
+                  }`}
+                />
+                {renderBadgesCampo('destinatarios', formEmail.destinatarios)}
+
+                {/* Selección rápida de correos registrados en el sistema */}
+                {mostrarSugerenciasEmails && usuariosRegistrados.length > 0 && (
+                  <div className="mt-2.5 p-2.5 bg-blue-50/80 border border-blue-200/90 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[13px] text-blue-600">verified_user</span>
+                        Seleccionar de Usuarios Registrados:
+                      </p>
+                      <div className="flex items-center gap-1 text-[9.5px] font-bold">
+                        <span className="text-gray-500">Agregar a:</span>
+                        <button
+                          type="button"
+                          onClick={() => setCampoDestino('destinatarios')}
+                          className={`px-2 py-0.5 rounded-md text-[9px] font-extrabold border transition-all cursor-pointer ${
+                            campoDestino === 'destinatarios' ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          Para
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCampoDestino('cc')}
+                          className={`px-2 py-0.5 rounded-md text-[9px] font-extrabold border transition-all cursor-pointer ${
+                            campoDestino === 'cc' ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          CC
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCampoDestino('cco')}
+                          className={`px-2 py-0.5 rounded-md text-[9px] font-extrabold border transition-all cursor-pointer ${
+                            campoDestino === 'cco' ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          CCO
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
+                      {usuariosRegistrados.map((u) => {
+                        const valActual = formEmail[campoDestino] || '';
+                        const yaAgregado = valActual
+                          .split(',')
+                          .map(e => e.trim().toLowerCase())
+                          .includes(u.correo?.toLowerCase());
+
+                        return (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => {
+                              if (yaAgregado) {
+                                const rest = valActual
+                                  .split(',')
+                                  .map(e => e.trim())
+                                  .filter(e => e.toLowerCase() !== u.correo?.toLowerCase())
+                                  .join(', ');
+                                setFormEmail({ ...formEmail, [campoDestino]: rest });
+                              } else {
+                                const nuevo = valActual.trim()
+                                  ? `${valActual.trim()}, ${u.correo}`
+                                  : u.correo;
+                                setFormEmail({ ...formEmail, [campoDestino]: nuevo });
+                              }
+                            }}
+                            className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all border flex items-center gap-1 cursor-pointer ${
+                              yaAgregado
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                                : 'bg-white text-blue-900 border-blue-200 hover:bg-blue-100/80'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[12px]">
+                              {yaAgregado ? 'check_circle' : 'add_circle'}
+                            </span>
+                            <span>{u.nombre}</span>
+                            <span className="opacity-75 font-mono text-[9.5px]">({u.correo})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-[#44464e] uppercase mb-1">CC (Copia)</label>
+                  <input
+                    type="text"
+                    placeholder="copia@universidadlatino.edu.mx"
+                    value={formEmail.cc}
+                    onFocus={() => setCampoDestino('cc')}
+                    onChange={(e) => setFormEmail({ ...formEmail, cc: e.target.value })}
+                    className={`w-full px-3.5 py-2 bg-[#f4f3f6] border rounded-xl text-xs outline-none transition-all ${
+                      campoDestino === 'cc' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'
+                    }`}
+                  />
+                  {renderBadgesCampo('cc', formEmail.cc)}
+                </div>
+                <div>
+                  <label className="block font-bold text-[#44464e] uppercase mb-1">CCO (Copia Oculta)</label>
+                  <input
+                    type="text"
+                    placeholder="oculta@universidadlatino.edu.mx"
+                    value={formEmail.cco}
+                    onFocus={() => setCampoDestino('cco')}
+                    onChange={(e) => setFormEmail({ ...formEmail, cco: e.target.value })}
+                    className={`w-full px-3.5 py-2 bg-[#f4f3f6] border rounded-xl text-xs outline-none transition-all ${
+                      campoDestino === 'cco' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'
+                    }`}
+                  />
+                  {renderBadgesCampo('cco', formEmail.cco)}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-[#44464e] uppercase mb-1">Asunto</label>
+                <input
+                  type="text"
+                  required
+                  value={formEmail.asunto}
+                  onChange={(e) => setFormEmail({ ...formEmail, asunto: e.target.value })}
+                  className="w-full px-3.5 py-2 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-600/20 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-[#44464e] uppercase mb-1">Mensaje Personalizado</label>
+                <textarea
+                  rows="3"
+                  placeholder="Escribe una nota o aclaración para el destinatario..."
+                  value={formEmail.mensaje}
+                  onChange={(e) => setFormEmail({ ...formEmail, mensaje: e.target.value })}
+                  className="w-full px-3.5 py-2 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-600/20"
+                ></textarea>
+              </div>
+
+              <div className="bg-[#f4f3f6] p-3 rounded-2xl border border-[#c5c6cf]/30 space-y-2">
+                <p className="font-bold text-[#1c355e] uppercase text-[10px]">Archivos a Adjuntar:</p>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formEmail.adjuntar_pdf}
+                      onChange={(e) => setFormEmail({ ...formEmail, adjuntar_pdf: e.target.checked })}
+                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="font-bold text-gray-700">Documento PDF</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formEmail.adjuntar_excel}
+                      onChange={(e) => setFormEmail({ ...formEmail, adjuntar_excel: e.target.checked })}
+                      className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className="font-bold text-gray-700">Hoja Excel (.xlsx)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="chkHistorialMail"
+                  checked={formEmail.es_historial}
+                  onChange={(e) => setFormEmail({ ...formEmail, es_historial: e.target.checked })}
+                  className="w-4 h-4 rounded text-purple-600"
+                />
+                <label htmlFor="chkHistorialMail" className="font-bold text-purple-800 text-[11px] cursor-pointer">
+                  Adjuntar Historial Completo (Sin aplicar los filtros actuales)
+                </label>
+              </div>
+
+              <div className="flex gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setModalEmail(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={enviandoEmail}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">send</span>
+                  {enviandoEmail ? 'Enviando...' : 'Enviar Reporte'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

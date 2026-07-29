@@ -24,12 +24,61 @@ export default function GestionHorarios() {
   const [ocupacion, setOcupacion] = useState({});
   const [archivosSeleccionados, setArchivosSeleccionados] = useState([]);
   const [orden, setOrden] = useState('original');
+  const [busquedaArchivos, setBusquedaArchivos] = useState('');
   const [filtroModal, setFiltroModal] = useState('');
   const [filtroMaestroModal, setFiltroMaestroModal] = useState('');
+  const [filtroHoraModal, setFiltroHoraModal] = useState('');
 
   const esBloqueada = (nombreAula) => {
     const d = ocupacion[nombreAula];
     return d ? (d.matutino && d.vespertino) : false;
+  };
+
+  const calcularRangoHorario = (horarios) => {
+    if (!horarios || !horarios.length) return null;
+    let minInicio = null;
+    let maxFin = null;
+    horarios.forEach(item => {
+      const str = item.horario || item.horario_resumen || '';
+      const regex = /(\d{1,2}):(\d{2})\s*[-aA–—]\s*(\d{1,2}):(\d{2})/g;
+      let match;
+      while ((match = regex.exec(str)) !== null) {
+        const startMins = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+        const endMins = parseInt(match[3], 10) * 60 + parseInt(match[4], 10);
+        if (minInicio === null || startMins < minInicio) minInicio = startMins;
+        if (maxFin === null || endMins > maxFin) maxFin = endMins;
+      }
+    });
+    if (minInicio === null || maxFin === null) return null;
+    const hi = Math.floor(minInicio / 60);
+    const mi = String(minInicio % 60).padStart(2, '0');
+    const hf = Math.floor(maxFin / 60);
+    const mf = String(maxFin % 60).padStart(2, '0');
+    return `${hi}:${mi} a ${hf}:${mf}`;
+  };
+
+  const obtenerHorasUnicasModal = (horarios) => {
+    if (!horarios || !horarios.length) return [];
+    const slotsSet = new Set();
+    horarios.forEach(h => {
+      const str = h.horario || h.horario_resumen || '';
+      const match = str.match(/(\d{1,2}:\d{2})\s*[-–—]*\s*(\d{1,2}:\d{2})/);
+      if (match) {
+        slotsSet.add(`${match[1]} - ${match[2]}`);
+      } else {
+        const singleMatches = str.match(/\d{1,2}:\d{2}/g);
+        if (singleMatches) {
+          singleMatches.forEach(m => slotsSet.add(m));
+        }
+      }
+    });
+    return Array.from(slotsSet).sort((a, b) => {
+      const mA = a.match(/(\d{1,2}):(\d{2})/);
+      const mB = b.match(/(\d{1,2}):(\d{2})/);
+      const minA = mA ? parseInt(mA[1], 10) * 60 + parseInt(mA[2], 10) : 0;
+      const minB = mB ? parseInt(mB[1], 10) * 60 + parseInt(mB[2], 10) : 0;
+      return minA - minB;
+    });
   };
 
   useEffect(() => {
@@ -330,7 +379,7 @@ export default function GestionHorarios() {
       {/* ENCABEZADO */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-[#1b1c1e] tracking-tight">Gestión de Horarios</h1>
+          <h1 className="text-3xl font-bold text-[#1b1c1e] tracking-tight">Gestión de Horarios por Grupos</h1>
           <p className="text-base text-[#44464e] mt-1.5">
             Administración profesional de archivos maestros y asignación inteligente de espacios académicos.
           </p>
@@ -367,10 +416,39 @@ export default function GestionHorarios() {
       {/* VISTA GESTOR DE ARCHIVOS */}
       {vistaActual === 'gestor' && (
         <div className="space-y-6">
+          {/* Barra de Búsqueda Inteligente */}
+          <div className="relative">
+            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#75777f]">
+              search
+            </span>
+            <input
+              type="text"
+              placeholder="Buscar archivo por carrera o código (ej. ISC, Nut, Neg, Derecho)..."
+              value={busquedaArchivos}
+              onChange={(e) => setBusquedaArchivos(e.target.value)}
+              className="w-full pl-12 pr-10 py-3 bg-white border border-[#c5c6cf]/40 rounded-2xl text-sm font-medium text-[#1b1c1e] placeholder-[#75777f] shadow-sm focus:outline-none focus:border-[#1c355e] focus:ring-2 focus:ring-[#1c355e]/20 transition-all"
+            />
+            {busquedaArchivos && (
+              <button
+                onClick={() => setBusquedaArchivos('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-[#75777f] hover:text-[#1b1c1e]"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            )}
+          </div>
+
           {/* Opciones superiores */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="text-sm text-[#44464e]">
-              <span className="font-bold text-[#1c355e]">{archivosGuardados.length}</span> archivos cargados
+              <span className="font-bold text-[#1c355e]">
+                {[...archivosGuardados].filter(a =>
+                  !busquedaArchivos ||
+                  a.archivo.toLowerCase().includes(busquedaArchivos.toLowerCase().trim()) ||
+                  (a.turno && a.turno.toLowerCase().includes(busquedaArchivos.toLowerCase().trim())) ||
+                  (a.plan && a.plan.toLowerCase().includes(busquedaArchivos.toLowerCase().trim()))
+                ).length}
+              </span> de {archivosGuardados.length} archivos
             </div>
             <div className="flex items-center gap-3">
               {archivosGuardados.length > 0 && (
@@ -434,7 +512,18 @@ export default function GestionHorarios() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[...archivosGuardados].sort((a, b) => orden === 'az' ? a.archivo.localeCompare(b.archivo) : 0).map((archivoGuardado, idx) => (
+              {[...archivosGuardados]
+                .filter(a => {
+                  if (!busquedaArchivos || !busquedaArchivos.trim()) return true;
+                  const q = busquedaArchivos.toLowerCase().trim();
+                  return (
+                    a.archivo.toLowerCase().includes(q) ||
+                    (a.turno && a.turno.toLowerCase().includes(q)) ||
+                    (a.plan && a.plan.toLowerCase().includes(q))
+                  );
+                })
+                .sort((a, b) => orden === 'az' ? a.archivo.localeCompare(b.archivo) : 0)
+                .map((archivoGuardado, idx) => (
                 <div
                   key={idx}
                   className={`bg-white border rounded-2xl p-5 hover:shadow-lg transition-all cursor-pointer group relative ${archivosSeleccionados.includes(archivoGuardado.archivo) ? 'border-[#1c355e] ring-1 ring-[#1c355e]/50 bg-[#1c355e]/5' : 'border-[#c5c6cf]/30'}`}
@@ -520,11 +609,20 @@ export default function GestionHorarios() {
                   <div className="space-y-2 text-xs text-[#44464e]">
                     <div className="flex justify-between">
                       <span className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-[16px]">schedule</span>
+                        <span className="material-symbols-outlined text-[16px]">list_alt</span>
                         Horarios
                       </span>
                       <span className="font-bold text-[#1c355e]">{archivoGuardado.total_horarios}</span>
                     </div>
+                    {archivoGuardado.rango_horario && (
+                      <div className="flex justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[16px]">schedule</span>
+                          Rango horario
+                        </span>
+                        <span className="font-bold text-[#1c355e] font-mono">{archivoGuardado.rango_horario}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-[16px]">domain</span>
@@ -861,6 +959,12 @@ export default function GestionHorarios() {
                   <div className="min-w-0">
                     <span className="text-xs font-bold text-[#44464e] uppercase block truncate">Detalles del Archivo</span>
                     <span className="text-sm font-bold text-[#1c355e] font-mono block truncate max-w-[200px] sm:max-w-xs">{archivoSeleccionado}</span>
+                    {calcularRangoHorario(detallesArchivo) && (
+                      <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2.5 py-0.5 rounded-md inline-flex items-center gap-1 mt-1">
+                        <span className="material-symbols-outlined text-[13px]">schedule</span>
+                        Rango: {calcularRangoHorario(detallesArchivo)}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <button 
@@ -869,6 +973,7 @@ export default function GestionHorarios() {
                     setDetallesArchivo(null);
                     setFiltroModal('');
                     setFiltroMaestroModal('');
+                    setFiltroHoraModal('');
                   }}
                   className="p-2 text-[#44464e] hover:bg-white rounded-lg transition-all lg:hidden flex-shrink-0"
                 >
@@ -889,6 +994,18 @@ export default function GestionHorarios() {
                     ))}
                   </select>
                 )}
+                {detallesArchivo && (
+                  <select
+                    value={filtroHoraModal}
+                    onChange={(e) => setFiltroHoraModal(e.target.value)}
+                    className="px-4 py-2 bg-white border border-[#c5c6cf]/40 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 w-full sm:max-w-[190px]"
+                  >
+                    <option value="">Todos los horarios</option>
+                    {obtenerHorasUnicasModal(detallesArchivo).map(hora => (
+                      <option key={hora} value={hora}>{hora}</option>
+                    ))}
+                  </select>
+                )}
                 <div className="relative w-full sm:w-auto">
                   <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-[#c5c6cf]">search</span>
                   <input 
@@ -905,6 +1022,7 @@ export default function GestionHorarios() {
                     setDetallesArchivo(null);
                     setFiltroModal('');
                     setFiltroMaestroModal('');
+                    setFiltroHoraModal('');
                   }}
                   className="p-2 text-[#44464e] hover:bg-white rounded-lg transition-all hidden lg:block"
                 >
@@ -926,48 +1044,87 @@ export default function GestionHorarios() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {detallesArchivo.filter(h => {
-                    const term = filtroModal.toLowerCase();
-                    const coincideTexto = h.docente?.toLowerCase().includes(term) ||
-                           h.asignatura?.toLowerCase().includes(term) ||
-                           h.horario?.toLowerCase().includes(term) ||
-                           h.aula_asignada?.toLowerCase().includes(term);
-                    const coincideMaestro = filtroMaestroModal === '' || h.docente === filtroMaestroModal;
-                    return coincideTexto && coincideMaestro;
-                  }).map((horario) => (
-                    <tr key={horario.id} className="hover:bg-[#f4f3f6]/30 transition-colors">
-                      <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{horario.docente}</td>
-                      <td className="px-6 py-4 text-xs font-bold">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
-                            {horario.licenciatura}
+                  {(() => {
+                    const listaFiltrada = detallesArchivo.filter(h => {
+                      const term = filtroModal.toLowerCase();
+                      const coincideTexto = h.docente?.toLowerCase().includes(term) ||
+                             h.asignatura?.toLowerCase().includes(term) ||
+                             h.horario?.toLowerCase().includes(term) ||
+                             h.aula_asignada?.toLowerCase().includes(term);
+                      const coincideMaestro = filtroMaestroModal === '' || h.docente === filtroMaestroModal;
+
+                      let coincideHora = true;
+                      if (filtroHoraModal) {
+                        const hStr = h.horario || h.horario_resumen || '';
+                        const cleanH = hStr.replace(/--/g, ' - ');
+                        const cleanF = filtroHoraModal.replace(/--/g, ' - ');
+                        const fTimeMatch = cleanF.match(/(\d{1,2}:\d{2})/);
+                        if (fTimeMatch) {
+                          coincideHora = cleanH.includes(fTimeMatch[1]) || hStr.includes(fTimeMatch[1]);
+                        } else {
+                          coincideHora = cleanH.includes(cleanF);
+                        }
+                      }
+
+                      return coincideTexto && coincideMaestro && coincideHora;
+                    });
+
+                    if (listaFiltrada.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                            <span className="material-symbols-outlined text-4xl text-gray-300 block mb-2">filter_alt_off</span>
+                            <p className="text-sm font-bold text-[#1b1c1e]">No se encontraron horarios con los filtros seleccionados</p>
+                            <button
+                              onClick={() => {
+                                setFiltroModal('');
+                                setFiltroMaestroModal('');
+                                setFiltroHoraModal('');
+                              }}
+                              className="mt-3 text-xs font-bold text-[#1c355e] hover:underline"
+                            >
+                              Limpiar todos los filtros
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return listaFiltrada.map((horario) => (
+                      <tr key={horario.id} className="hover:bg-[#f4f3f6]/30 transition-colors">
+                        <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{horario.docente}</td>
+                        <td className="px-6 py-4 text-xs font-bold">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
+                              {horario.licenciatura}
+                            </span>
+                            {horario.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px]">Sem: {horario.semestre}</span>}
+                            {horario.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px]">Cuat: {horario.cuatrimestre}</span>}
+                            {horario.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px]">Gpo: {horario.grupo}</span>}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-[#1b1c1e]">{horario.asignatura}</td>
+                        <td className="px-6 py-4 text-sm font-mono font-bold text-gray-500 italic">{horario.horario}</td>
+                        <td className="px-6 py-4">
+                          <span className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                            horario.aula_asignada === 'Por asignar'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            {horario.aula_asignada}
                           </span>
-                          {horario.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px]">Sem: {horario.semestre}</span>}
-                          {horario.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px]">Cuat: {horario.cuatrimestre}</span>}
-                          {horario.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px]">Gpo: {horario.grupo}</span>}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm font-bold text-[#1b1c1e]">{horario.asignatura}</td>
-                      <td className="px-6 py-4 text-sm font-mono font-bold text-gray-500 italic">{horario.horario}</td>
-                      <td className="px-6 py-4">
-                        <span className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                          horario.aula_asignada === 'Por asignar'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-emerald-100 text-emerald-700'
-                        }`}>
-                          {horario.aula_asignada}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <button 
-                          onClick={() => abrirModalEditar(horario)}
-                          className="p-2 text-[#1c355e] hover:bg-[#f4f3f6] rounded-lg transition-all"
-                        >
-                          <span className="material-symbols-outlined text-[18px]">edit</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-6 py-4">
+                          <button 
+                            onClick={() => abrirModalEditar(horario)}
+                            className="p-2 text-[#1c355e] hover:bg-[#f4f3f6] rounded-lg transition-all"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">edit</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>

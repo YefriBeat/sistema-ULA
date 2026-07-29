@@ -2,6 +2,18 @@ import { useState, useEffect } from 'react';
 import { useToast, ToastContainer } from '../components/useToast';
 import { useTime } from '../components/TimeContext';
 
+const obtenerColorLicenciatura = (licenciatura) => {
+  const lic = (licenciatura || '').toLowerCase();
+  if (lic.includes('medicina') || lic === 'med') return 'bg-blue-100 text-blue-700 border-blue-200';
+  if (lic.includes('administración') || lic.includes('negocios') || lic === 'adm' || lic === 'neg') return 'bg-orange-100 text-orange-700 border-orange-200';
+  if (lic.includes('mecatrónica') || lic.includes('ingeniería') || lic === 'isc' || lic === 'sis' || lic === 'imc') return 'bg-green-100 text-green-700 border-green-200';
+  if (lic.includes('enfermería') || lic === 'enf') return 'bg-teal-100 text-teal-700 border-teal-200';
+  if (lic.includes('derecho') || lic === 'der') return 'bg-red-100 text-red-700 border-red-200';
+  if (lic.includes('nutrición') || lic === 'nut') return 'bg-lime-100 text-lime-700 border-lime-200';
+  if (lic.includes('psicología') || lic === 'psi') return 'bg-purple-100 text-purple-700 border-purple-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+};
+
 export default function GestionAulas() {
   const { toast, toasts } = useToast();
   const ahora = useTime();
@@ -14,7 +26,15 @@ export default function GestionAulas() {
   const [clases, setClases] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
-  const [filtro, setFiltro] = useState('todos');
+  const [filtroTipo, setFiltroTipo] = useState('todos');
+  const [filtroEstado, setFiltroEstado] = useState('todos');
+  const [busqueda, setBusqueda] = useState('');
+
+  // Estado para liberaciones manuales de aulas
+  const [liberaciones, setLiberaciones] = useState([]);
+  const [modalLiberarAula, setModalLiberarAula] = useState(null);
+  const [motivoLiberacion, setMotivoLiberacion] = useState('Salida anticipada');
+  const [guardandoLiberacion, setGuardandoLiberacion] = useState(false);
 
   // Estado para el modal de mantenimiento
   const [modalMantAula, setModalMantAula] = useState(null);
@@ -77,15 +97,73 @@ export default function GestionAulas() {
     } catch (e) { console.error("Error al cargar clases en tiempo real:", e); }
   };
 
+  const fetchLiberaciones = async () => {
+    try {
+      const r = await fetch(`/api/aulas/liberadas?fecha=${hoyStr}`);
+      if (r.ok) setLiberaciones(await r.json());
+    } catch (e) { console.error("Error al cargar liberaciones:", e); }
+  };
+
+  const handleConfirmarLiberacion = async () => {
+    if (!modalLiberarAula) return;
+    setGuardandoLiberacion(true);
+    try {
+      const res = await fetch('/api/aulas/liberar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aula_nombre: modalLiberarAula.aulaNombre,
+          fecha: hoyStr,
+          docente: modalLiberarAula.clase.docente,
+          asignatura: modalLiberarAula.clase.asignatura,
+          horario: modalLiberarAula.clase.horario,
+          motivo: motivoLiberacion || 'Liberación manual',
+        })
+      });
+      if (res.ok) {
+        setModalLiberarAula(null);
+        fetchClasesAhora(ahora);
+        fetchLiberaciones();
+        fetchOcupacion();
+        toast(`Aula ${modalLiberarAula.aulaNombre} liberada manualmente con éxito`, "exito");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast(err.detail || "Error al liberar el aula", "error");
+      }
+    } catch {
+      toast("Error de conexión con el servidor", "error");
+    } finally {
+      setGuardandoLiberacion(false);
+    }
+  };
+
+  const handleReactivarAula = async (liberacionId, aulaNombre) => {
+    try {
+      const res = await fetch(`/api/aulas/liberar/${liberacionId}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchClasesAhora(ahora);
+        fetchLiberaciones();
+        fetchOcupacion();
+        toast(`Aula ${aulaNombre} reactivada en clase`, "exito");
+      } else {
+        toast("Error al reactivar el aula", "error");
+      }
+    } catch {
+      toast("Error de conexión con el servidor", "error");
+    }
+  };
+
   // Carga inicial + refresco cada 30 s
   useEffect(() => {
     fetchAulas();
     fetchOcupacion();
     fetchClasesAhora(ahora);
+    fetchLiberaciones();
     const intervalo = setInterval(() => {
       fetchAulas();
       fetchOcupacion();
       fetchClasesAhora(ahora);
+      fetchLiberaciones();
     }, 30000);
     return () => clearInterval(intervalo);
   }, [hoyStr]);
@@ -265,9 +343,38 @@ export default function GestionAulas() {
     }
   };
 
+  const esLaboratorio = (nombre) => nombre.toLowerCase().startsWith('lab');
+  const aulasNormales = aulas.filter(a => !esLaboratorio(a.nombre));
+  const laboratorios  = aulas.filter(a => esLaboratorio(a.nombre));
+
   const aulasFiltradas = aulas.filter(aula => {
-    if (filtro === 'mantenimiento') return estaEnMantenimiento(aula);
-    if (filtro === 'en_curso') return !estaEnMantenimiento(aula) && !!obtenerClaseEnCurso(aula.nombre);
+    const term = busqueda.trim().toLowerCase();
+    if (term) {
+      const coincideNombre = aula.nombre?.toLowerCase().includes(term);
+      const coincideEdificio = aula.edificio?.toLowerCase().includes(term);
+      const coincideEquipos = Array.isArray(aula.equipos) && aula.equipos.some(e => e?.toLowerCase().includes(term));
+      const claseActiva = obtenerClaseEnCurso(aula.nombre);
+      const coincideDocente = claseActiva?.docente?.toLowerCase().includes(term);
+      const coincideAsignatura = claseActiva?.asignatura?.toLowerCase().includes(term);
+      if (!coincideNombre && !coincideEdificio && !coincideEquipos && !coincideDocente && !coincideAsignatura) {
+        return false;
+      }
+    }
+
+    const esLab = esLaboratorio(aula.nombre);
+    const enMant = estaEnMantenimiento(aula);
+    const enClase = !enMant && !!obtenerClaseEnCurso(aula.nombre);
+    const estAula = enMant ? 'mantenimiento' : obtenerEstadoAula(aula.nombre);
+
+    // Filtro por Tipo
+    if (filtroTipo === 'aulas' && esLab) return false;
+    if (filtroTipo === 'laboratorios' && !esLab) return false;
+    if (filtroTipo === 'mantenimiento' && !enMant) return false;
+
+    // Filtro por Estado
+    if (filtroEstado === 'en_curso' && !enClase) return false;
+    if (filtroEstado === 'disponible' && estAula !== 'disponible') return false;
+
     return true;
   }).sort((a, b) => {
     const aEsLab = a.nombre.toLowerCase().startsWith('lab');
@@ -277,18 +384,18 @@ export default function GestionAulas() {
     return a.nombre.localeCompare(b.nombre, undefined, { numeric: true, sensitivity: 'base' });
   });
 
-  const esLaboratorio = (nombre) => nombre.toLowerCase().startsWith('lab');
-  const aulasNormales = aulas.filter(a => !esLaboratorio(a.nombre));
-  const laboratorios  = aulas.filter(a => esLaboratorio(a.nombre));
-
   const totalAulas         = aulasNormales.length;
   const capacidadInstalada = aulasNormales.reduce((t, a) => t + (Number(a.capacidad) || 0), 0);
   const aulasEnClaseAhora  = aulasNormales.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
   const aulasDisponibles   = aulasNormales.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
   const aulasEnMant        = aulasNormales.filter(a => estaEnMantenimiento(a)).length;
 
-  const totalLaboratorios = laboratorios.length;
-  const labsEnUso = laboratorios.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
+  const totalLaboratorios  = laboratorios.length;
+  const labsEnUso          = laboratorios.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
+  const labsDisponibles    = laboratorios.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
+  const labsEnMant         = laboratorios.filter(a => estaEnMantenimiento(a)).length;
+
+  const totalEnMantenimiento = aulasEnMant + labsEnMant;
 
   // Nombres de aulas disponibles para el dropdown de aula temporal
   const nombresAulas = aulas.map(a => a.nombre).filter(n => n !== modalMantAula?.nombre);
@@ -301,12 +408,35 @@ export default function GestionAulas() {
           <h1 className="text-3xl font-bold text-[#1c355e] tracking-tight">Registro Global de Aulas</h1>
           <p className="text-base text-[#44464e] mt-1.5">Consulte y gestione todos los espacios en tiempo real.</p>
         </div>
-        <button
-          onClick={() => setMostrarFormulario(!mostrarFormulario)}
-          className="bg-[#1c355e] text-white px-6 py-3 rounded-xl font-bold hover:bg-[#152a4a] transition-all flex items-center gap-2 w-fit"
-        >
-          <span className="material-symbols-outlined">add_circle</span> Nueva Aula
-        </button>
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+          {/* Buscador Inteligente */}
+          <div className="relative flex-1 sm:w-72">
+            <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-[#75777f] text-[20px]">
+              search
+            </span>
+            <input
+              type="text"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por nombre o número de aula..."
+              className="w-full pl-10 pr-9 py-2.5 bg-white border border-[#c5c6cf]/40 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] text-[#1b1c1e] placeholder:text-[#75777f] font-medium shadow-sm transition-all"
+            />
+            {busqueda && (
+              <button
+                onClick={() => setBusqueda('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#75777f] hover:text-[#1c355e]"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setMostrarFormulario(!mostrarFormulario)}
+            className="bg-[#1c355e] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#152a4a] transition-all flex items-center gap-2 flex-shrink-0 shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[20px]">add_circle</span> Nueva Aula
+          </button>
+        </div>
       </div>
 
 
@@ -517,25 +647,44 @@ export default function GestionAulas() {
       )}
 
 
-      {/* FILTROS */}
-      <div className="flex gap-3 flex-wrap">
-        {[
-          { id: 'todos',         label: 'Todos'         },
-          { id: 'en_curso',      label: 'En Curso'      },
-          { id: 'mantenimiento', label: 'Mantenimiento' },
-        ].map(btn => (
-          <button
-            key={btn.id}
-            onClick={() => setFiltro(btn.id)}
-            className={`px-6 py-2.5 rounded-xl font-bold transition-all ${
-              filtro === btn.id
-                ? 'bg-[#1c355e] text-white'
-                : 'bg-white border border-[#c5c6cf]/30 text-[#44464e] hover:border-[#1c355e]/50'
-            }`}
+      {/* FILTROS ELEGANTES DE ESPACIOS Y ESTADOS */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-[#c5c6cf]/30 shadow-sm">
+        {/* Tabs Principales por Tipo de Espacio */}
+        <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto">
+          {[
+            { id: 'todos',        label: 'Todos los Espacios', icon: 'grid_view' },
+            { id: 'aulas',        label: 'Aulas',             icon: 'meeting_room' },
+            { id: 'laboratorios', label: 'Laboratorios',      icon: 'science' },
+            { id: 'mantenimiento',label: 'Mantenimiento',     icon: 'construction' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setFiltroTipo(tab.id)}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                filtroTipo === tab.id
+                  ? 'bg-white text-[#1c355e] shadow-sm'
+                  : 'text-[#75777f] hover:text-[#1c355e]'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Filtro por Estado (Ocupación) */}
+        <div className="flex items-center gap-2 px-2 pb-1 sm:pb-0">
+          <span className="material-symbols-outlined text-[#75777f] text-[18px]">filter_alt</span>
+          <select
+            value={filtroEstado}
+            onChange={(e) => setFiltroEstado(e.target.value)}
+            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2 px-3 text-xs outline-none focus:ring-2 focus:ring-[#1c355e]/15 text-[#1b1c1e] font-bold cursor-pointer transition-all"
           >
-            {btn.label}
-          </button>
-        ))}
+            <option value="todos">Todos los Estados</option>
+            <option value="en_curso">▶ Solo En Curso / En Uso</option>
+            <option value="disponible">✓ Solo Disponibles</option>
+          </select>
+        </div>
       </div>
 
       {/* ── CONTENEDOR PRINCIPAL: AULAS (Izquierda/Centro) y ESTADÍSTICAS (Derecha) ── */}
@@ -553,6 +702,7 @@ export default function GestionAulas() {
             const enMant        = estaEnMantenimiento(aula);
             const mantProg      = tieneMantProgramado(aula);
             const claseActiva   = !enMant ? obtenerClaseEnCurso(aula.nombre) : null;
+            const liberacionManual = liberaciones.find(l => l.aula_nombre === aula.nombre);
             const estadoHorario = enMant ? 'mantenimiento' : obtenerEstadoAula(aula.nombre);
 
             // Prioridad visual: mantenimiento > mant_programado > en_clase > estado por horario
@@ -619,16 +769,71 @@ export default function GestionAulas() {
                 <div className="space-y-3">
                   {/* Panel docente en tiempo real — solo visible cuando hay clase activa */}
                   {claseActiva && (
-                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 space-y-1">
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 space-y-1.5">
                       <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                         Docente en clase ahora
                       </p>
                       <p className="text-sm font-black text-[#1b1c1e] leading-tight">{claseActiva.docente}</p>
                       <p className="text-[10px] text-[#75777f] font-semibold">{claseActiva.asignatura}</p>
-                      <p className="text-[10px] font-mono font-bold text-blue-600">
+                      
+                      {/* Carrera, Semestre / Cuatrimestre y Grupo */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        {claseActiva.licenciatura && (
+                          <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase border ${obtenerColorLicenciatura(claseActiva.licenciatura)}`}>
+                            {claseActiva.licenciatura}
+                          </span>
+                        )}
+                        {claseActiva.semestre && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200/60">
+                            Sem: {claseActiva.semestre}
+                          </span>
+                        )}
+                        {claseActiva.cuatrimestre && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-purple-100 text-purple-800 border border-purple-200/60">
+                            Cuat: {claseActiva.cuatrimestre}
+                          </span>
+                        )}
+                        {claseActiva.grupo && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200/60">
+                            Gpo: {claseActiva.grupo}
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-[10px] font-mono font-bold text-blue-600 pt-0.5">
                         {(claseActiva.horario || '').split(' ').slice(1).join(' ')}
                       </p>
+
+                      <button
+                        onClick={() => {
+                          setModalLiberarAula({ aulaNombre: aula.nombre, clase: claseActiva });
+                          setMotivoLiberacion('Salida anticipada');
+                        }}
+                        className="w-full mt-2 py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">lock_open</span>
+                        Liberar Aula (Clase Finalizada)
+                      </button>
+                    </div>
+                  )}
+
+                  {liberacionManual && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs text-emerald-900">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="material-symbols-outlined text-emerald-600 text-[18px] flex-shrink-0">event_available</span>
+                        <div className="min-w-0">
+                          <p className="font-bold text-[11px] leading-tight">Liberada manualmente hoy</p>
+                          <p className="text-[10px] text-emerald-700 truncate">{liberacionManual.docente} • {liberacionManual.asignatura}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleReactivarAula(liberacionManual.id, aula.nombre)}
+                        title="Reactivar horario de clase"
+                        className="px-2 py-1 bg-white border border-emerald-300 rounded-lg text-[10px] font-bold text-emerald-700 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-all flex-shrink-0 cursor-pointer"
+                      >
+                        Reactivar
+                      </button>
                     </div>
                   )}
                   <div>
@@ -657,14 +862,35 @@ export default function GestionAulas() {
           </div>
         </div>
 
-        {/* ── ESTADÍSTICAS (COSTADO DERECHO) ─────────────────────────────────── */}
+        {/* ── ESTADÍSTICAS (COSTADO DERECHO INTERACTIVO) ─────────────────────── */}
         <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-24 self-start">
-          <div className="bg-[#1c355e] text-white p-6 rounded-2xl shadow-lg">
-            <p className="text-xs font-bold uppercase opacity-80">Total de Aulas</p>
+          {/* Total de Aulas */}
+          <div
+            onClick={() => { setFiltroTipo(filtroTipo === 'aulas' ? 'todos' : 'aulas'); setFiltroEstado('todos'); }}
+            className={`bg-[#1c355e] text-white p-5 rounded-2xl shadow-md cursor-pointer transition-all hover:scale-[1.02] ${
+              filtroTipo === 'aulas' && filtroEstado === 'todos' ? 'ring-4 ring-[#1c355e]/40 shadow-xl' : ''
+            }`}
+            title="Haz clic para ver todas las Aulas"
+          >
+            <div className="flex justify-between items-center">
+              <p className="text-xs font-bold uppercase opacity-80">Total de Aulas</p>
+              {filtroTipo === 'aulas' && filtroEstado === 'todos' && <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Filtrado</span>}
+            </div>
             <p className="text-4xl font-extrabold mt-1">{totalAulas}</p>
           </div>
-          <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
-            <p className="text-xs font-bold uppercase text-[#44464e]">Aulas en Clase</p>
+
+          {/* Aulas en Clase */}
+          <div
+            onClick={() => { setFiltroTipo('aulas'); setFiltroEstado(filtroEstado === 'en_curso' ? 'todos' : 'en_curso'); }}
+            className={`bg-white border p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
+              filtroTipo === 'aulas' && filtroEstado === 'en_curso' ? 'border-blue-500 ring-4 ring-blue-100 shadow-md' : 'border-[#c5c6cf]/30'
+            }`}
+            title="Haz clic para ver las Aulas en clase ahora"
+          >
+            <div className="flex justify-between items-center w-full">
+              <p className="text-xs font-bold uppercase text-[#44464e]">Aulas en Clase</p>
+              {filtroTipo === 'aulas' && filtroEstado === 'en_curso' && <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">Filtrado</span>}
+            </div>
             <div className="flex items-center gap-2 mt-1">
               <p className={`text-4xl font-extrabold ${aulasEnClaseAhora > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>{aulasEnClaseAhora}</p>
               {aulasEnClaseAhora > 0 && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm" />}
@@ -672,22 +898,61 @@ export default function GestionAulas() {
             <p className="text-[11px] text-[#75777f] font-semibold mt-1">{aulasDisponibles} disponibles</p>
           </div>
 
-          <div className="bg-[#1c9c72] text-white p-6 rounded-2xl shadow-lg flex flex-col items-center xl:items-start text-center xl:text-left">
-            <p className="text-xs font-bold uppercase opacity-90">Total Laboratorios</p>
-            <div className="flex items-center justify-between w-full mt-1">
-              <p className="text-4xl font-extrabold">{totalLaboratorios}</p>
-              <div className="text-right">
-                <p className="text-sm font-bold opacity-90">{labsEnUso} en uso</p>
-                <p className="text-[10px] opacity-75">{totalLaboratorios - labsEnUso} libres</p>
-              </div>
+          {/* Total Laboratorios */}
+          <div
+            onClick={() => { setFiltroTipo(filtroTipo === 'laboratorios' ? 'todos' : 'laboratorios'); setFiltroEstado('todos'); }}
+            className={`bg-[#1c9c72] text-white p-5 rounded-2xl shadow-md cursor-pointer transition-all hover:scale-[1.02] ${
+              filtroTipo === 'laboratorios' && filtroEstado === 'todos' ? 'ring-4 ring-[#1c9c72]/40 shadow-xl' : ''
+            }`}
+            title="Haz clic para ver todos los Laboratorios"
+          >
+            <div className="flex justify-between items-center">
+              <p className="text-xs font-bold uppercase opacity-90">Total Laboratorios</p>
+              {filtroTipo === 'laboratorios' && filtroEstado === 'todos' && <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Filtrado</span>}
             </div>
+            <p className="text-4xl font-extrabold mt-1">{totalLaboratorios}</p>
           </div>
 
-          <div className="bg-white border border-orange-200 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
-            <p className="text-xs font-bold uppercase text-[#44464e]">Aulas en Mantenimiento</p>
-            <p className="text-4xl font-extrabold text-orange-500 mt-1">{aulasEnMant}</p>
+          {/* Laboratorios en Uso */}
+          <div
+            onClick={() => { setFiltroTipo('laboratorios'); setFiltroEstado(filtroEstado === 'en_curso' ? 'todos' : 'en_curso'); }}
+            className={`bg-white border p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
+              filtroTipo === 'laboratorios' && filtroEstado === 'en_curso' ? 'border-[#1c9c72] ring-4 ring-teal-100 shadow-md' : 'border-[#1c9c72]/30'
+            }`}
+            title="Haz clic para ver los Laboratorios en uso ahora"
+          >
+            <div className="flex justify-between items-center w-full">
+              <p className="text-xs font-bold uppercase text-[#44464e]">Laboratorios en Uso</p>
+              {filtroTipo === 'laboratorios' && filtroEstado === 'en_curso' && <span className="text-[10px] bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full font-bold">Filtrado</span>}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <p className={`text-4xl font-extrabold ${labsEnUso > 0 ? 'text-[#1c9c72]' : 'text-[#c5c6cf]'}`}>{labsEnUso}</p>
+              {labsEnUso > 0 && <span className="w-2.5 h-2.5 rounded-full bg-[#1c9c72] shadow-sm" />}
+            </div>
+            <p className="text-[11px] text-[#75777f] font-semibold mt-1">{labsDisponibles} libres</p>
           </div>
-          <div className="bg-white border border-[#c5c6cf]/30 p-6 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left">
+
+          {/* Espacios en Mantenimiento */}
+          <div
+            onClick={() => { setFiltroTipo(filtroTipo === 'mantenimiento' ? 'todos' : 'mantenimiento'); setFiltroEstado('todos'); }}
+            className={`bg-white border p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
+              filtroTipo === 'mantenimiento' ? 'border-orange-500 ring-4 ring-orange-100 shadow-md' : 'border-orange-200'
+            }`}
+            title="Haz clic para ver los espacios en mantenimiento"
+          >
+            <div className="flex justify-between items-center w-full">
+              <p className="text-xs font-bold uppercase text-[#44464e]">Espacios en Mantenimiento</p>
+              {filtroTipo === 'mantenimiento' && <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-bold">Filtrado</span>}
+            </div>
+            <p className="text-4xl font-extrabold text-orange-500 mt-1">{totalEnMantenimiento}</p>
+          </div>
+
+          {/* Capacidad Total (Aulas) */}
+          <div
+            onClick={() => setFiltro('aulas')}
+            className="bg-white border border-[#c5c6cf]/30 p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02]"
+            title="Haz clic para filtrar las Aulas"
+          >
             <p className="text-xs font-bold uppercase text-[#44464e]">Capacidad Total (Aulas)</p>
             <p className="text-4xl font-extrabold text-[#1c355e] mt-1">{capacidadInstalada}</p>
           </div>
@@ -715,6 +980,62 @@ export default function GestionAulas() {
                 className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition-all"
               >
                 Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL LIBERAR AULA */}
+      {modalLiberarAula && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-lg space-y-4">
+            <div className="flex justify-between items-center border-b border-[#c5c6cf]/30 pb-3">
+              <div>
+                <h3 className="text-lg font-bold text-[#1c355e]">Liberar Aula Manualmente</h3>
+                <p className="text-xs text-[#75777f]">Aula: <span className="font-bold text-[#1c355e]">{modalLiberarAula.aulaNombre}</span></p>
+              </div>
+              <button onClick={() => setModalLiberarAula(null)} className="text-[#44464e] hover:text-[#1c355e]">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-100 rounded-xl p-3.5 space-y-1">
+              <p className="text-[10px] font-bold text-blue-500 uppercase">Clase activa actual</p>
+              <p className="text-sm font-black text-[#1b1c1e]">{modalLiberarAula.clase.docente}</p>
+              <p className="text-xs text-[#44464e] font-medium">{modalLiberarAula.clase.asignatura}</p>
+              <p className="text-xs font-mono font-bold text-blue-600">{modalLiberarAula.clase.horario}</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Motivo de Liberación</label>
+              <select
+                value={motivoLiberacion}
+                onChange={e => setMotivoLiberacion(e.target.value)}
+                className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+              >
+                <option value="Salida anticipada">Salida anticipada / Conclusión temprana</option>
+                <option value="Clase cancelada por docente">Clase cancelada por docente</option>
+                <option value="Actividad fuera de aula">Actividad fuera de aula / Práctica externa</option>
+                <option value="Permiso institucional">Permiso institucional</option>
+                <option value="Otro motivo">Otro motivo</option>
+              </select>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setModalLiberarAula(null)}
+                className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmarLiberacion}
+                disabled={guardandoLiberacion}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[18px]">lock_open</span>
+                {guardandoLiberacion ? 'Liberando...' : 'Liberar Aula'}
               </button>
             </div>
           </div>

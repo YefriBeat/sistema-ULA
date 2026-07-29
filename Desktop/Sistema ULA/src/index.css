@@ -31,3 +31,39 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #a8a9b1;
 }
+
+/* ── Estilos de impresión institucionales ───────────────────────────────────── */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  header, nav, aside, button, select, input, .no-print {
+    display: none !important;
+  }
+
+  #tabla-resultados {
+    border: none !important;
+    box-shadow: none !important;
+    width: 100% !important;
+  }
+
+  table {
+    width: 100% !important;
+    font-size: 10px !important;
+    border-collapse: collapse !important;
+  }
+
+  th, td {
+    padding: 6px 8px !important;
+    border: 1px solid #d0d0d0 !important;
+  }
+
+  th {
+    background-color: #1c355e !important;
+    color: #ffffff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

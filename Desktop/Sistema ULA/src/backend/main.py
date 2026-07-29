@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import csv
 import unicodedata
 import pymysql
 import bcrypt
@@ -12,7 +13,7 @@ import secrets
 from contextlib import asynccontextmanager
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
@@ -46,6 +47,10 @@ def migrar_columnas_verificacion():
                 "ALTER TABLE horarios ADD COLUMN semestre VARCHAR(50) NULL",
                 "ALTER TABLE horarios ADD COLUMN cuatrimestre VARCHAR(50) NULL",
                 "ALTER TABLE horarios ADD COLUMN grupo VARCHAR(50) NULL",
+                "ALTER TABLE horarios ADD COLUMN estado_slug VARCHAR(50) DEFAULT 'programada'",
+                "ALTER TABLE horarios ADD COLUMN nota_reprogramacion VARCHAR(255) DEFAULT ''",
+                "ALTER TABLE horarios ADD COLUMN fecha_reposicion DATE NULL",
+                "ALTER TABLE horarios ADD COLUMN es_reposicion BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE examenes_calendario ADD COLUMN archivo_origen VARCHAR(255) NULL",
                 """CREATE TABLE IF NOT EXISTS docentes (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -111,6 +116,69 @@ def migrar_columnas_verificacion():
                     suspende_clases BOOLEAN DEFAULT FALSE,
                     created_at DATETIME DEFAULT NOW()
                 )""",
+                """CREATE TABLE IF NOT EXISTS aulas_liberadas (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    aula_nombre VARCHAR(100) NOT NULL,
+                    fecha DATE NOT NULL,
+                    docente VARCHAR(200) DEFAULT '',
+                    asignatura VARCHAR(250) DEFAULT '',
+                    horario VARCHAR(100) DEFAULT '',
+                    motivo VARCHAR(250) DEFAULT 'Liberación manual',
+                    activa BOOLEAN DEFAULT TRUE,
+                    created_at DATETIME DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS auditoria_exportaciones (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    usuario_nombre VARCHAR(255) DEFAULT 'Administrador',
+                    usuario_correo VARCHAR(255) DEFAULT '',
+                    fecha_hora DATETIME DEFAULT NOW(),
+                    tipo_exportacion VARCHAR(50) NOT NULL,
+                    es_historial_completo BOOLEAN DEFAULT FALSE,
+                    filtros_aplicados TEXT NULL,
+                    cantidad_registros INT DEFAULT 0,
+                    enviado_email BOOLEAN DEFAULT FALSE,
+                    destinatarios_email TEXT NULL
+                )""",
+                """CREATE TABLE IF NOT EXISTS clases_historico (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    clase_id INT NULL,
+                    fecha DATE NOT NULL,
+                    dia_semana VARCHAR(20) NOT NULL,
+                    semana_numero INT NOT NULL,
+                    docente_nombre VARCHAR(255) NOT NULL,
+                    licenciatura_codigo VARCHAR(100) DEFAULT '',
+                    semestre VARCHAR(100) DEFAULT '',
+                    grupo VARCHAR(50) DEFAULT '',
+                    asignatura_nombre VARCHAR(255) NOT NULL,
+                    horario_inicio TIME NOT NULL,
+                    horario_fin TIME NOT NULL,
+                    aula_original VARCHAR(100) DEFAULT '',
+                    aula_actual VARCHAR(100) DEFAULT '',
+                    estado_slug VARCHAR(100) NOT NULL,
+                    estado_label VARCHAR(255) NOT NULL,
+                    incidencia_detalle TEXT NULL,
+                    created_at DATETIME DEFAULT NOW(),
+                    INDEX idx_fecha (fecha),
+                    INDEX idx_semana (semana_numero),
+                    INDEX idx_licenciatura (licenciatura_codigo),
+                    INDEX idx_docente (docente_nombre),
+                    INDEX idx_semestre (semestre)
+                )""",
+                """CREATE TABLE IF NOT EXISTS historial_reprogramaciones_semanal (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    docente VARCHAR(255) NOT NULL,
+                    licenciatura VARCHAR(255),
+                    asignatura VARCHAR(255),
+                    horario_reposicion VARCHAR(255),
+                    fecha_reposicion DATE,
+                    aula_asignada VARCHAR(100),
+                    nota_reprogramacion TEXT,
+                    motivo TEXT,
+                    fecha_archivado DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    semana_anio VARCHAR(20),
+                    INDEX idx_fecha_rep (fecha_reposicion),
+                    INDEX idx_docente_rep (docente)
+                )""",
             ]:
                 try:
                     cursor.execute(sentencia)
@@ -120,6 +188,61 @@ def migrar_columnas_verificacion():
         connection.close()
     except Exception as e:
         print(f"Advertencia en migración: {e}")
+
+
+def _limpiar_para_comparar(texto: str) -> str:
+    if not texto:
+        return ""
+    texto_nfd = unicodedata.normalize('NFD', texto)
+    texto_sin_acento = "".join(c for c in texto_nfd if unicodedata.category(c) != 'Mn')
+    return texto_sin_acento.lower().strip()
+
+
+def _normalizar_nombre_formato(nombre: str) -> str:
+    if not nombre:
+        return ""
+    nombre = nombre.strip()
+    if ',' in nombre:
+        parts = nombre.split(',', 1)
+        nombre = f"{parts[1].strip()} {parts[0].strip()}"
+    words = [w.capitalize() for w in nombre.split()]
+    return " ".join(words)
+
+
+def _construir_mapa_docentes_canonicos(lista_nombres_raw: list) -> dict:
+    mapa_raw_a_candidato = {}
+    candidatos_unicos = set()
+    for raw in lista_nombres_raw:
+        if not raw or not raw.strip():
+            continue
+        cand = _normalizar_nombre_formato(raw)
+        mapa_raw_a_candidato[raw] = cand
+        candidatos_unicos.add(cand)
+
+    candidatos_ordenados = sorted(list(candidatos_unicos), key=lambda x: len(x), reverse=True)
+    candidato_a_canonico = {}
+    
+    for cand in candidatos_ordenados:
+        clean_cand = _limpiar_para_comparar(cand)
+        cand_tokens = set(clean_cand.split())
+        
+        encontrado = None
+        for canonico_existente in candidato_a_canonico.values():
+            clean_existente = _limpiar_para_comparar(canonico_existente)
+            existente_tokens = set(clean_existente.split())
+            if cand_tokens.issubset(existente_tokens) and len(cand_tokens) >= 2:
+                encontrado = canonico_existente
+                break
+        
+        if encontrado:
+            candidato_a_canonico[cand] = encontrado
+        else:
+            candidato_a_canonico[cand] = cand
+
+    mapa_final = {}
+    for raw, cand in mapa_raw_a_candidato.items():
+        mapa_final[raw] = candidato_a_canonico.get(cand, cand)
+    return mapa_final
 
 
 def seed_calendario_institucional():
@@ -266,8 +389,11 @@ def force_reseed_calendario():
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    migrar_columnas_verificacion()
-    seed_calendario_institucional()
+    try:
+        migrar_columnas_verificacion()
+        seed_calendario_institucional()
+    except Exception as e:
+        print(f"Advertencia en inicio de app (DB connection issue): {e}")
     yield
 
 
@@ -340,6 +466,27 @@ def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
       </div>
     </body></html>
     """
+    sender_email = os.getenv("SMTP_USER", "")
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_pass = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
+
+    if sender_email and smtp_pass:
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = correo_destino
+            msg['Subject'] = "Código de verificación — SIPREF ULA"
+            msg.attach(MIMEText(html, 'html'))
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(sender_email, smtp_pass)
+                server.sendmail(sender_email, [correo_destino], msg.as_string())
+            return
+        except Exception as e:
+            print(f"SMTP fallo para OTP, probando EmailJS fallback: {e}")
+
+    # Fallback si falla SMTP o si no hay credenciales SMTP
     _enviar_smtp(correo_destino, "Código de verificación — SIPREF ULA", html)
 
 # Configuración de CORS para permitir la conexión desde Vite (React)
@@ -471,6 +618,19 @@ class RestablecerContrasena(BaseModel):
     correo: str
     codigo: str
     nueva_password: str
+
+class ReprogramacionRequest(BaseModel):
+    docente_nombre: str
+    clase_original_id: Optional[int] = None
+    clases_originales_ids: Optional[List[int]] = None
+    clase_original_horario: str
+    clase_original_asignatura: str
+    nueva_fecha: str
+    nuevo_dia: str
+    nueva_hora_inicio: str
+    nueva_hora_fin: str
+    nueva_aula: str
+    motivo: Optional[str] = ""
 
 # ---------------------------------------------------------
 # HELPERS
@@ -2439,7 +2599,29 @@ def recuperar_contrasena(datos: RecuperarContrasena):
           </div>
         </body></html>
         """
-        _enviar_smtp(correo_limpio, "Restablecer contraseña — SIPREF ULA", html_reset)
+        sender_email = os.getenv("SMTP_USER", "")
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", 587))
+        smtp_pass = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
+
+        enviado_smtp = False
+        if sender_email and smtp_pass:
+            try:
+                msg = MIMEMultipart()
+                msg['From'] = sender_email
+                msg['To'] = correo_limpio
+                msg['Subject'] = "Restablecer contraseña — SIPREF ULA"
+                msg.attach(MIMEText(html_reset, 'html'))
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.starttls()
+                    server.login(sender_email, smtp_pass)
+                    server.sendmail(sender_email, [correo_limpio], msg.as_string())
+                enviado_smtp = True
+            except Exception as smtp_err:
+                print(f"SMTP fallo para restablecer contraseña, intentando EmailJS: {smtp_err}")
+
+        if not enviado_smtp:
+            _enviar_smtp(correo_limpio, "Restablecer contraseña — SIPREF ULA", html_reset)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo enviar el correo: {str(e)}")
 
@@ -2571,6 +2753,10 @@ def obtener_horarios():
                     MAX(h.semestre)     AS semestre,
                     MAX(h.cuatrimestre) AS cuatrimestre,
                     MAX(h.grupo)        AS grupo,
+                    COALESCE(MAX(h.estado_slug), 'programada') AS estado_slug,
+                    MAX(h.nota_reprogramacion) AS nota_reprogramacion,
+                    MAX(h.fecha_reposicion) AS fecha_reposicion,
+                    MAX(h.es_reposicion) AS es_reposicion,
                     a.en_mantenimiento,
                     a.inicio_mantenimiento,
                     a.fin_mantenimiento,
@@ -2685,23 +2871,78 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
             if not hay_clases_plan['semestral'] and not hay_clases_plan['cuatrimestral']:
                 return []
 
-            # ── 2) Obtener clases con campo cuatrimestre para determinar plan ─
+            # ── 1b) Obtener aulas liberadas manualmente para esta fecha ─────
             cursor.execute("""
-                SELECT h.docente, h.asignatura, h.horario, h.aula_asignada,
+                SELECT aula_nombre
+                FROM aulas_liberadas
+                WHERE fecha = %s AND activa = TRUE
+            """, (date_obj,))
+            liberadas_rows = cursor.fetchall()
+            liberadas_set = {r['aula_nombre'] for r in (liberadas_rows or [])}
+
+            # ── 2) Obtener clases con licenciatura, semestre, cuatrimestre y grupo ─
+            cursor.execute("""
+                SELECT h.docente, h.licenciatura, h.asignatura, h.horario, h.aula_asignada,
+                       MAX(NULLIF(TRIM(h.semestre), '')) as semestre,
                        MAX(NULLIF(TRIM(h.cuatrimestre), '')) as cuatrimestre,
+                       MAX(NULLIF(TRIM(h.grupo), '')) as grupo,
+                       COALESCE(MAX(h.estado_slug), 'programada') AS estado_slug,
+                       MAX(h.nota_reprogramacion) AS nota_reprogramacion,
+                       MAX(h.fecha_reposicion) AS fecha_reposicion,
+                       MAX(h.es_reposicion) AS es_reposicion,
                        a.en_mantenimiento, a.inicio_mantenimiento, a.fin_mantenimiento, a.aula_temporal
                 FROM horarios h
                 LEFT JOIN aulas a ON a.nombre = h.aula_asignada
                 WHERE h.docente IS NOT NULL AND TRIM(h.docente) != ''
-                GROUP BY h.docente, h.asignatura, h.horario, h.aula_asignada,
+                GROUP BY h.docente, h.licenciatura, h.asignatura, h.horario, h.aula_asignada,
                          a.en_mantenimiento, a.inicio_mantenimiento, a.fin_mantenimiento, a.aula_temporal
             """)
             todas = cursor.fetchall()
 
-        en_curso = []
+        # Agrupar bloques consecutivos de la misma clase (ej. 17:10-18:00 y 18:00-18:50 -> 17:10-18:50)
+        mapa_grupos = defaultdict(list)
         for clase in (todas or []):
+            if clase.get('es_reposicion'):
+                if str(clase.get('fecha_reposicion')) != str(date_obj):
+                    continue
             dia_idx, inicio, fin = _parse_horario_minutos(clase.get('horario', ''))
-            if dia_idx != dia_hoy or inicio is None or not (inicio <= mins_ahora <= fin):
+            if dia_idx != dia_hoy or inicio is None or fin is None:
+                continue
+            key = (clase.get('docente'), clase.get('licenciatura'), clase.get('asignatura'), clase.get('aula_asignada', ''))
+            item = dict(clase)
+            item['_inicio'] = inicio
+            item['_fin'] = fin
+            mapa_grupos[key].append(item)
+
+        clases_agrupadas = []
+        for key, lista in mapa_grupos.items():
+            lista.sort(key=lambda c: c['_inicio'])
+            actual = dict(lista[0])
+            for i in range(1, len(lista)):
+                sig = lista[i]
+                if sig['_inicio'] - actual['_fin'] <= 10:
+                    actual['_fin'] = max(actual['_fin'], sig['_fin'])
+                else:
+                    clases_agrupadas.append(actual)
+                    actual = dict(sig)
+            clases_agrupadas.append(actual)
+
+        en_curso = []
+        nombres_dias = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+        for clase in clases_agrupadas:
+            inicio = clase['_inicio']
+            fin = clase['_fin']
+            if not (inicio <= mins_ahora <= fin):
+                continue
+
+            # Formatear horario de bloque continuo (ej. "Lunes 17:10---18:50")
+            h_ini = f"{inicio // 60:02d}:{inicio % 60:02d}"
+            h_fin = f"{fin // 60:02d}:{fin % 60:02d}"
+            dia_str = nombres_dias[dia_hoy]
+            clase['horario'] = f"{dia_str} {h_ini}---{h_fin}"
+
+            # Omitir si el aula fue liberada manualmente hoy
+            if clase.get('aula_asignada') in liberadas_set:
                 continue
 
             # Determinar plan de la clase
@@ -2710,13 +2951,99 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
 
             # Solo incluir si el plan de esta clase tiene clases hoy
             if hay_clases_plan.get(plan_clase, False):
-                # Limpiar campo auxiliar antes de enviar al frontend
-                clase.pop('cuatrimestre', None)
                 en_curso.append(clase)
 
         return _aplicar_mantenimiento(en_curso)
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener clases: {str(e)}")
+    finally:
+        connection.close()
+
+
+class LiberarAulaRequest(BaseModel):
+    aula_nombre: str
+    fecha: Optional[str] = None
+    docente: Optional[str] = ""
+    asignatura: Optional[str] = ""
+    horario: Optional[str] = ""
+    motivo: Optional[str] = "Liberación manual"
+
+
+@app.post("/api/aulas/liberar")
+def liberar_aula(datos: LiberarAulaRequest):
+    ahora = datetime.now()
+    fecha_val = datos.fecha if datos.fecha else ahora.strftime("%Y-%m-%d")
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                UPDATE aulas_liberadas
+                SET activa = FALSE
+                WHERE aula_nombre = %s AND fecha = %s
+            """, (datos.aula_nombre, fecha_val))
+
+            cursor.execute("""
+                INSERT INTO aulas_liberadas (aula_nombre, fecha, docente, asignatura, horario, motivo, activa)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+            """, (datos.aula_nombre, fecha_val, datos.docente or "", datos.asignatura or "", datos.horario or "", datos.motivo or "Liberación manual"))
+
+            # Registrar snapshot inmediato en clases_historico
+            date_obj = datetime.strptime(fecha_val, "%Y-%m-%d").date()
+            _guardar_registro_historico(
+                cursor,
+                clase_id=None,
+                fecha_obj=date_obj,
+                docente_nombre=datos.docente or 'Docente',
+                licenciatura_codigo='',
+                semestre='',
+                grupo='',
+                asignatura_nombre=datos.asignatura or 'Clase',
+                horario_inicio_str='00:00:00',
+                horario_fin_str='23:59:59',
+                aula_original=datos.aula_nombre,
+                aula_actual='Fuera de Aula',
+                estado_slug='aula_liberada',
+                estado_label='Aula Liberada',
+                incidencia_detalle=datos.motivo or 'Liberación manual'
+            )
+            connection.commit()
+        return {"message": f"Aula {datos.aula_nombre} liberada con éxito"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al liberar aula: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/aulas/liberadas")
+def obtener_aulas_liberadas(fecha: Optional[str] = None):
+    ahora = datetime.now()
+    fecha_val = fecha if fecha else ahora.strftime("%Y-%m-%d")
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, aula_nombre, fecha, docente, asignatura, horario, motivo, created_at
+                FROM aulas_liberadas
+                WHERE fecha = %s AND activa = TRUE
+                ORDER BY id DESC
+            """, (fecha_val,))
+            return cursor.fetchall() or []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener liberaciones: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.delete("/api/aulas/liberar/{liberacion_id}")
+def reactivar_aula(liberacion_id: int):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE aulas_liberadas SET activa = FALSE WHERE id = %s", (liberacion_id,))
+            connection.commit()
+        return {"message": "Liberación cancelada y aula reactivada"}
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al reactivar aula: {str(e)}")
     finally:
         connection.close()
 
@@ -2925,16 +3252,42 @@ def obtener_archivos():
         LIMITE_VESPERTINO = 14 * 60 # 14:00
         for arch in (archivos or []):
             turnos = set()
+            min_inicio = None
+            max_fin = None
             if arch.get('todos_horarios'):
                 horarios_lista = arch['todos_horarios'].split('|')
                 for h in horarios_lista:
-                    _, inicio, _ = _parse_horario_minutos(h)
+                    _, inicio, fin = _parse_horario_minutos(h)
                     if inicio is not None:
+                        if min_inicio is None or inicio < min_inicio:
+                            min_inicio = inicio
+                        if fin is not None and (max_fin is None or fin > max_fin):
+                            max_fin = fin
                         if inicio < LIMITE_VESPERTINO:
                             turnos.add("Matutino")
                         else:
                             turnos.add("Vespertino")
-            
+                    matches = re.findall(r'(\d{1,2}):(\d{2})\s*[-aA–—]\s*(\d{1,2}):(\d{2})', h)
+                    for m_match in matches:
+                        h_i, m_i, h_f, m_f = map(int, m_match)
+                        st_m = h_i * 60 + m_i
+                        en_m = h_f * 60 + m_f
+                        if min_inicio is None or st_m < min_inicio:
+                            min_inicio = st_m
+                        if max_fin is None or en_m > max_fin:
+                            max_fin = en_m
+                        if st_m < LIMITE_VESPERTINO:
+                            turnos.add("Matutino")
+                        else:
+                            turnos.add("Vespertino")
+
+            if min_inicio is not None and max_fin is not None:
+                h_i, m_i = min_inicio // 60, min_inicio % 60
+                h_f, m_f = max_fin // 60, max_fin % 60
+                arch['rango_horario'] = f"{h_i}:{m_i:02d} a {h_f}:{m_f:02d}"
+            else:
+                arch['rango_horario'] = None
+
             if "Matutino" in turnos and "Vespertino" in turnos:
                 arch['turno'] = "Ambos Turnos"
             elif "Matutino" in turnos:
@@ -3238,14 +3591,490 @@ def eliminar_suplencia(suplencia_id: int):
 
 
 # ---------------------------------------------------------
+# ENDPOINTS DE REPROGRAMACIÓN DE CLASES (POSPUESTAS Y REPOSICIONES)
+# ---------------------------------------------------------
+
+@app.get("/api/docentes/{docente_nombre}/clases-semana")
+def obtener_clases_semana_docente(docente_nombre: str):
+    """
+    Retorna dinámicamente las clases programadas para un docente en la semana en curso.
+    """
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT DISTINCT docente FROM horarios WHERE docente IS NOT NULL AND TRIM(docente) != ''")
+            raw_docentes = [r['docente'] for r in (cursor.fetchall() or [])]
+            mapa_canonico = _construir_mapa_docentes_canonicos(raw_docentes)
+
+            nombres_coincidentes = [r for r in raw_docentes if mapa_canonico.get(r) == docente_nombre or r == docente_nombre]
+            if not nombres_coincidentes:
+                nombres_coincidentes = [docente_nombre]
+
+            format_strings = ','.join(['%s'] * len(nombres_coincidentes))
+
+            query = f"""
+                SELECT
+                    MIN(h.id) AS id,
+                    h.docente,
+                    h.asignatura,
+                    h.horario,
+                    h.aula_asignada,
+                    MAX(h.licenciatura) AS licenciatura,
+                    MAX(h.semestre) AS semestre,
+                    MAX(h.cuatrimestre) AS cuatrimestre,
+                    MAX(h.grupo) AS grupo,
+                    MAX(h.archivo) AS archivo,
+                    COALESCE(MAX(h.estado_slug), 'programada') AS estado_slug,
+                    MAX(h.nota_reprogramacion) AS nota_reprogramacion,
+                    MAX(h.fecha_reposicion) AS fecha_reposicion,
+                    MAX(h.es_reposicion) AS es_reposicion
+                FROM horarios h
+                WHERE h.docente IN ({format_strings})
+                  AND (h.estado_slug IS NULL OR h.estado_slug != 'reposicion_programada')
+                  AND (h.es_reposicion IS NULL OR h.es_reposicion = FALSE)
+                GROUP BY h.docente, h.asignatura, h.horario, h.aula_asignada
+                ORDER BY h.horario
+            """
+            cursor.execute(query, tuple(nombres_coincidentes))
+            clases = cursor.fetchall()
+            return clases or []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener clases del docente: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/aulas/disponibles-reprogramacion")
+def obtener_aulas_disponibles_reprogramacion(
+    fecha: str,
+    hora_inicio: str,
+    hora_fin: str,
+    dia: Optional[str] = None
+):
+    """
+    Retorna dinámicamente las aulas disponibles calculadas estrictamente por intersección de tiempo (Overlapping).
+    Regla de choque: (hora_inicio_existente < hora_fin_solicitada) AND (hora_fin_existente > hora_inicio_solicitada)
+    Permite asignar salones en "huecos" u horas muertas entre turnos.
+    """
+    def time_str_to_mins(t_str: str) -> int:
+        if not t_str:
+            return -1
+        p = t_str.strip().split(':')
+        return int(p[0]) * 60 + int(p[1])
+
+    req_inicio = time_str_to_mins(hora_inicio)
+    req_fin = time_str_to_mins(hora_fin)
+    if req_inicio < 0 or req_fin < 0 or req_inicio >= req_fin:
+        raise HTTPException(status_code=400, detail="Rango de horario inválido.")
+
+    try:
+        dt = datetime.strptime(fecha, "%Y-%m-%d")
+        dia_sys_idx = (dt.isoweekday() % 7)  # 0=Domingo, 1=Lunes, ... 6=Sabado
+    except Exception:
+        raise HTTPException(status_code=400, detail="Fecha inválida. Formato esperado YYYY-MM-DD.")
+
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            # 1. Obtener todas las aulas que no estén en mantenimiento manual definitivo
+            cursor.execute("""
+                SELECT nombre, capacidad, edificio AS ubicacion
+                FROM aulas
+                WHERE en_mantenimiento = FALSE
+                ORDER BY nombre
+            """)
+            todas_aulas = cursor.fetchall() or []
+            aulas_disponibles_map = {a['nombre']: a for a in todas_aulas}
+
+            # 2. Verificar cruces con clases regulares y reposiciones en la tabla horarios
+            cursor.execute("""
+                SELECT h.aula_asignada, h.horario, h.estado_slug, h.es_reposicion, h.fecha_reposicion
+                FROM horarios h
+                WHERE h.aula_asignada IS NOT NULL
+                  AND TRIM(h.aula_asignada) != ''
+                  AND TRIM(h.aula_asignada) != 'Por asignar'
+            """)
+            horarios_raw = cursor.fetchall() or []
+
+            for h in horarios_raw:
+                aula_nombre = h['aula_asignada']
+                if aula_nombre not in aulas_disponibles_map:
+                    continue
+
+                # Si la clase original fue pospuesta, no bloquea el salón en su horario original
+                if h.get('estado_slug') == 'pospuesta':
+                    continue
+
+                # Si es reposición, solo evalúa choque si la fecha coincide exactamente
+                if h.get('es_reposicion'):
+                    if not h.get('fecha_reposicion') or str(h['fecha_reposicion']) != fecha:
+                        continue
+
+                h_dia_idx, h_ini, h_fin = _parse_horario_minutos(h.get('horario', ''))
+                if h_ini is None or h_fin is None:
+                    continue
+
+                # Para clases semanales regulares, debe coincidir el día de la semana
+                if not h.get('es_reposicion'):
+                    if h_dia_idx != dia_sys_idx:
+                        continue
+
+                # Fórmula estricta de intersección de tiempo (Overlapping):
+                # (hora_inicio_existente < hora_fin_solicitada) AND (hora_fin_existente > hora_inicio_solicitada)
+                if (h_ini < req_fin) and (h_fin > req_inicio):
+                    aulas_disponibles_map.pop(aula_nombre, None)
+
+            # 3. Verificar cruces con suplencias activas en esa fecha
+            cursor.execute("""
+                SELECT s.hora_inicio, s.hora_fin, h.aula_asignada
+                FROM suplencias_horarios s
+                LEFT JOIN horarios h ON h.docente = s.docente_nombre AND h.horario LIKE CONCAT('%%', s.dia, '%%')
+                WHERE s.activa = TRUE AND s.fecha = %s
+            """, (fecha,))
+            suplencias = cursor.fetchall() or []
+            for s in suplencias:
+                aula_nombre = s.get('aula_asignada')
+                if not aula_nombre or aula_nombre not in aulas_disponibles_map:
+                    continue
+                s_ini = _time_to_mins(_timedelta_to_str(s['hora_inicio']))
+                s_fin = _time_to_mins(_timedelta_to_str(s['hora_fin']))
+                if (s_ini < req_fin) and (s_fin > req_inicio):
+                    aulas_disponibles_map.pop(aula_nombre, None)
+
+            return list(aulas_disponibles_map.values())
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al verificar disponibilidad de aulas: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/reprogramaciones")
+def crear_reprogramacion(req: ReprogramacionRequest):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            ids_a_posponer = req.clases_originales_ids if req.clases_originales_ids else ([req.clase_original_id] if req.clase_original_id else [])
+            if not ids_a_posponer:
+                raise HTTPException(status_code=400, detail="Debe especificar al menos una clase original para posponer.")
+
+            orig_primera = None
+            horarios_orig = []
+            for cid in ids_a_posponer:
+                cursor.execute("""
+                    SELECT * FROM horarios WHERE id = %s
+                """, (cid,))
+                orig = cursor.fetchone()
+                if not orig:
+                    continue
+                if not orig_primera:
+                    orig_primera = orig
+                if orig['horario'] not in horarios_orig:
+                    horarios_orig.append(orig['horario'])
+
+                nota_rep = f"Pospuesta (Se repone el {req.nuevo_dia} a las {req.nueva_hora_inicio}-{req.nueva_hora_fin})"
+
+                cursor.execute("""
+                    UPDATE horarios
+                    SET estado_slug = 'pospuesta',
+                        nota_reprogramacion = %s
+                    WHERE id = %s
+                """, (nota_rep, cid))
+
+            if not orig_primera:
+                raise HTTPException(status_code=404, detail="No se encontró ninguna de las clases originales en la base de datos.")
+
+            nuevo_horario_str = f"{req.nuevo_dia} {req.nueva_hora_inicio}-{req.nueva_hora_fin}"
+            horarios_orig_str = " y ".join(horarios_orig)
+            nota_reposicion_origen = f"Reposición de {horarios_orig_str} ({req.motivo or 'Clase pospuesta'})"
+
+            cursor.execute("""
+                INSERT INTO horarios (
+                    docente, licenciatura, asignatura, horario, aula_asignada, archivo,
+                    fecha_creacion, fecha_clase, semestre, cuatrimestre, grupo,
+                    estado_slug, nota_reprogramacion, fecha_reposicion, es_reposicion
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s,
+                    NOW(), CURDATE(), %s, %s, %s,
+                    'reposicion_programada', %s, %s, TRUE
+                )
+            """, (
+                orig_primera['docente'],
+                orig_primera['licenciatura'] or '',
+                req.clase_original_asignatura or orig_primera['asignatura'] or '',
+                nuevo_horario_str,
+                req.nueva_aula,
+                orig_primera['archivo'] or '',
+                orig_primera['semestre'] or '',
+                orig_primera['cuatrimestre'] or '',
+                orig_primera['grupo'] or '',
+                nota_reposicion_origen,
+                req.nueva_fecha
+            ))
+
+        connection.commit()
+        return {"message": "Clase reprogramada exitosamente en la base de datos."}
+    except HTTPException:
+        connection.rollback()
+        raise
+    except pymysql.Error as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=f"Error transaccional al reprogramar clase: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.delete("/api/reprogramaciones/{clase_original_id}")
+def cancelar_reprogramacion(clase_original_id: int):
+    """
+    Revoca la reprogramación de una clase:
+    1. Reestablece la clase original a estado programada (sin nota de pospuesta).
+    2. Elimina en BD el registro de la clase de reposición asociada.
+    """
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM horarios WHERE id = %s", (clase_original_id,))
+            orig = cursor.fetchone()
+            if not orig:
+                raise HTTPException(status_code=404, detail="No se encontró la clase original.")
+
+            docente = orig['docente']
+            horario_orig = orig['horario']
+            like_nota = f"Reposición de {horario_orig}%"
+
+            cursor.execute("""
+                UPDATE horarios
+                SET estado_slug = NULL,
+                    nota_reprogramacion = NULL
+                WHERE id = %s
+            """, (clase_original_id,))
+
+            cursor.execute("""
+                DELETE FROM horarios
+                WHERE docente = %s
+                  AND es_reposicion = TRUE
+                  AND nota_reprogramacion LIKE %s
+            """, (docente, like_nota))
+
+        connection.commit()
+        return {"message": "Reprogramación cancelada y revertida en la base de datos."}
+    except HTTPException:
+        connection.rollback()
+        raise
+    except pymysql.Error as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al cancelar reprogramación: {str(e)}")
+    finally:
+        connection.close()
+
+
+def archivar_reposiciones_completadas(connection, effective_dt=None):
+    """
+    Archiva clases reprogramadas finalizadas en historial_reprogramaciones_semanal
+    y normaliza el horario regular en horarios.
+    """
+    if effective_dt is None:
+        effective_dt = datetime.now()
+    fecha_hoy = effective_dt.date()
+    hora_hoy_str = effective_dt.strftime("%H:%M")
+    semana_str = effective_dt.strftime("%Y-W%W")
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, docente, licenciatura, asignatura, horario, aula_asignada, fecha_reposicion, nota_reprogramacion
+                FROM horarios
+                WHERE (estado_slug = 'reposicion_programada' OR es_reposicion = TRUE)
+                  AND fecha_reposicion IS NOT NULL
+            """)
+            repos = cursor.fetchall()
+            for row in repos:
+                frep = row['fecha_reposicion']
+                if isinstance(frep, str):
+                    try:
+                        frep = datetime.strptime(frep, "%Y-%m-%d").date()
+                    except:
+                        continue
+
+                hora_fin_str = "23:59"
+                if row.get('horario'):
+                    m = re.search(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', str(row['horario']))
+                    if m:
+                        hora_fin_str = m.group(2)
+
+                terminada = False
+                if frep < fecha_hoy:
+                    terminada = True
+                elif frep == fecha_hoy and hora_fin_str <= hora_hoy_str:
+                    terminada = True
+
+                if terminada:
+                    cursor.execute("""
+                        INSERT INTO historial_reprogramaciones_semanal (
+                            docente, licenciatura, asignatura, horario_reposicion, fecha_reposicion,
+                            aula_asignada, nota_reprogramacion, motivo, fecha_archivado, semana_anio
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        row['docente'], row.get('licenciatura', ''), row.get('asignatura', ''),
+                        row.get('horario', ''), frep, row.get('aula_asignada', ''),
+                        row.get('nota_reprogramacion', ''), 'Reposición finalizada',
+                        effective_dt, semana_str
+                    ))
+
+                    cursor.execute("DELETE FROM horarios WHERE id = %s", (row['id'],))
+
+                    cursor.execute("""
+                        UPDATE horarios
+                        SET estado_slug = NULL,
+                            nota_reprogramacion = NULL
+                        WHERE docente = %s AND (estado_slug = 'pospuesta' OR nota_reprogramacion LIKE 'Pospuesta%%')
+                    """, (row['docente'],))
+
+        connection.commit()
+    except Exception as e:
+        print(f"Error archivar_reposiciones_completadas: {e}")
+
+# ---------------------------------------------------------
+# ENDPOINTS PARA HISTORIAL Y REPORTE SEMANAL DE REPROGRAMACIONES
+# ---------------------------------------------------------
+
+@app.get("/api/reprogramaciones/historial-semanal")
+def obtener_historial_reprogramaciones_semanal(fecha_ref: Optional[str] = None):
+    connection = get_db_connection()
+    try:
+        effective_dt = datetime.now()
+        if fecha_ref:
+            try:
+                clean_dt = fecha_ref.split('T')[0]
+                hora_part = '00:00'
+                if 'T' in fecha_ref:
+                    hora_part = fecha_ref.split('T')[1][:5]
+                effective_dt = datetime.strptime(f"{clean_dt} {hora_part}", "%Y-%m-%d %H:%M")
+            except Exception:
+                pass
+        archivar_reposiciones_completadas(connection, effective_dt)
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT * FROM historial_reprogramaciones_semanal
+                ORDER BY fecha_reposicion DESC, id DESC
+            """)
+            filas = cursor.fetchall()
+        return filas or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@app.post("/api/reprogramaciones/archivar-completadas")
+def archivar_completadas_endpoint(fecha_ref: Optional[str] = None):
+    connection = get_db_connection()
+    try:
+        effective_dt = datetime.now()
+        if fecha_ref:
+            try:
+                clean_dt = fecha_ref.split('T')[0]
+                hora_part = '00:00'
+                if 'T' in fecha_ref:
+                    hora_part = fecha_ref.split('T')[1][:5]
+                effective_dt = datetime.strptime(f"{clean_dt} {hora_part}", "%Y-%m-%d %H:%M")
+            except Exception:
+                pass
+        archivar_reposiciones_completadas(connection, effective_dt)
+        return {"message": "Reposiciones archivadas y horarios normalizados correctamente."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@app.get("/api/reprogramaciones/exportar-historial-csv")
+def exportar_historial_csv(
+    docente: Optional[str] = None,
+    licenciatura: Optional[str] = None,
+    asignatura: Optional[str] = None,
+    busqueda: Optional[str] = None,
+    semana_anio: Optional[str] = None
+):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            where_clauses = []
+            params = []
+            if docente:
+                where_clauses.append("docente LIKE %s")
+                params.append(f"%{docente}%")
+            if licenciatura and licenciatura != 'todas':
+                where_clauses.append("licenciatura LIKE %s")
+                params.append(f"%{licenciatura}%")
+            if asignatura and asignatura != 'todas':
+                where_clauses.append("asignatura LIKE %s")
+                params.append(f"%{asignatura}%")
+            if busqueda:
+                where_clauses.append("(docente LIKE %s OR asignatura LIKE %s OR aula_asignada LIKE %s)")
+                params.extend([f"%{busqueda}%", f"%{busqueda}%", f"%{busqueda}%"])
+            if semana_anio:
+                where_clauses.append("semana_anio = %s")
+                params.append(semana_anio)
+
+            where_sql = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+            cursor.execute(f"""
+                SELECT docente, licenciatura, asignatura, horario_reposicion, fecha_reposicion, aula_asignada, nota_reprogramacion, motivo, fecha_archivado, semana_anio
+                FROM historial_reprogramaciones_semanal
+                {where_sql}
+                ORDER BY fecha_reposicion DESC, id DESC
+            """, tuple(params))
+            filas = cursor.fetchall()
+
+        output = io.StringIO()
+        output.write('\uFEFF')
+        writer = csv.writer(output)
+        writer.writerow(['Docente', 'Licenciatura', 'Asignatura', 'Horario Reposición', 'Fecha Reposición', 'Aula Asignada', 'Nota Reprogramación', 'Motivo', 'Fecha Archivado', 'Semana'])
+
+        for f in (filas or []):
+            writer.writerow([
+                f.get('docente', ''),
+                f.get('licenciatura', ''),
+                f.get('asignatura', ''),
+                f.get('horario_reposicion', ''),
+                f.get('fecha_reposicion', ''),
+                f.get('aula_asignada', ''),
+                f.get('nota_reprogramacion', ''),
+                f.get('motivo', ''),
+                f.get('fecha_archivado', ''),
+                f.get('semana_anio', '')
+            ])
+
+        content = output.getvalue()
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=reporte_reprogramaciones_semanal.csv"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------
 # ENDPOINTS PARA DOCENTES DESDE HORARIOS (SIN TABLA PROPIA)
 # ---------------------------------------------------------
 
 @app.get("/api/docentes-horarios")
-def obtener_docentes_horarios():
+def obtener_docentes_horarios(fecha_ref: Optional[str] = None):
     """Docentes únicos de horarios. Incluye horarios_hoy para cálculo en tiempo real en el frontend."""
     connection = get_db_connection()
     try:
+        effective_dt = datetime.now()
+        if fecha_ref:
+            try:
+                clean_dt = fecha_ref.split('T')[0]
+                hora_part = '00:00'
+                if 'T' in fecha_ref:
+                    hora_part = fecha_ref.split('T')[1][:5]
+                effective_dt = datetime.strptime(f"{clean_dt} {hora_part}", "%Y-%m-%d %H:%M")
+            except Exception:
+                pass
+        archivar_reposiciones_completadas(connection, effective_dt)
         with connection.cursor() as cursor:
             cursor.execute("SET SESSION group_concat_max_len = 65535")
             cursor.execute("""
@@ -3280,12 +4109,49 @@ def obtener_docentes_horarios():
             """)
             suplencias_hoy = cursor.fetchall()
 
-        # Agrupar horarios semanales por docente, incluyendo dia_index
-        clases_por_docente = defaultdict(list)
+            # Clases reprogramadas o reposiciones programadas (nueva clase)
+            cursor.execute("""
+                SELECT docente, asignatura, horario, aula_asignada, fecha_reposicion, nota_reprogramacion, estado_slug
+                FROM horarios
+                WHERE (estado_slug = 'reposicion_programada' OR es_reposicion = TRUE OR (nota_reprogramacion IS NOT NULL AND TRIM(nota_reprogramacion) != '' AND (estado_slug IS NULL OR estado_slug != 'pospuesta')))
+                  AND docente IS NOT NULL AND TRIM(docente) != ''
+                  AND TRIM(docente) != 'Sin especificar'
+            """)
+            clases_reprogramadas_raw = cursor.fetchall()
+
+        # Construir mapa canónico de nombres para unificar duplicados ("Last, First" vs "First Last", segundo nombre omitido)
+        nombres_raw_unicos = [f['nombre'] for f in (filas or []) if f.get('nombre')]
+        mapa_canonico = _construir_mapa_docentes_canonicos(nombres_raw_unicos)
+
+        docentes_dict = defaultdict(lambda: {
+            'materias': set(),
+            'licenciaturas': set(),
+            'horarios_semana': [],
+            'suplencias_hoy': [],
+            'clases_reprogramadas': [],
+            'nombres_raw': set()
+        })
+
+        for row in (filas or []):
+            raw_n = row['nombre']
+            canon_n = mapa_canonico.get(raw_n, _normalizar_nombre_formato(raw_n))
+            docentes_dict[canon_n]['nombres_raw'].add(raw_n)
+
+            if row.get('materias_raw'):
+                for m in row['materias_raw'].split('|||'):
+                    if m.strip():
+                        docentes_dict[canon_n]['materias'].add(m.strip())
+            if row.get('licenciaturas_raw'):
+                for l in row['licenciaturas_raw'].split('|||'):
+                    if l.strip():
+                        docentes_dict[canon_n]['licenciaturas'].add(l.strip())
+
         for c in (clases_hoy_raw or []):
+            raw_n = c['docente']
+            canon_n = mapa_canonico.get(raw_n, _normalizar_nombre_formato(raw_n))
             dia_idx, inicio, fin = _parse_horario_minutos(c.get('horario', ''))
             if inicio is not None and dia_idx is not None:
-                clases_por_docente[c['docente']].append({
+                docentes_dict[canon_n]['horarios_semana'].append({
                     'asignatura':  c['asignatura'],
                     'dia_index':   dia_idx,   # 0=Dom,1=Lun...6=Sab (igual que JS getDay())
                     'inicio_mins': inicio,
@@ -3293,10 +4159,10 @@ def obtener_docentes_horarios():
                     'es_cuatri':   bool(c.get('cuatrimestre')),
                 })
 
-        # Suplencias hoy por docente (con horas convertidas a string)
-        suplencias_por_docente = defaultdict(list)
         for s in (suplencias_hoy or []):
-            suplencias_por_docente[s['docente_nombre']].append({
+            raw_n = s['docente_nombre']
+            canon_n = mapa_canonico.get(raw_n, _normalizar_nombre_formato(raw_n))
+            docentes_dict[canon_n]['suplencias_hoy'].append({
                 'id':              s['id'],
                 'suplente_nombre': s['suplente_nombre'],
                 'materia':         s['materia'],
@@ -3306,18 +4172,28 @@ def obtener_docentes_horarios():
                 'fin_mins':        _time_to_mins(s['hora_fin']),
             })
 
-        docentes = []
-        for row in (filas or []):
-            nombre        = row['nombre']
-            materias      = [m.strip() for m in (row['materias_raw']      or '').split('|||') if m.strip()]
-            licenciaturas = [l.strip() for l in (row['licenciaturas_raw'] or '').split('|||') if l.strip()]
+        for cr in (clases_reprogramadas_raw or []):
+            raw_n = cr['docente']
+            canon_n = mapa_canonico.get(raw_n, _normalizar_nombre_formato(raw_n))
+            docentes_dict[canon_n]['clases_reprogramadas'].append({
+                'asignatura':          cr.get('asignatura') or '',
+                'horario':             cr.get('horario') or '',
+                'aula_asignada':       cr.get('aula_asignada') or '',
+                'fecha_reposicion':    str(cr.get('fecha_reposicion')) if cr.get('fecha_reposicion') else '',
+                'nota_reprogramacion': cr.get('nota_reprogramacion') or '',
+                'estado_slug':         cr.get('estado_slug') or '',
+            })
 
+        docentes = []
+        for nombre_canonico, data in sorted(docentes_dict.items(), key=lambda x: x[0]):
             docentes.append({
-                'nombre':           nombre,
-                'materias':         materias,
-                'licenciaturas':    licenciaturas,
-                'horarios_semana':  clases_por_docente.get(nombre, []),
-                'suplencias_hoy':   suplencias_por_docente.get(nombre, []),
+                'nombre':               nombre_canonico,
+                'materias':             sorted(list(data['materias'])),
+                'licenciaturas':        sorted(list(data['licenciaturas'])),
+                'horarios_semana':      data['horarios_semana'],
+                'suplencias_hoy':       data['suplencias_hoy'],
+                'clases_reprogramadas': data['clases_reprogramadas'],
+                'nombres_raw':          list(data['nombres_raw']),
             })
 
         return docentes
@@ -3409,4 +4285,659 @@ def obtener_suplencias_activas():
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener suplencias activas: {str(e)}")
     finally:
-        connection.close()# 
+        connection.close()
+
+
+# ---------------------------------------------------------
+# ENDPOINTS PARA EXPORTACIÓN, EMAIL, IMPRESIÓN Y AUDITORÍA
+# ---------------------------------------------------------
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfgen import canvas
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+class NumberedCanvas(canvas.Canvas):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_decorations(self, page_count):
+        self.saveState()
+        # Encabezado institucional azul
+        self.setFillColor(colors.HexColor('#1c355e'))
+        self.rect(0, 570, 792, 42, fill=True, stroke=False)
+        self.setFillColor(colors.white)
+        self.setFont("Helvetica-Bold", 11)
+        self.drawString(36, 587, "UNIVERSIDAD LATINO  |  SIPREF - REPORTE DE HORARIOS Y EVENTOS ACADÉMICOS")
+        
+        # Pie de página
+        self.setStrokeColor(colors.HexColor('#c5c6cf'))
+        self.setLineWidth(0.5)
+        self.line(36, 35, 792 - 36, 35)
+        self.setFillColor(colors.HexColor('#75777f'))
+        self.setFont("Helvetica", 8)
+        self.drawString(36, 20, "Sistema de Gestión e Información Académica — Universidad Latino")
+        page_text = f"Página {self._pageNumber} de {page_count}"
+        self.drawRightString(792 - 36, 20, page_text)
+        self.restoreState()
+
+
+def _generar_pdf_reporte(registros: list[dict], filtros: dict, usuario_nombre: str = "Administrador", es_historial: bool = False) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=54,
+        bottomMargin=54
+    )
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=15,
+        leading=18,
+        textColor=colors.HexColor('#1c355e')
+    )
+    sub_style = ParagraphStyle(
+        'SubTitle',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8,
+        leading=11,
+        textColor=colors.HexColor('#75777f')
+    )
+    cell_head_style = ParagraphStyle(
+        'CellHead',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.white,
+        alignment=1
+    )
+    cell_text_style = ParagraphStyle(
+        'CellText',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#1b1c1e')
+    )
+
+    story = []
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    tipo_repr = "HISTORIAL COMPLETO DE EVENTOS ACADÉMICOS" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
+    
+    story.append(Paragraph(f"<b>UNIVERSIDAD LATINO — {tipo_repr}</b>", title_style))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(f"Generado por: <b>{usuario_nombre}</b> | Fecha y Hora: <b>{ahora_str}</b> | Total Registros: <b>{len(registros)}</b>", sub_style))
+    story.append(Spacer(1, 6))
+
+    if filtros and not es_historial:
+        filtros_str_list = [f"<b>{k}:</b> {v}" for k, v in filtros.items() if v]
+        if filtros_str_list:
+            filtros_text = " | ".join(filtros_str_list)
+            filtros_style = ParagraphStyle('FiltrosText', parent=sub_style, fontSize=8, leading=10, textColor=colors.HexColor('#1c355e'))
+            story.append(Paragraph(f"<b>Filtros Activos:</b> {filtros_text}", filtros_style))
+            story.append(Spacer(1, 8))
+
+    col_widths = [55, 120, 75, 60, 165, 80, 55, 110]
+    table_data = [[
+        Paragraph("Día", cell_head_style),
+        Paragraph("Docente", cell_head_style),
+        Paragraph("Licenciatura", cell_head_style),
+        Paragraph("Nivel", cell_head_style),
+        Paragraph("Asignatura", cell_head_style),
+        Paragraph("Horario", cell_head_style),
+        Paragraph("Aula", cell_head_style),
+        Paragraph("Estado / Motivo", cell_head_style),
+    ]]
+
+    for r in registros:
+        nivel = f"Sem: {r.get('semestre')}" if r.get('semestre') else (f"Cuat: {r.get('cuatrimestre')}" if r.get('cuatrimestre') else "")
+        if r.get('grupo'): nivel += f" ({r.get('grupo')})"
+        
+        estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
+        if r.get('esAulaLiberada'):
+            motivo = r.get('infoLiberacion', {}).get('motivo', 'Salida anticipada') if isinstance(r.get('infoLiberacion'), dict) else 'Aula Liberada'
+            estado_txt = f"Aula Liberada ({motivo})"
+        elif r.get('es_suplencia'):
+            estado_txt = f"Suplencia (Cubre a {r.get('docente_ausente', '')})"
+        elif r.get('estadoRazon'):
+            estado_txt += f" ({r.get('estadoRazon')})"
+
+        aula_str = r.get('aula_asignada', '—')
+        if r.get('esAulaLiberada'):
+            aula_str = f"Fuera de Aula ({aula_str})"
+        elif r.get('aula_reasignada'):
+            aula_str = f"{r.get('aula_asignada')} (Temp)"
+
+        row = [
+            Paragraph(str(r.get('diaOriginal', r.get('dia', '—'))).capitalize(), cell_text_style),
+            Paragraph(str(r.get('docente', '—')), cell_text_style),
+            Paragraph(str(r.get('licenciatura', '—')), cell_text_style),
+            Paragraph(nivel or '—', cell_text_style),
+            Paragraph(str(r.get('asignatura', '—')), cell_text_style),
+            Paragraph(str(r.get('textoHora', r.get('horario', '—'))), cell_text_style),
+            Paragraph(str(aula_str), cell_text_style),
+            Paragraph(str(estado_txt), cell_text_style),
+        ]
+        table_data.append(row)
+
+    t = Table(table_data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1c355e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e8')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+    ]))
+    story.append(t)
+    doc.build(story, canvasmaker=NumberedCanvas)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def _generar_excel_reporte(registros: list[dict], filtros: dict, usuario_nombre: str = "Administrador", es_historial: bool = False) -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Reporte de Horarios"
+
+    header_fill = PatternFill(start_color="1C355E", end_color="1C355E", fill_type="solid")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    title_font = Font(name="Calibri", size=14, bold=True, color="1C355E")
+    meta_font = Font(name="Calibri", size=9, italic=True, color="555555")
+    cell_font = Font(name="Calibri", size=10)
+    thin_border = Border(
+        left=Side(style='thin', color='E0E0E8'),
+        right=Side(style='thin', color='E0E0E8'),
+        top=Side(style='thin', color='E0E0E8'),
+        bottom=Side(style='thin', color='E0E0E8')
+    )
+    zebra_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+
+    tipo_repr = "HISTORIAL COMPLETO DE EVENTOS ACADÉMICOS" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
+    ws.cell(row=1, column=1, value=f"UNIVERSIDAD LATINO — {tipo_repr}").font = title_font
+    
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws.cell(row=2, column=1, value=f"Generado por: {usuario_nombre} | Fecha y hora: {ahora_str} | Total registros: {len(registros)}").font = meta_font
+
+    row_offset = 4
+    if filtros and not es_historial:
+        filtros_str = ", ".join([f"{k}: {v}" for k, v in filtros.items() if v])
+        if filtros_str:
+            ws.cell(row=3, column=1, value=f"Filtros aplicados: {filtros_str}").font = meta_font
+            row_offset = 5
+
+    headers = ["Día", "Docente", "Licenciatura", "Semestre", "Cuatrimestre", "Grupo", "Asignatura", "Horario", "Aula", "Estado", "Detalle / Motivo"]
+    for col_num, h in enumerate(headers, 1):
+        cell = ws.cell(row=row_offset, column=col_num, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for r_idx, r in enumerate(registros, start=row_offset + 1):
+        estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
+        motivo = ""
+        if r.get('esAulaLiberada'):
+            estado_txt = "Aula Liberada"
+            motivo = r.get('infoLiberacion', {}).get('motivo', 'Salida anticipada') if isinstance(r.get('infoLiberacion'), dict) else 'Salida anticipada'
+        elif r.get('es_suplencia'):
+            estado_txt = "Suplencia"
+            motivo = f"Cubre a {r.get('docente_ausente', '')}"
+        elif r.get('estadoRazon'):
+            motivo = str(r.get('estadoRazon'))
+
+        aula_str = str(r.get('aula_asignada', '—'))
+        if r.get('esAulaLiberada'):
+            aula_str = f"Fuera de Aula ({aula_str})"
+
+        values = [
+            str(r.get('diaOriginal', r.get('dia', '—'))).capitalize(),
+            str(r.get('docente', '—')),
+            str(r.get('licenciatura', '—')),
+            str(r.get('semestre', '—')),
+            str(r.get('cuatrimestre', '—')),
+            str(r.get('grupo', '—')),
+            str(r.get('asignatura', '—')),
+            str(r.get('textoHora', r.get('horario', '—'))),
+            aula_str,
+            estado_txt,
+            motivo
+        ]
+
+        use_zebra = (r_idx % 2 == 0)
+        for c_idx, val in enumerate(values, 1):
+            cell = ws.cell(row=r_idx, column=c_idx, value=val)
+            cell.font = cell_font
+            cell.border = thin_border
+            if use_zebra:
+                cell.fill = zebra_fill
+            if c_idx in [1, 4, 5, 6, 8, 9, 10]:
+                cell.alignment = Alignment(horizontal="center")
+
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or '')
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+class ExportarRequest(BaseModel):
+    usuario_nombre: Optional[str] = "Administrador"
+    usuario_correo: Optional[str] = ""
+    es_historial_completo: Optional[bool] = False
+    filtros_aplicados: Optional[dict] = {}
+    registros: list[dict] = []
+
+class EnviarReporteEmailRequest(BaseModel):
+    usuario_nombre: Optional[str] = "Administrador"
+    usuario_correo: Optional[str] = ""
+    destinatarios: str
+    cc: Optional[str] = ""
+    cco: Optional[str] = ""
+    asunto: Optional[str] = "Reporte de Horarios y Eventos Académicos — ULA"
+    mensaje: Optional[str] = ""
+    adjuntar_pdf: Optional[bool] = True
+    adjuntar_excel: Optional[bool] = False
+    es_historial_completo: Optional[bool] = False
+    filtros_aplicados: Optional[dict] = {}
+    registros: list[dict] = []
+
+
+def _registrar_auditoria_exportacion(usuario_nombre, usuario_correo, tipo, es_historial, filtros, cantidad, enviado_email=False, destinatarios=""):
+    connection = get_db_connection()
+    try:
+        filtros_str = json.dumps(filtros, ensure_ascii=False) if isinstance(filtros, dict) else str(filtros)
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO auditoria_exportaciones
+                (usuario_nombre, usuario_correo, tipo_exportacion, es_historial_completo, filtros_aplicados, cantidad_registros, enviado_email, destinatarios_email)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (usuario_nombre or 'Administrador', usuario_correo or '', tipo, es_historial, filtros_str, cantidad, enviado_email, destinatarios))
+            connection.commit()
+    except Exception as e:
+        print(f"Error al registrar auditoria de exportacion: {e}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/exportar/pdf")
+def exportar_pdf(req: ExportarRequest):
+    try:
+        pdf_bytes = _generar_pdf_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "PDF", req.es_historial_completo, req.filtros_aplicados, len(req.registros))
+        
+        fecha_str = datetime.now().strftime("%Y-%m-%d")
+        filename = f"Bitacora_Eventos_{fecha_str}.pdf" if req.es_historial_completo else f"Dashboard_Clases_{fecha_str}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar PDF: {str(e)}")
+
+
+@app.post("/api/exportar/excel")
+def exportar_excel(req: ExportarRequest):
+    try:
+        xlsx_bytes = _generar_excel_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "Excel", req.es_historial_completo, req.filtros_aplicados, len(req.registros))
+        
+        fecha_str = datetime.now().strftime("%Y-%m-%d")
+        filename = f"Bitacora_Eventos_{fecha_str}.xlsx" if req.es_historial_completo else f"Dashboard_Clases_{fecha_str}.xlsx"
+        return Response(
+            content=xlsx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar Excel: {str(e)}")
+
+
+@app.post("/api/exportar/email")
+def enviar_reporte_email(req: EnviarReporteEmailRequest):
+    try:
+        destinos = [d.strip() for d in req.destinatarios.replace(';', ',').split(',') if d.strip()]
+        if not destinos:
+            raise HTTPException(status_code=400, detail="Debe especificar al menos un correo destinatario.")
+        
+        cc_list = [d.strip() for d in (req.cc or '').replace(';', ',').split(',') if d.strip()]
+        cco_list = [d.strip() for d in (req.cco or '').replace(';', ',').split(',') if d.strip()]
+
+        fecha_str = datetime.now().strftime("%Y-%m-%d")
+        asunto = req.asunto or f"Reporte de Eventos Académicos ULA - {fecha_str}"
+
+        dest_str = f"To: {','.join(destinos)}"
+        if cc_list: dest_str += f" | CC: {','.join(cc_list)}"
+        if cco_list: dest_str += f" | CCO: {','.join(cco_list)}"
+        tipo_str = "Email PDF+Excel" if (req.adjuntar_pdf and req.adjuntar_excel) else ("Email PDF" if req.adjuntar_pdf else "Email Excel")
+
+        # Intentar envío SMTP si está configurado
+        sender_email = os.getenv("SMTP_USER", "")
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", 587))
+        smtp_pass = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
+
+        if not sender_email or not smtp_pass:
+            raise HTTPException(status_code=500, detail="El servidor SMTP no está configurado. Agrega SMTP_USER y SMTP_PASSWORD en el archivo .env")
+
+        body_html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; background-color: #f4f6fb; padding: 24px;">
+            <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 10px rgba(0,0,0,0.06);">
+                <h2 style="color: #1c355e; margin-top: 0;">Universidad Latino — SIPREF</h2>
+                <p style="color: #44464e; font-size: 14px;">Estimado usuario,</p>
+                <p style="color: #44464e; font-size: 14px;">Se adjunta el reporte académico generado desde la plataforma:</p>
+                <div style="background: #f0f4ff; padding: 14px; border-radius: 8px; font-size: 13px; color: #1c355e; margin: 16px 0;">
+                    <b>Generado por:</b> {req.usuario_nombre}<br/>
+                    <b>Fecha:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
+                    <b>Total Registros:</b> {len(req.registros)}
+                </div>
+                {f'<p style="color: #44464e; font-size: 13px;"><b>Mensaje:</b><br/>{req.mensaje}</p>' if req.mensaje else ''}
+                <hr style="border: 0; border-top: 1px solid #e0e0e8; margin: 20px 0;"/>
+                <p style="color: #75777f; font-size: 11px; text-align: center;">Este es un mensaje automático generado por el Sistema SIPREF — Universidad Latino.</p>
+            </div>
+        </body>
+        </html>
+        """
+
+        from email.mime.base import MIMEBase
+        from email import encoders
+        
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = ", ".join(destinos)
+        if cc_list: msg['Cc'] = ", ".join(cc_list)
+        msg['Subject'] = asunto
+        msg.attach(MIMEText(body_html, 'html'))
+
+        if req.adjuntar_pdf:
+            pdf_bytes = _generar_pdf_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(pdf_bytes)
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="Reporte_Academico_{fecha_str}.pdf"')
+            msg.attach(part)
+
+        if req.adjuntar_excel:
+            xlsx_bytes = _generar_excel_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+            part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            part.set_payload(xlsx_bytes)
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="Reporte_Academico_{fecha_str}.xlsx"')
+            msg.attach(part)
+
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(sender_email, smtp_pass)
+                server.sendmail(sender_email, destinos + cc_list + cco_list, msg.as_string())
+        except smtplib.SMTPAuthenticationError:
+            # Fallback a EmailJS si falla la autenticación de Gmail
+            for dest in (destinos + cc_list + cco_list):
+                _enviar_smtp(dest, asunto, body_html)
+
+        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, tipo_str, req.es_historial_completo, req.filtros_aplicados, len(req.registros), enviado_email=True, destinatarios=dest_str)
+        return {"message": f"Reporte enviado exitosamente a {', '.join(destinos)}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
+
+
+@app.get("/api/exportar/auditoria")
+def obtener_auditoria_exportaciones():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, usuario_nombre, usuario_correo, fecha_hora, tipo_exportacion, es_historial_completo, filtros_aplicados, cantidad_registros, enviado_email, destinatarios_email
+                FROM auditoria_exportaciones
+                ORDER BY id DESC
+                LIMIT 200
+            """)
+            return cursor.fetchall() or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener auditoría: {str(e)}")
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------
+# PERSISTENCIA HISTÓRICA DE CLASES (clases_historico)
+# ---------------------------------------------------------
+
+def _guardar_registro_historico(
+    cursor,
+    clase_id: Optional[int],
+    fecha_obj: date,
+    docente_nombre: str,
+    licenciatura_codigo: str,
+    semestre: str,
+    grupo: str,
+    asignatura_nombre: str,
+    horario_inicio_str: str,
+    horario_fin_str: str,
+    aula_original: str,
+    aula_actual: str,
+    estado_slug: str,
+    estado_label: str,
+    incidencia_detalle: str = ""
+):
+    try:
+        dias_es = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+        dia_semana = dias_es[fecha_obj.weekday()]
+        semana_numero = fecha_obj.isocalendar()[1]
+
+        cursor.execute("""
+            SELECT id FROM clases_historico
+            WHERE fecha = %s AND docente_nombre = %s AND asignatura_nombre = %s AND horario_inicio = %s AND estado_slug = %s
+        """, (fecha_obj, docente_nombre, asignatura_nombre, horario_inicio_str, estado_slug))
+        if cursor.fetchone():
+            return
+
+        cursor.execute("""
+            INSERT INTO clases_historico (
+                clase_id, fecha, dia_semana, semana_numero, docente_nombre,
+                licenciatura_codigo, semestre, grupo, asignatura_nombre,
+                horario_inicio, horario_fin, aula_original, aula_actual,
+                estado_slug, estado_label, incidencia_detalle
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            clase_id, fecha_obj, dia_semana, semana_numero, docente_nombre,
+            licenciatura_codigo or '', semestre or '', grupo or '', asignatura_nombre,
+            horario_inicio_str, horario_fin_str, aula_original or '', aula_actual or '',
+            estado_slug, estado_label, incidencia_detalle
+        ))
+    except Exception as e:
+        print(f"Advertencia guardando snapshot historico: {e}")
+
+
+def _evaluar_y_cerrar_clases_vencidas():
+    """Evalúa clases de hoy cuyo horario_fin ya haya transcurrido y las persiste en clases_historico."""
+    ahora = datetime.now()
+    fecha_hoy = ahora.date()
+    dia_hoy_idx = ahora.isoweekday() % 7
+    mins_ahora = ahora.hour * 60 + ahora.minute
+
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT h.id, h.docente, h.licenciatura, h.asignatura, h.horario, h.aula_asignada,
+                       h.semestre, h.cuatrimestre, h.grupo, h.estado_slug, h.nota_reprogramacion,
+                       h.fecha_reposicion, h.es_reposicion
+                FROM horarios h
+                WHERE h.docente IS NOT NULL AND TRIM(h.docente) != ''
+            """)
+            horarios_raw = cursor.fetchall()
+            
+            for h in (horarios_raw or []):
+                dia_idx, inicio_m, fin_m = _parse_horario_minutos(h.get('horario', ''))
+                if dia_idx == dia_hoy_idx and fin_m is not None:
+                    if mins_ahora > fin_m:
+                        h_ini_str = f"{inicio_m // 60:02d}:{inicio_m % 60:02d}:00"
+                        h_fin_str = f"{fin_m // 60:02d}:{fin_m % 60:02d}:00"
+                        sem_val = h.get('cuatrimestre') or h.get('semestre') or ''
+                        
+                        est_slug = 'finalizada'
+                        est_label = 'Finalizada'
+                        inc_det = ""
+                        if h.get('estado_slug') == 'pospuesta':
+                            est_slug = 'pospuesta'
+                            est_label = 'Pospuesta'
+                            inc_det = h.get('nota_reprogramacion') or 'Clase pospuesta'
+                        elif h.get('es_reposicion'):
+                            est_slug = 'impartida'
+                            est_label = 'Impartida (Reposición)'
+                            inc_det = h.get('nota_reprogramacion') or 'Clase de reposición'
+
+                        _guardar_registro_historico(
+                            cursor,
+                            clase_id=h.get('id'),
+                            fecha_obj=fecha_hoy,
+                            docente_nombre=h['docente'],
+                            licenciatura_codigo=h.get('licenciatura', ''),
+                            semestre=sem_val,
+                            grupo=h.get('grupo', ''),
+                            asignatura_nombre=h['asignatura'],
+                            horario_inicio_str=h_ini_str,
+                            horario_fin_str=h_fin_str,
+                            aula_original=h.get('aula_asignada', ''),
+                            aula_actual=h.get('aula_asignada', ''),
+                            estado_slug=est_slug,
+                            estado_label=est_label,
+                            incidencia_detalle=inc_det
+                        )
+            connection.commit()
+    except Exception as e:
+        print(f"Error evaluando cierre de clases vencidas: {e}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/clases-historico")
+def obtener_clases_historico(
+    rango_fecha: Optional[str] = "esta_semana",
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None,
+    licenciatura: Optional[str] = None,
+    asignatura: Optional[str] = None,
+    docente: Optional[str] = None,
+    dia: Optional[str] = None,
+    estado: Optional[str] = None,
+    semestre: Optional[str] = None
+):
+    """Obtiene el historial de clases (getHistoricalClasses) filtrado por periodo, licenciatura, docente, estado, etc."""
+    _evaluar_y_cerrar_clases_vencidas()
+
+    ahora = datetime.now()
+    fecha_hoy = ahora.date()
+
+    if rango_fecha == "hoy":
+        f_ini = f_fin = fecha_hoy
+    elif rango_fecha == "esta_semana":
+        f_ini = fecha_hoy - timedelta(days=fecha_hoy.weekday())
+        f_fin = f_ini + timedelta(days=6)
+    elif rango_fecha == "semana_pasada":
+        lunes_pasado = fecha_hoy - timedelta(days=fecha_hoy.weekday() + 7)
+        f_ini = lunes_pasado
+        f_fin = lunes_pasado + timedelta(days=6)
+    elif rango_fecha == "rango_personalizado" and fecha_inicio and fecha_fin:
+        f_ini = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+        f_fin = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+    else:
+        f_ini = fecha_hoy - timedelta(days=fecha_hoy.weekday())
+        f_fin = f_ini + timedelta(days=6)
+
+    query = "SELECT * FROM clases_historico WHERE fecha BETWEEN %s AND %s"
+    params = [f_ini, f_fin]
+
+    if licenciatura:
+        query += " AND licenciatura_codigo = %s"
+        params.append(licenciatura)
+    if asignatura:
+        query += " AND asignatura_nombre LIKE %s"
+        params.append(f"%{asignatura}%")
+    if docente:
+        query += " AND docente_nombre LIKE %s"
+        params.append(f"%{docente}%")
+    if dia:
+        query += " AND dia_semana = %s"
+        params.append(dia)
+    if estado:
+        query += " AND estado_slug = %s"
+        params.append(estado)
+    if semestre:
+        query += " AND semestre = %s"
+        params.append(semestre)
+
+    query += " ORDER BY fecha DESC, horario_inicio ASC"
+
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            filas = cursor.fetchall() or []
+
+        resultado = []
+        for r in filas:
+            resultado.append({
+                "id": r["id"],
+                "clase_id": r.get("clase_id"),
+                "fecha": str(r["fecha"]),
+                "dia_semana": r["dia_semana"],
+                "semana_numero": r["semana_numero"],
+                "docente_nombre": r["docente_nombre"],
+                "licenciatura_codigo": r["licenciatura_codigo"],
+                "semestre": r["semestre"],
+                "grupo": r["grupo"],
+                "asignatura_nombre": r["asignatura_nombre"],
+                "horario_inicio": _timedelta_to_str(r["horario_inicio"]),
+                "horario_fin": _timedelta_to_str(r["horario_fin"]),
+                "aula_original": r["aula_original"],
+                "aula_actual": r["aula_actual"],
+                "estado_slug": r["estado_slug"],
+                "estado_label": r["estado_label"],
+                "incidencia_detalle": r.get("incidencia_detalle") or "",
+                "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S") if r.get("created_at") else ""
+            })
+        return resultado
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al consultar historial: {str(e)}")
+    finally:
+        connection.close()
+

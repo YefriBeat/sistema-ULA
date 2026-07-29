@@ -524,7 +524,7 @@ export default function Layout() {
 
             <Link to="/horarios" onClick={cerrarMenu} className={getLinkClasses('horarios')}>
               <span className={getIconClasses('horarios')}>calendar_today</span>
-              <span className="text-sm tracking-wide">Gestión de Horarios</span>
+              <span className="text-sm tracking-wide">Gestión de Horarios por Grupos</span>
             </Link>
 
             <Link to="/gestion-aulas" onClick={cerrarMenu} className={getLinkClasses('gestion-aulas')}>
