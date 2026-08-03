@@ -3098,6 +3098,12 @@ def obtener_aulas():
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
+                UPDATE aulas 
+                SET en_mantenimiento = 0, inicio_mantenimiento = NULL, fin_mantenimiento = NULL, aula_temporal = NULL 
+                WHERE en_mantenimiento = 1 AND fin_mantenimiento IS NOT NULL AND fin_mantenimiento <= NOW()
+            """)
+            connection.commit()
+            cursor.execute("""
                 SELECT id, nombre, edificio, capacidad, equipos, estado,
                        en_mantenimiento, inicio_mantenimiento, fin_mantenimiento, aula_temporal
                 FROM aulas ORDER BY nombre
@@ -3676,11 +3682,21 @@ def obtener_aulas_disponibles_reprogramacion(
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # 1. Obtener todas las aulas que no estén en mantenimiento manual definitivo
+            # 0. Limpiar mantenimientos vencidos automáticamente
+            cursor.execute("""
+                UPDATE aulas 
+                SET en_mantenimiento = 0, inicio_mantenimiento = NULL, fin_mantenimiento = NULL, aula_temporal = NULL 
+                WHERE en_mantenimiento = 1 AND fin_mantenimiento IS NOT NULL AND fin_mantenimiento <= NOW()
+            """)
+            connection.commit()
+
+            # 1. Obtener todas las aulas que no estén en mantenimiento vigente
             cursor.execute("""
                 SELECT nombre, capacidad, edificio AS ubicacion
                 FROM aulas
                 WHERE en_mantenimiento = FALSE
+                   OR (en_mantenimiento = TRUE AND fin_mantenimiento IS NOT NULL AND fin_mantenimiento <= NOW())
+                   OR (en_mantenimiento = TRUE AND inicio_mantenimiento IS NOT NULL AND inicio_mantenimiento > NOW())
                 ORDER BY nombre
             """)
             todas_aulas = cursor.fetchall() or []
@@ -4422,28 +4438,40 @@ def _generar_pdf_reporte(registros: list[dict], filtros: dict, usuario_nombre: s
         nivel = f"Sem: {r.get('semestre')}" if r.get('semestre') else (f"Cuat: {r.get('cuatrimestre')}" if r.get('cuatrimestre') else "")
         if r.get('grupo'): nivel += f" ({r.get('grupo')})"
         
-        estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
-        if r.get('esAulaLiberada'):
-            motivo = r.get('infoLiberacion', {}).get('motivo', 'Salida anticipada') if isinstance(r.get('infoLiberacion'), dict) else 'Aula Liberada'
-            estado_txt = f"Aula Liberada ({motivo})"
-        elif r.get('es_suplencia'):
-            estado_txt = f"Suplencia (Cubre a {r.get('docente_ausente', '')})"
-        elif r.get('estadoRazon'):
-            estado_txt += f" ({r.get('estadoRazon')})"
+        if r.get('estado_label'):
+            estado_lbl = str(r.get('estado_label'))
+            inc = str(r.get('incidencia_detalle') or '')
+            estado_txt = f"{estado_lbl} ({inc})" if inc else estado_lbl
+            aula_str = str(r.get('aula_actual') or r.get('aula_original') or r.get('aula_asignada') or '—')
+        else:
+            estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
+            if r.get('esAulaLiberada'):
+                motivo = r.get('infoLiberacion', {}).get('motivo', 'Salida anticipada') if isinstance(r.get('infoLiberacion'), dict) else 'Aula Liberada'
+                estado_txt = f"Aula Liberada ({motivo})"
+            elif r.get('es_suplencia'):
+                estado_txt = f"Suplencia (Cubre a {r.get('docente_ausente', '')})"
+            elif r.get('estadoRazon'):
+                estado_txt += f" ({r.get('estadoRazon')})"
 
-        aula_str = r.get('aula_asignada', '—')
-        if r.get('esAulaLiberada'):
-            aula_str = f"Fuera de Aula ({aula_str})"
-        elif r.get('aula_reasignada'):
-            aula_str = f"{r.get('aula_asignada')} (Temp)"
+            aula_str = r.get('aula_asignada', '—')
+            if r.get('esAulaLiberada'):
+                aula_str = f"Fuera de Aula ({aula_str})"
+            elif r.get('aula_reasignada'):
+                aula_str = f"{r.get('aula_asignada')} (Temp)"
+
+        dia_val = str(r.get('diaOriginal') or r.get('dia_semana') or r.get('dia') or '—').capitalize()
+        doc_val = str(r.get('docente_nombre') or r.get('docente') or '—')
+        lic_val = str(r.get('licenciatura_codigo') or r.get('licenciatura') or '—')
+        asig_val = str(r.get('asignatura_nombre') or r.get('asignatura') or '—')
+        hora_val = f"{r.get('horario_inicio')}-{r.get('horario_fin')}" if r.get('horario_inicio') and r.get('horario_fin') else str(r.get('textoHora', r.get('horario', '—')))
 
         row = [
-            Paragraph(str(r.get('diaOriginal', r.get('dia', '—'))).capitalize(), cell_text_style),
-            Paragraph(str(r.get('docente', '—')), cell_text_style),
-            Paragraph(str(r.get('licenciatura', '—')), cell_text_style),
+            Paragraph(dia_val, cell_text_style),
+            Paragraph(doc_val, cell_text_style),
+            Paragraph(lic_val, cell_text_style),
             Paragraph(nivel or '—', cell_text_style),
-            Paragraph(str(r.get('asignatura', '—')), cell_text_style),
-            Paragraph(str(r.get('textoHora', r.get('horario', '—'))), cell_text_style),
+            Paragraph(asig_val, cell_text_style),
+            Paragraph(hora_val, cell_text_style),
             Paragraph(str(aula_str), cell_text_style),
             Paragraph(str(estado_txt), cell_text_style),
         ]
@@ -4505,30 +4533,35 @@ def _generar_excel_reporte(registros: list[dict], filtros: dict, usuario_nombre:
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for r_idx, r in enumerate(registros, start=row_offset + 1):
-        estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
-        motivo = ""
-        if r.get('esAulaLiberada'):
-            estado_txt = "Aula Liberada"
-            motivo = r.get('infoLiberacion', {}).get('motivo', 'Salida anticipada') if isinstance(r.get('infoLiberacion'), dict) else 'Salida anticipada'
-        elif r.get('es_suplencia'):
-            estado_txt = "Suplencia"
-            motivo = f"Cubre a {r.get('docente_ausente', '')}"
-        elif r.get('estadoRazon'):
-            motivo = str(r.get('estadoRazon'))
+        if r.get('estado_label'):
+            estado_txt = str(r.get('estado_label'))
+            motivo = str(r.get('incidencia_detalle') or '')
+            aula_str = str(r.get('aula_actual') or r.get('aula_original') or r.get('aula_asignada') or '—')
+        else:
+            estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
+            motivo = ""
+            if r.get('esAulaLiberada'):
+                estado_txt = "Aula Liberada"
+                motivo = r.get('infoLiberacion', {}).get('motivo', 'Salida anticipada') if isinstance(r.get('infoLiberacion'), dict) else 'Salida anticipada'
+            elif r.get('es_suplencia'):
+                estado_txt = "Suplencia"
+                motivo = f"Cubre a {r.get('docente_ausente', '')}"
+            elif r.get('estadoRazon'):
+                motivo = str(r.get('estadoRazon'))
 
-        aula_str = str(r.get('aula_asignada', '—'))
-        if r.get('esAulaLiberada'):
-            aula_str = f"Fuera de Aula ({aula_str})"
+            aula_str = str(r.get('aula_asignada', '—'))
+            if r.get('esAulaLiberada'):
+                aula_str = f"Fuera de Aula ({aula_str})"
 
         values = [
-            str(r.get('diaOriginal', r.get('dia', '—'))).capitalize(),
-            str(r.get('docente', '—')),
-            str(r.get('licenciatura', '—')),
+            str(r.get('diaOriginal') or r.get('dia_semana') or r.get('dia') or '—').capitalize(),
+            str(r.get('docente_nombre') or r.get('docente') or '—'),
+            str(r.get('licenciatura_codigo') or r.get('licenciatura') or '—'),
             str(r.get('semestre', '—')),
             str(r.get('cuatrimestre', '—')),
             str(r.get('grupo', '—')),
-            str(r.get('asignatura', '—')),
-            str(r.get('textoHora', r.get('horario', '—'))),
+            str(r.get('asignatura_nombre') or r.get('asignatura') or '—'),
+            f"{r.get('horario_inicio')}-{r.get('horario_fin')}" if r.get('horario_inicio') and r.get('horario_fin') else str(r.get('textoHora', r.get('horario', '—'))),
             aula_str,
             estado_txt,
             motivo
@@ -4563,6 +4596,9 @@ class ExportarRequest(BaseModel):
     usuario_nombre: Optional[str] = "Administrador"
     usuario_correo: Optional[str] = ""
     es_historial_completo: Optional[bool] = False
+    licenciatura: Optional[str] = None
+    semestre: Optional[str] = None
+    asignatura: Optional[str] = None
     filtros_aplicados: Optional[dict] = {}
     registros: list[dict] = []
 
@@ -4577,6 +4613,9 @@ class EnviarReporteEmailRequest(BaseModel):
     adjuntar_pdf: Optional[bool] = True
     adjuntar_excel: Optional[bool] = False
     es_historial_completo: Optional[bool] = False
+    licenciatura: Optional[str] = None
+    semestre: Optional[str] = None
+    asignatura: Optional[str] = None
     filtros_aplicados: Optional[dict] = {}
     registros: list[dict] = []
 
@@ -4598,11 +4637,86 @@ def _registrar_auditoria_exportacion(usuario_nombre, usuario_correo, tipo, es_hi
         connection.close()
 
 
+@app.get("/api/historial/filtros-disponibles")
+def obtener_filtros_disponibles_historial():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT DISTINCT licenciatura_codigo FROM clases_historico WHERE licenciatura_codigo IS NOT NULL AND TRIM(licenciatura_codigo) != '' ORDER BY licenciatura_codigo")
+            lics = [row['licenciatura_codigo'] if isinstance(row, dict) else row[0] for row in cursor.fetchall()]
+            
+            cursor.execute("SELECT DISTINCT semestre FROM clases_historico WHERE semestre IS NOT NULL AND TRIM(semestre) != '' ORDER BY semestre")
+            sems = [str(row['semestre']) if isinstance(row, dict) else str(row[0]) for row in cursor.fetchall()]
+            
+            cursor.execute("SELECT DISTINCT asignatura_nombre FROM clases_historico WHERE asignatura_nombre IS NOT NULL AND TRIM(asignatura_nombre) != '' ORDER BY asignatura_nombre")
+            asigs = [row['asignatura_nombre'] if isinstance(row, dict) else row[0] for row in cursor.fetchall()]
+            
+            return {
+                "licenciaturas": lics,
+                "semestres": sems,
+                "asignaturas": asigs
+            }
+    except Exception as e:
+        print(f"Error en filtros-disponibles historial: {e}")
+        return {"licenciaturas": [], "semestres": [], "asignaturas": []}
+    finally:
+        connection.close()
+
+
+def _consultar_historial_para_exportacion(licenciatura: Optional[str] = None, semestre: Optional[str] = None, asignatura: Optional[str] = None):
+    _evaluar_y_cerrar_clases_vencidas()
+    query = "SELECT * FROM clases_historico WHERE 1=1"
+    params = []
+    if licenciatura and str(licenciatura).strip() not in ("", "Todos", "Todas las Licenciaturas"):
+        query += " AND licenciatura_codigo = %s"
+        params.append(str(licenciatura).strip())
+    if semestre and str(semestre).strip() not in ("", "Todos", "Todos los Grados"):
+        query += " AND semestre = %s"
+        params.append(str(semestre).strip())
+    if asignatura and str(asignatura).strip() not in ("", "Todos", "Todas las Asignaturas"):
+        query += " AND asignatura_nombre = %s"
+        params.append(str(asignatura).strip())
+    query += " ORDER BY fecha DESC, horario_inicio ASC"
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            filas = cursor.fetchall() or []
+        resultado = []
+        for r in filas:
+            resultado.append({
+                "id": r["id"],
+                "clase_id": r.get("clase_id"),
+                "fecha": str(r["fecha"]),
+                "dia_semana": r["dia_semana"],
+                "semana_numero": r["semana_numero"],
+                "docente_nombre": r["docente_nombre"],
+                "licenciatura_codigo": r["licenciatura_codigo"],
+                "semestre": r["semestre"],
+                "grupo": r["grupo"],
+                "asignatura_nombre": r["asignatura_nombre"],
+                "horario_inicio": _timedelta_to_str(r["horario_inicio"]),
+                "horario_fin": _timedelta_to_str(r["horario_fin"]),
+                "aula_original": r["aula_original"],
+                "aula_actual": r["aula_actual"],
+                "estado_slug": r["estado_slug"],
+                "estado_label": r["estado_label"],
+                "incidencia_detalle": r.get("incidencia_detalle") or ""
+            })
+        return resultado
+    except Exception as e:
+        print(f"Error consultando historial para exportacion: {e}")
+        return []
+    finally:
+        connection.close()
+
+
 @app.post("/api/exportar/pdf")
 def exportar_pdf(req: ExportarRequest):
     try:
-        pdf_bytes = _generar_pdf_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
-        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "PDF", req.es_historial_completo, req.filtros_aplicados, len(req.registros))
+        registros_data = _consultar_historial_para_exportacion(req.licenciatura, req.semestre, req.asignatura) if req.es_historial_completo else req.registros
+        pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "PDF", req.es_historial_completo, req.filtros_aplicados, len(registros_data))
         
         fecha_str = datetime.now().strftime("%Y-%m-%d")
         filename = f"Bitacora_Eventos_{fecha_str}.pdf" if req.es_historial_completo else f"Dashboard_Clases_{fecha_str}.pdf"
@@ -4618,8 +4732,9 @@ def exportar_pdf(req: ExportarRequest):
 @app.post("/api/exportar/excel")
 def exportar_excel(req: ExportarRequest):
     try:
-        xlsx_bytes = _generar_excel_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
-        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "Excel", req.es_historial_completo, req.filtros_aplicados, len(req.registros))
+        registros_data = _consultar_historial_para_exportacion(req.licenciatura, req.semestre, req.asignatura) if req.es_historial_completo else req.registros
+        xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "Excel", req.es_historial_completo, req.filtros_aplicados, len(registros_data))
         
         fecha_str = datetime.now().strftime("%Y-%m-%d")
         filename = f"Bitacora_Eventos_{fecha_str}.xlsx" if req.es_historial_completo else f"Dashboard_Clases_{fecha_str}.xlsx"
@@ -4650,6 +4765,8 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
         if cco_list: dest_str += f" | CCO: {','.join(cco_list)}"
         tipo_str = "Email PDF+Excel" if (req.adjuntar_pdf and req.adjuntar_excel) else ("Email PDF" if req.adjuntar_pdf else "Email Excel")
 
+        registros_data = _consultar_historial_para_exportacion(req.licenciatura, req.semestre, req.asignatura) if req.es_historial_completo else req.registros
+
         # Intentar envío SMTP si está configurado
         sender_email = os.getenv("SMTP_USER", "")
         smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
@@ -4661,20 +4778,12 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
 
         body_html = f"""
         <html>
-        <body style="font-family: Arial, sans-serif; background-color: #f4f6fb; padding: 24px;">
-            <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 10px rgba(0,0,0,0.06);">
-                <h2 style="color: #1c355e; margin-top: 0;">Universidad Latino — SIPREF</h2>
-                <p style="color: #44464e; font-size: 14px;">Estimado usuario,</p>
-                <p style="color: #44464e; font-size: 14px;">Se adjunta el reporte académico generado desde la plataforma:</p>
-                <div style="background: #f0f4ff; padding: 14px; border-radius: 8px; font-size: 13px; color: #1c355e; margin: 16px 0;">
-                    <b>Generado por:</b> {req.usuario_nombre}<br/>
-                    <b>Fecha:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
-                    <b>Total Registros:</b> {len(req.registros)}
-                </div>
-                {f'<p style="color: #44464e; font-size: 13px;"><b>Mensaje:</b><br/>{req.mensaje}</p>' if req.mensaje else ''}
-                <hr style="border: 0; border-top: 1px solid #e0e0e8; margin: 20px 0;"/>
-                <p style="color: #75777f; font-size: 11px; text-align: center;">Este es un mensaje automático generado por el Sistema SIPREF — Universidad Latino.</p>
-            </div>
+        <body style="font-family: Arial, sans-serif; color: #333;">
+            <h2 style="color: #1c355e;">Reporte de Horarios y Eventos Académicos — ULA</h2>
+            <p>Hola,</p>
+            <p>{req.mensaje or 'Adjunto encontrarás el reporte generado por el Sistema de Horarios ULA.'}</p>
+            <hr style="border: 0; border-top: 1px solid #ccc; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #777;">Generado por <strong>{req.usuario_nombre}</strong> ({req.usuario_correo}) el {datetime.now().strftime('%d/%m/%Y %H:%M')}.</p>
         </body>
         </html>
         """
@@ -4683,14 +4792,14 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
         from email import encoders
         
         msg = MIMEMultipart()
-        msg['From'] = sender_email
+        msg['From'] = f"Sistema Horarios ULA <{sender_email}>"
         msg['To'] = ", ".join(destinos)
         if cc_list: msg['Cc'] = ", ".join(cc_list)
         msg['Subject'] = asunto
         msg.attach(MIMEText(body_html, 'html'))
 
         if req.adjuntar_pdf:
-            pdf_bytes = _generar_pdf_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
             part = MIMEBase('application', 'pdf')
             part.set_payload(pdf_bytes)
             encoders.encode_base64(part)
@@ -4698,7 +4807,7 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
             msg.attach(part)
 
         if req.adjuntar_excel:
-            xlsx_bytes = _generar_excel_reporte(req.registros, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+            xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
             part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             part.set_payload(xlsx_bytes)
             encoders.encode_base64(part)
@@ -4745,6 +4854,17 @@ def obtener_auditoria_exportaciones():
 # PERSISTENCIA HISTÓRICA DE CLASES (clases_historico)
 # ---------------------------------------------------------
 
+def _norm_time(t) -> str:
+    if not t:
+        return ""
+    try:
+        parts = str(t).strip().split(":")
+        if len(parts) >= 2:
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    except Exception:
+        pass
+    return str(t)[:5]
+
 def _guardar_registro_historico(
     cursor,
     clase_id: Optional[int],
@@ -4760,18 +4880,40 @@ def _guardar_registro_historico(
     aula_actual: str,
     estado_slug: str,
     estado_label: str,
-    incidencia_detalle: str = ""
+    incidencia_detalle: str = "",
+    historico_map: Optional[dict] = None
 ):
     try:
         dias_es = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
         dia_semana = dias_es[fecha_obj.weekday()]
         semana_numero = fecha_obj.isocalendar()[1]
 
-        cursor.execute("""
-            SELECT id FROM clases_historico
-            WHERE fecha = %s AND docente_nombre = %s AND asignatura_nombre = %s AND horario_inicio = %s AND estado_slug = %s
-        """, (fecha_obj, docente_nombre, asignatura_nombre, horario_inicio_str, estado_slug))
-        if cursor.fetchone():
+        cache_key = (docente_nombre, asignatura_nombre, _norm_time(horario_inicio_str))
+        existing = None
+        if historico_map is not None and cache_key in historico_map:
+            ex_row = historico_map[cache_key]
+            ex_id = ex_row['id']
+            if ex_row.get('estado_slug') == estado_slug and (ex_row.get('incidencia_detalle') or '') == incidencia_detalle and (ex_row.get('aula_actual') or '') == (aula_actual or ''):
+                return
+            existing = {'id': ex_id}
+        elif historico_map is None:
+            cursor.execute("""
+                SELECT id FROM clases_historico
+                WHERE fecha = %s AND docente_nombre = %s AND asignatura_nombre = %s AND horario_inicio = %s
+            """, (fecha_obj, docente_nombre, asignatura_nombre, horario_inicio_str))
+            existing = cursor.fetchone()
+
+        if existing:
+            ex_id = existing['id'] if isinstance(existing, dict) else existing[0]
+            cursor.execute("""
+                UPDATE clases_historico
+                SET estado_slug = %s, estado_label = %s, incidencia_detalle = %s, aula_actual = %s
+                WHERE id = %s
+            """, (estado_slug, estado_label, incidencia_detalle, aula_actual or '', ex_id))
+            if historico_map is not None and cache_key in historico_map:
+                historico_map[cache_key]['estado_slug'] = estado_slug
+                historico_map[cache_key]['incidencia_detalle'] = incidencia_detalle
+                historico_map[cache_key]['aula_actual'] = aula_actual or ''
             return
 
         cursor.execute("""
@@ -4801,6 +4943,26 @@ def _evaluar_y_cerrar_clases_vencidas():
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # Precargar aulas liberadas y suplencias del día en diccionarios O(1)
+            cursor.execute("SELECT aula_nombre, motivo FROM aulas_liberadas WHERE fecha = %s AND activa = TRUE", (fecha_hoy,))
+            aulas_lib_raw = cursor.fetchall() or []
+            aulas_lib_map = {r['aula_nombre'] if isinstance(r, dict) else r[0]: (r['motivo'] if isinstance(r, dict) else r[1]) for r in aulas_lib_raw}
+
+            cursor.execute("SELECT docente_nombre, materia, suplente_nombre FROM suplencias_horarios WHERE fecha = %s AND activa = TRUE", (fecha_hoy,))
+            suplencias_raw = cursor.fetchall() or []
+            suplencias_map = {(r['docente_nombre'], r['materia']) if isinstance(r, dict) else (r[0], r[1]): (r['suplente_nombre'] if isinstance(r, dict) else r[2]) for r in suplencias_raw}
+
+            cursor.execute("SELECT id, docente_nombre, asignatura_nombre, horario_inicio, estado_slug, incidencia_detalle, aula_actual FROM clases_historico WHERE fecha = %s", (fecha_hoy,))
+            hist_raw = cursor.fetchall() or []
+            historico_map = {
+                (r['docente_nombre'] if isinstance(r, dict) else r[1],
+                 r['asignatura_nombre'] if isinstance(r, dict) else r[2],
+                 _norm_time(r['horario_inicio'] if isinstance(r, dict) else r[3])): (
+                     r if isinstance(r, dict) else {'id': r[0], 'estado_slug': r[4], 'incidencia_detalle': r[5], 'aula_actual': r[6]}
+                 )
+                for r in hist_raw
+            }
+
             cursor.execute("""
                 SELECT h.id, h.docente, h.licenciatura, h.asignatura, h.horario, h.aula_asignada,
                        h.semestre, h.cuatrimestre, h.grupo, h.estado_slug, h.nota_reprogramacion,
@@ -4813,23 +4975,50 @@ def _evaluar_y_cerrar_clases_vencidas():
             for h in (horarios_raw or []):
                 dia_idx, inicio_m, fin_m = _parse_horario_minutos(h.get('horario', ''))
                 if dia_idx == dia_hoy_idx and fin_m is not None:
-                    if mins_ahora > fin_m:
-                        h_ini_str = f"{inicio_m // 60:02d}:{inicio_m % 60:02d}:00"
-                        h_fin_str = f"{fin_m // 60:02d}:{fin_m % 60:02d}:00"
-                        sem_val = h.get('cuatrimestre') or h.get('semestre') or ''
-                        
-                        est_slug = 'finalizada'
-                        est_label = 'Finalizada'
-                        inc_det = ""
-                        if h.get('estado_slug') == 'pospuesta':
-                            est_slug = 'pospuesta'
-                            est_label = 'Pospuesta'
-                            inc_det = h.get('nota_reprogramacion') or 'Clase pospuesta'
-                        elif h.get('es_reposicion'):
-                            est_slug = 'impartida'
-                            est_label = 'Impartida (Reposición)'
-                            inc_det = h.get('nota_reprogramacion') or 'Clase de reposición'
+                    h_ini_str = f"{inicio_m // 60:02d}:{inicio_m % 60:02d}:00"
+                    h_fin_str = f"{fin_m // 60:02d}:{fin_m % 60:02d}:00"
+                    sem_val = h.get('cuatrimestre') or h.get('semestre') or ''
+                    aula_orig = h.get('aula_asignada', '')
+                    aula_act = aula_orig
 
+                    est_slug = 'finalizada'
+                    est_label = 'Finalizada'
+                    inc_det = 'Clase impartida sin incidencias'
+                    es_incidencia = False
+
+                    # 1. ¿Tuvo aula liberada hoy por cuestiones seleccionadas?
+                    if aula_orig in aulas_lib_map:
+                        motivo_lib = aulas_lib_map[aula_orig]
+                        est_slug = 'aula_liberada'
+                        est_label = 'Aula Liberada'
+                        inc_det = f"Aula liberada: {motivo_lib or 'Cuestiones seleccionadas'}"
+                        aula_act = f"Fuera de Aula ({aula_orig})"
+                        es_incidencia = True
+
+                    # 2. ¿Qué maestro mandó suplente hoy?
+                    sup_key = (h['docente'], h['asignatura'])
+                    if sup_key in suplencias_map:
+                        suplente_nom = suplencias_map[sup_key]
+                        est_slug = 'suplencia'
+                        est_label = 'Con Suplente'
+                        inc_det = f"Suplente: Prof. {suplente_nom}"
+                        es_incidencia = True
+
+                    # 3. ¿Reprogramó su clase para otro día?
+                    nota_rep = h.get('nota_reprogramacion') or ''
+                    if h.get('estado_slug') == 'pospuesta' or 'pospuesta' in str(nota_rep).lower() or 'reprogramada' in str(nota_rep).lower():
+                        est_slug = 'reprogramada'
+                        est_label = 'Reprogramada'
+                        inc_det = nota_rep or 'Clase reprogramada para otro día'
+                        es_incidencia = True
+                    elif h.get('es_reposicion'):
+                        est_slug = 'impartida'
+                        est_label = 'Impartida (Reposición)'
+                        inc_det = nota_rep or 'Clase de reposición'
+                        es_incidencia = True
+
+                    # Guardar en histórico si la clase ya venció o si tiene alguna incidencia (suplencia, liberación, reprogramación)
+                    if mins_ahora > fin_m or es_incidencia:
                         _guardar_registro_historico(
                             cursor,
                             clase_id=h.get('id'),
@@ -4841,11 +5030,12 @@ def _evaluar_y_cerrar_clases_vencidas():
                             asignatura_nombre=h['asignatura'],
                             horario_inicio_str=h_ini_str,
                             horario_fin_str=h_fin_str,
-                            aula_original=h.get('aula_asignada', ''),
-                            aula_actual=h.get('aula_asignada', ''),
+                            aula_original=aula_orig,
+                            aula_actual=aula_act,
                             estado_slug=est_slug,
                             estado_label=est_label,
-                            incidencia_detalle=inc_det
+                            incidencia_detalle=inc_det,
+                            historico_map=historico_map
                         )
             connection.commit()
     except Exception as e:

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useToast, ToastContainer } from '../components/useToast';
 import { useTime } from '../components/TimeContext';
+import { convertir12hA24h } from '../utils/timeUtils';
 
 const obtenerColorLicenciatura = (licenciatura) => {
   const lic = (licenciatura || '').toLowerCase();
@@ -40,6 +41,44 @@ export default function GestionAulas() {
   const [modalMantAula, setModalMantAula] = useState(null);
   const [formMant, setFormMant] = useState({ en_mantenimiento: false, inicio_mantenimiento: '', fin_mantenimiento: '', aula_temporal: '' });
   const [guardandoMant, setGuardandoMant] = useState(false);
+  const [aulasDisponiblesMant, setAulasDisponiblesMant] = useState([]);
+  const [cargandoAulasMant, setCargandoAulasMant] = useState(false);
+
+  useEffect(() => {
+    if (!modalMantAula || !formMant.en_mantenimiento || !formMant.inicio_mantenimiento || !formMant.fin_mantenimiento) {
+      setAulasDisponiblesMant([]);
+      setCargandoAulasMant(false);
+      return;
+    }
+
+    const cargarAulasMant = async () => {
+      setCargandoAulasMant(true);
+      try {
+        const start24h = convertir12hA24h(formMant.inicio_mantenimiento);
+        const end24h = convertir12hA24h(formMant.fin_mantenimiento);
+        const url = `/api/aulas/disponibles-mantenimiento?datetime_inicio=${encodeURIComponent(start24h)}&datetime_fin=${encodeURIComponent(end24h)}&aula_excluida=${encodeURIComponent(modalMantAula.nombre || '')}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const arr = Array.isArray(data) ? data : [];
+          setAulasDisponiblesMant(arr);
+          const disponibleNombres = arr.map(a => a.nombre);
+          if (formMant.aula_temporal && !disponibleNombres.includes(formMant.aula_temporal)) {
+            setFormMant(prev => ({ ...prev, aula_temporal: '' }));
+          }
+        } else {
+          setAulasDisponiblesMant([]);
+        }
+      } catch (err) {
+        console.error("Error al obtener aulas para mantenimiento:", err);
+        setAulasDisponiblesMant([]);
+      } finally {
+        setCargandoAulasMant(false);
+      }
+    };
+
+    cargarAulasMant();
+  }, [modalMantAula, formMant.en_mantenimiento, formMant.inicio_mantenimiento, formMant.fin_mantenimiento]);
 
   // Estado para el modal de edición
   const [aulaAEditar, setAulaAEditar] = useState(null);
@@ -191,7 +230,6 @@ export default function GestionAulas() {
   // Mantenimiento vigente = flag true Y dentro del rango [inicio, fin]
   const estaEnMantenimiento = (aula) => {
     if (!aula.en_mantenimiento) return false;
-    const ahora = new Date();
     if (aula.inicio_mantenimiento && new Date(aula.inicio_mantenimiento) > ahora) return false;
     if (aula.fin_mantenimiento && new Date(aula.fin_mantenimiento) < ahora) return false;
     return true;
@@ -201,7 +239,7 @@ export default function GestionAulas() {
   const tieneMantProgramado = (aula) => {
     if (!aula.en_mantenimiento) return false;
     if (!aula.inicio_mantenimiento) return false;
-    return new Date(aula.inicio_mantenimiento) > new Date();
+    return new Date(aula.inicio_mantenimiento) > ahora;
   };
 
   const handleEliminar = (id) => {
@@ -284,13 +322,15 @@ export default function GestionAulas() {
     if (!modalMantAula) return;
     setGuardandoMant(true);
     try {
+      const start24h = convertir12hA24h(formMant.inicio_mantenimiento);
+      const end24h = convertir12hA24h(formMant.fin_mantenimiento);
       const response = await fetch(`/api/aulas/${modalMantAula.id}/mantenimiento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           en_mantenimiento: formMant.en_mantenimiento,
-          inicio_mantenimiento: formMant.en_mantenimiento && formMant.inicio_mantenimiento ? formMant.inicio_mantenimiento : null,
-          fin_mantenimiento: formMant.en_mantenimiento && formMant.fin_mantenimiento ? formMant.fin_mantenimiento : null,
+          inicio_mantenimiento: formMant.en_mantenimiento && start24h ? start24h : null,
+          fin_mantenimiento: formMant.en_mantenimiento && end24h ? end24h : null,
           aula_temporal: formMant.en_mantenimiento ? formMant.aula_temporal : null,
         }),
       });
@@ -592,7 +632,26 @@ export default function GestionAulas() {
                 <input
                   type="checkbox"
                   checked={formMant.en_mantenimiento}
-                  onChange={e => setFormMant(prev => ({ ...prev, en_mantenimiento: e.target.checked }))}
+                  onChange={e => {
+                    const checked = e.target.checked;
+                    setFormMant(prev => {
+                      if (checked && (!prev.inicio_mantenimiento || !prev.fin_mantenimiento)) {
+                        const now = new Date();
+                        const fin = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+                        const toLocalISO = (d) => {
+                          const pad = n => String(n).padStart(2, '0');
+                          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                        };
+                        return {
+                          ...prev,
+                          en_mantenimiento: checked,
+                          inicio_mantenimiento: prev.inicio_mantenimiento || toLocalISO(now),
+                          fin_mantenimiento: prev.fin_mantenimiento || toLocalISO(fin)
+                        };
+                      }
+                      return { ...prev, en_mantenimiento: checked };
+                    });
+                  }}
                   className="w-5 h-5 rounded accent-orange-500 cursor-pointer"
                 />
               </label>
@@ -624,10 +683,23 @@ export default function GestionAulas() {
                     <select
                       value={formMant.aula_temporal}
                       onChange={e => setFormMant(prev => ({ ...prev, aula_temporal: e.target.value }))}
-                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                      disabled={cargandoAulasMant || !formMant.inicio_mantenimiento || !formMant.fin_mantenimiento || aulasDisponiblesMant.length === 0}
+                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      <option value="">Sin aula alterna</option>
-                      {nombresAulas.map(nombre => <option key={nombre} value={nombre}>{nombre}</option>)}
+                      {cargandoAulasMant ? (
+                        <option value="">Cargando aulas disponibles...</option>
+                      ) : !formMant.inicio_mantenimiento || !formMant.fin_mantenimiento ? (
+                        <option value="">Seleccione rango de fecha y hora...</option>
+                      ) : aulasDisponiblesMant.length === 0 ? (
+                        <option value="" disabled>Sin aulas libres en este horario</option>
+                      ) : (
+                        <>
+                          <option value="">Sin aula alterna</option>
+                          {aulasDisponiblesMant.map(a => (
+                            <option key={a.nombre} value={a.nombre}>{a.nombre}</option>
+                          ))}
+                        </>
+                      )}
                     </select>
                   </div>
                 </>

@@ -23,6 +23,54 @@ const agruparClases = (slots) => {
   return grupos;
 };
 
+// Hook reutilizable para mover ventanas modales arrastrando su encabezado
+function useDraggableModal() {
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
+
+  const handleMouseDown = (e) => {
+    if (
+      e.target.closest('button') ||
+      e.target.closest('select') ||
+      e.target.closest('input') ||
+      e.target.closest('textarea') ||
+      e.target.closest('a')
+    )
+      return;
+    setDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      posX: pos.x,
+      posY: pos.y,
+    };
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const handleMouseMove = (e) => {
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      setPos({
+        x: dragStartRef.current.posX + dx,
+        y: dragStartRef.current.posY + dy,
+      });
+    };
+    const handleMouseUp = () => setDragging(false);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dragging]);
+
+  const resetPos = () => setPos({ x: 0, y: 0 });
+
+  return { pos, handleMouseDown, resetPos };
+}
+
 export default function GestionDocentes() {
   const { toast, toasts } = useToast();
   const [confirmacion, setConfirmacion] = useState(null);
@@ -68,42 +116,10 @@ export default function GestionDocentes() {
   const [historialReprogramaciones, setHistorialReprogramaciones] = useState([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
 
-  // Arrastre libre del modal de reprogramación
-  const [posModalRep, setPosModalRep] = useState({ x: 0, y: 0 });
-  const [arrastrandoModal, setArrastrandoModal] = useState(false);
-  const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
-
-  const handleMouseDownModalHeader = (e) => {
-    if (e.target.closest('button') || e.target.closest('select') || e.target.closest('input')) return;
-    setArrastrandoModal(true);
-    dragStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      posX: posModalRep.x,
-      posY: posModalRep.y
-    };
-  };
-
-  useEffect(() => {
-    if (!arrastrandoModal) return;
-    const handleMouseMove = (e) => {
-      const dx = e.clientX - dragStartRef.current.x;
-      const dy = e.clientY - dragStartRef.current.y;
-      setPosModalRep({
-        x: dragStartRef.current.posX + dx,
-        y: dragStartRef.current.posY + dy
-      });
-    };
-    const handleMouseUp = () => {
-      setArrastrandoModal(false);
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [arrastrandoModal]);
+  // Arrastre libre de modales (Suplencia, Reprogramación e Historial)
+  const dragSuplente = useDraggableModal();
+  const dragReprogramar = useDraggableModal();
+  const dragHistorial = useDraggableModal();
 
   // ── Fetch docentes (datos crudos del backend) ────────────────────────────
   const fetchDocentes = async () => {
@@ -349,6 +365,7 @@ export default function GestionDocentes() {
 
   const abrirModalSuplente = (docente) => {
     setModalSuplente(docente);
+    dragSuplente.resetPos();
     setFormSuplencia({ suplente_nombre: '', materia: '', dia: '', fecha: '', hora_inicio: '', hora_fin: '' });
     setSuplanteExterno(false);
     setClaseSeleccionada(null);
@@ -400,10 +417,11 @@ export default function GestionDocentes() {
 
   const abrirModalReprogramar = async (docente) => {
     setModalReprogramar(docente);
-    setPosModalRep({ x: 0, y: 0 });
+    dragReprogramar.resetPos();
     const hoyStr = new Date().toISOString().split('T')[0];
     setFormReprogramar({
       clase_original_id: '',
+      clases_originales_ids: [],
       clase_original_horario: '',
       clase_original_asignatura: '',
       nueva_fecha: hoyStr,
@@ -419,15 +437,6 @@ export default function GestionDocentes() {
       const data = await res.json();
       const arr = Array.isArray(data) ? data : [];
       setClasesDocenteSemana(arr);
-      if (arr.length > 0) {
-        setFormReprogramar(prev => ({
-          ...prev,
-          clase_original_id: arr[0].id,
-          clases_originales_ids: [arr[0].id],
-          clase_original_horario: arr[0].horario,
-          clase_original_asignatura: arr[0].asignatura
-        }));
-      }
     } catch (e) {
       console.error("Error al cargar clases del docente:", e);
       setClasesDocenteSemana([]);
@@ -623,7 +632,7 @@ export default function GestionDocentes() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setModalHistorial(true)}
+            onClick={() => { setModalHistorial(true); dragHistorial.resetPos(); }}
             className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100/80 rounded-xl text-sm font-bold transition-all shadow-xs cursor-pointer"
             title="Ver historial de clases reprogramadas y descargar reporte semanal"
           >
@@ -645,16 +654,26 @@ export default function GestionDocentes() {
 
       {/* ── MODAL ASIGNAR SUPLENTE ─────────────────────────────────────────── */}
       {modalSuplente && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-lg font-bold text-[#1c355e]">Asignar Suplente</h3>
-                <p className="text-sm text-[#75777f] mt-0.5">
-                  Docente ausente: <span className="font-bold text-[#44464e]">{modalSuplente.nombre}</span>
-                </p>
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-[1px] flex items-center justify-center z-50 pointer-events-none">
+          <div
+            style={{ transform: `translate(${dragSuplente.pos.x}px, ${dragSuplente.pos.y}px)` }}
+            className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto pointer-events-auto border border-[#c5c6cf]/30 transition-shadow"
+          >
+            <div
+              onMouseDown={dragSuplente.handleMouseDown}
+              className="flex justify-between items-center mb-6 cursor-grab active:cursor-grabbing pb-3 border-b border-gray-100 group select-none"
+              title="Haz clic y mantén presionado para arrastrar la ventana"
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[#75777f] text-lg group-hover:text-[#1c355e] transition-colors">drag_indicator</span>
+                <div>
+                  <h3 className="text-lg font-bold text-[#1c355e] leading-tight">Asignar Suplente</h3>
+                  <p className="text-sm text-[#75777f] mt-0.5">
+                    Docente ausente: <span className="font-bold text-[#44464e]">{modalSuplente.nombre}</span>
+                  </p>
+                </div>
               </div>
-              <button onClick={() => setModalSuplente(null)} className="text-[#44464e] hover:text-[#1c355e]">
+              <button onClick={() => setModalSuplente(null)} className="text-[#44464e] hover:text-[#1c355e] p-1 rounded-lg hover:bg-gray-100 transition-colors">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
@@ -862,11 +881,11 @@ export default function GestionDocentes() {
       {modalReprogramar && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-[1px] flex items-center justify-center z-50 pointer-events-none">
           <div
-            style={{ transform: `translate(${posModalRep.x}px, ${posModalRep.y}px)` }}
+            style={{ transform: `translate(${dragReprogramar.pos.x}px, ${dragReprogramar.pos.y}px)` }}
             className="bg-white rounded-2xl p-7 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto pointer-events-auto border border-[#c5c6cf]/30 transition-shadow"
           >
             <div
-              onMouseDown={handleMouseDownModalHeader}
+              onMouseDown={dragReprogramar.handleMouseDown}
               className="flex justify-between items-center mb-6 cursor-grab active:cursor-grabbing pb-3 border-b border-gray-100 group select-none"
               title="Haz clic y mantén presionado para arrastrar la ventana"
             >
@@ -936,7 +955,13 @@ export default function GestionDocentes() {
                     Clase(s) Original(es) a Posponer * (1 o más bloques)
                   </label>
                   <span className="text-[11px] font-extrabold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
-                    {formReprogramar.clases_originales_ids?.length || 0} sel. ({ (formReprogramar.clases_originales_ids?.length || 0) * 50 } min)
+                    {formReprogramar.clases_originales_ids?.length || 0} sel. ({(() => {
+                      const mins = (formReprogramar.clases_originales_ids?.length || 0) * 50;
+                      if (mins === 0) return '0 min';
+                      const h = Math.floor(mins / 60);
+                      const m = mins % 60;
+                      return [h > 0 ? `${h} h` : null, m > 0 ? `${m} min` : null].filter(Boolean).join(' ');
+                    })()})
                   </span>
                 </div>
                 <div className="max-h-52 overflow-y-auto border border-[#c5c6cf]/40 rounded-xl bg-white divide-y divide-[#c5c6cf]/20 shadow-xs">
@@ -1514,17 +1539,27 @@ export default function GestionDocentes() {
 
       {/* ── MODAL HISTORIAL Y REPORTE SEMANAL ───────────────────────────────── */}
       {modalHistorial && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-4xl shadow-2xl max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[#c5c6cf]/30 pb-4 mb-4">
-              <div>
-                <h3 className="text-xl font-bold text-[#1c355e] flex items-center gap-2">
-                  <span className="material-symbols-outlined text-indigo-600">history_edu</span>
-                  Historial de Reprogramaciones y Reposiciones Semanales
-                </h3>
-                <p className="text-xs text-[#75777f] mt-1">
-                  Las clases reprogramadas que ya han concluido se archivan automáticamente aquí y el horario original del docente regresa a la normalidad.
-                </p>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center z-50 p-4 pointer-events-none">
+          <div
+            style={{ transform: `translate(${dragHistorial.pos.x}px, ${dragHistorial.pos.y}px)` }}
+            className="bg-white rounded-2xl p-6 w-full max-w-4xl shadow-2xl max-h-[90vh] flex flex-col pointer-events-auto border border-[#c5c6cf]/30 transition-shadow"
+          >
+            <div
+              onMouseDown={dragHistorial.handleMouseDown}
+              className="flex items-center justify-between border-b border-[#c5c6cf]/30 pb-4 mb-4 cursor-grab active:cursor-grabbing select-none group"
+              title="Haz clic y mantén presionado para arrastrar la ventana"
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[#75777f] text-lg group-hover:text-[#1c355e] transition-colors">drag_indicator</span>
+                <div>
+                  <h3 className="text-xl font-bold text-[#1c355e] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-indigo-600">history_edu</span>
+                    Historial de Reprogramaciones y Reposiciones Semanales
+                  </h3>
+                  <p className="text-xs text-[#75777f] mt-1">
+                    Las clases reprogramadas que ya han concluido se archivan automáticamente aquí y el horario original del docente regresa a la normalidad.
+                  </p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <a
