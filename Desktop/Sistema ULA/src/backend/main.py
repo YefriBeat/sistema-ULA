@@ -14,9 +14,10 @@ from contextlib import asynccontextmanager
 from collections import defaultdict
 from datetime import datetime, timedelta, date, time
 from typing import Optional, List
+import uuid
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -138,6 +139,13 @@ def migrar_columnas_verificacion():
                     cantidad_registros INT DEFAULT 0,
                     enviado_email BOOLEAN DEFAULT FALSE,
                     destinatarios_email TEXT NULL
+                )""",
+                """CREATE TABLE IF NOT EXISTS reportes_compartidos (
+                    id VARCHAR(64) PRIMARY KEY,
+                    fecha_hora DATETIME DEFAULT NOW(),
+                    nombre_archivo VARCHAR(255) NOT NULL,
+                    tipo VARCHAR(50) NOT NULL,
+                    contenido LONGBLOB NOT NULL
                 )""",
                 """CREATE TABLE IF NOT EXISTS clases_historico (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -4747,8 +4755,70 @@ def exportar_excel(req: ExportarRequest):
         raise HTTPException(status_code=500, detail=f"Error al generar Excel: {str(e)}")
 
 
+REPORTES_COMPARTIDOS_CACHE = {}
+
+def _guardar_reporte_compartido(nombre_archivo: str, tipo: str, contenido: bytes) -> str:
+    report_id = str(uuid.uuid4())
+    REPORTES_COMPARTIDOS_CACHE[report_id] = {
+        "nombre_archivo": nombre_archivo,
+        "tipo": tipo,
+        "contenido": contenido
+    }
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS reportes_compartidos (
+                        id VARCHAR(64) PRIMARY KEY,
+                        fecha_hora DATETIME DEFAULT NOW(),
+                        nombre_archivo VARCHAR(255) NOT NULL,
+                        tipo VARCHAR(50) NOT NULL,
+                        contenido LONGBLOB NOT NULL
+                    )
+                """)
+                cursor.execute("""
+                    INSERT INTO reportes_compartidos (id, nombre_archivo, tipo, contenido)
+                    VALUES (%s, %s, %s, %s)
+                """, (report_id, nombre_archivo, tipo, contenido))
+            conn.commit()
+    except Exception as e:
+        print(f"Advertencia al guardar reporte compartido en DB: {e}")
+    return report_id
+
+
+@app.get("/api/reportes/descargar/{report_id}")
+def descargar_reporte_compartido(report_id: str):
+    data = REPORTES_COMPARTIDOS_CACHE.get(report_id)
+    if not data:
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT nombre_archivo, tipo, contenido FROM reportes_compartidos WHERE id = %s
+                    """, (report_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        data = {
+                            "nombre_archivo": row[0],
+                            "tipo": row[1],
+                            "contenido": row[2]
+                        }
+                        REPORTES_COMPARTIDOS_CACHE[report_id] = data
+        except Exception as e:
+            print(f"Error al consultar reporte compartido de DB: {e}")
+
+    if not data:
+        raise HTTPException(status_code=404, detail="El reporte solicitado no existe o ha expirado.")
+
+    media_type = "application/pdf" if data["tipo"] == "pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{data["nombre_archivo"]}"'
+    }
+    return Response(content=data["contenido"], media_type=media_type, headers=headers)
+
+
 @app.post("/api/exportar/email")
-def enviar_reporte_email(req: EnviarReporteEmailRequest):
+def enviar_reporte_email(req: EnviarReporteEmailRequest, request: Request):
     try:
         destinos = [d.strip() for d in req.destinatarios.replace(';', ',').split(',') if d.strip()]
         if not destinos:
@@ -4767,6 +4837,62 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
 
         registros_data = _consultar_historial_para_exportacion(req.licenciatura, req.semestre, req.asignatura) if req.es_historial_completo else req.registros
 
+        pdf_bytes = None
+        xlsx_bytes = None
+        id_pdf = None
+        id_excel = None
+
+        if req.adjuntar_pdf:
+            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+            id_pdf = _guardar_reporte_compartido(f"Reporte_Academico_{fecha_str}.pdf", "pdf", pdf_bytes)
+
+        if req.adjuntar_excel:
+            xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+            id_excel = _guardar_reporte_compartido(f"Reporte_Academico_{fecha_str}.xlsx", "xlsx", xlsx_bytes)
+
+        backend_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("BACKEND_URL") or str(request.base_url).rstrip('/')
+        if backend_url.endswith('/'):
+            backend_url = backend_url[:-1]
+
+        botones_html = ""
+        if id_pdf:
+            url_pdf = f"{backend_url}/api/reportes/descargar/{id_pdf}"
+            botones_html += f"""
+            <a href="{url_pdf}" style="background-color: #1c355e; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 6px; font-size: 14px;">
+                📄 Descargar Reporte PDF
+            </a>
+            """
+        if id_excel:
+            url_excel = f"{backend_url}/api/reportes/descargar/{id_excel}"
+            botones_html += f"""
+            <a href="{url_excel}" style="background-color: #16a34a; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 6px; font-size: 14px;">
+                📊 Descargar Reporte Excel
+            </a>
+            """
+
+        body_html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; color: #333; background-color: #f4f6fb; padding: 20px;">
+            <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 24px; border-radius: 10px; border: 1px solid #e0e6ed;">
+                <h2 style="color: #1c355e; margin-top: 0; border-bottom: 2px solid #1c355e; padding-bottom: 12px;">
+                    Reporte de Horarios y Eventos Académicos — ULA
+                </h2>
+                <p style="font-size: 15px;">Hola,</p>
+                <p style="font-size: 15px; color: #475569;">
+                    {req.mensaje or 'El reporte generado por el Sistema de Horarios ULA está listo para su descarga.'}
+                </p>
+                <div style="margin: 28px 0; text-align: center;">
+                    {botones_html}
+                </div>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+                <p style="font-size: 12px; color: #64748b; margin-bottom: 0;">
+                    Generado por <strong>{req.usuario_nombre}</strong> ({req.usuario_correo}) el {datetime.now().strftime('%d/%m/%Y %H:%M')}.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+
         # Intentar envío SMTP si está configurado
         sender_email = os.getenv("SMTP_USER", "")
         smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
@@ -4775,18 +4901,6 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
 
         if not sender_email:
             sender_email = "soporte.sipref.software@gmail.com"
-
-        body_html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; color: #333;">
-            <h2 style="color: #1c355e;">Reporte de Horarios y Eventos Académicos — ULA</h2>
-            <p>Hola,</p>
-            <p>{req.mensaje or 'Adjunto encontrarás el reporte generado por el Sistema de Horarios ULA.'}</p>
-            <hr style="border: 0; border-top: 1px solid #ccc; margin: 20px 0;" />
-            <p style="font-size: 12px; color: #777;">Generado por <strong>{req.usuario_nombre}</strong> ({req.usuario_correo}) el {datetime.now().strftime('%d/%m/%Y %H:%M')}.</p>
-        </body>
-        </html>
-        """
 
         from email.mime.base import MIMEBase
         from email import encoders
@@ -4798,16 +4912,14 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
         msg['Subject'] = asunto
         msg.attach(MIMEText(body_html, 'html'))
 
-        if req.adjuntar_pdf:
-            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        if pdf_bytes:
             part = MIMEBase('application', 'pdf')
             part.set_payload(pdf_bytes)
             encoders.encode_base64(part)
             part.add_header('Content-Disposition', f'attachment; filename="Reporte_Academico_{fecha_str}.pdf"')
             msg.attach(part)
 
-        if req.adjuntar_excel:
-            xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        if xlsx_bytes:
             part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             part.set_payload(xlsx_bytes)
             encoders.encode_base64(part)
@@ -4823,7 +4935,7 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
                     server.sendmail(sender_email, destinos + cc_list + cco_list, msg.as_string())
                 enviado_smtp = True
             except Exception as e_smtp:
-                print(f"SMTP no disponible o falló ({e_smtp}), usando fallback de EmailJS...")
+                print(f"SMTP no disponible en Render o falló ({e_smtp}), usando fallback de EmailJS...")
 
         if not enviado_smtp:
             for dest in (destinos + cc_list + cco_list):
