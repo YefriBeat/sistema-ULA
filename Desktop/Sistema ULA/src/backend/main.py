@@ -478,7 +478,7 @@ def enviar_correo_otp(correo_destino: str, codigo: str, nombre: str):
             msg['To'] = correo_destino
             msg['Subject'] = "Código de verificación — SIPREF ULA"
             msg.attach(MIMEText(html, 'html'))
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=4.0) as server:
                 server.starttls()
                 server.login(sender_email, smtp_pass)
                 server.sendmail(sender_email, [correo_destino], msg.as_string())
@@ -4773,8 +4773,8 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
         smtp_port = int(os.getenv("SMTP_PORT", 587))
         smtp_pass = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
 
-        if not sender_email or not smtp_pass:
-            raise HTTPException(status_code=500, detail="El servidor SMTP no está configurado. Agrega SMTP_USER y SMTP_PASSWORD en el archivo .env")
+        if not sender_email:
+            sender_email = "soporte.sipref.software@gmail.com"
 
         body_html = f"""
         <html>
@@ -4814,13 +4814,18 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest):
             part.add_header('Content-Disposition', f'attachment; filename="Reporte_Academico_{fecha_str}.xlsx"')
             msg.attach(part)
 
-        try:
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.starttls()
-                server.login(sender_email, smtp_pass)
-                server.sendmail(sender_email, destinos + cc_list + cco_list, msg.as_string())
-        except smtplib.SMTPAuthenticationError:
-            # Fallback a EmailJS si falla la autenticación de Gmail
+        enviado_smtp = False
+        if sender_email and smtp_pass:
+            try:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=4.0) as server:
+                    server.starttls()
+                    server.login(sender_email, smtp_pass)
+                    server.sendmail(sender_email, destinos + cc_list + cco_list, msg.as_string())
+                enviado_smtp = True
+            except Exception as e_smtp:
+                print(f"SMTP no disponible o falló ({e_smtp}), usando fallback de EmailJS...")
+
+        if not enviado_smtp:
             for dest in (destinos + cc_list + cco_list):
                 _enviar_smtp(dest, asunto, body_html)
 
