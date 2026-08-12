@@ -910,23 +910,25 @@ export default function VisualBd() {
 
 
   return (
-    <div className="max-w-[1400px] mx-auto space-y-5 font-manrope">
-
+    <div className="max-w-[1400px] mx-auto space-y-5 font-manrope relative z-0">
+      {/* Elementos decorativos de fondo (opcional, muy sutil) */}
+      <div className="absolute top-[-100px] left-[-100px] w-96 h-96 bg-blue-300/10 rounded-full blur-3xl -z-10 pointer-events-none"></div>
+      <div className="absolute top-[20%] right-[-50px] w-72 h-72 bg-purple-300/10 rounded-full blur-3xl -z-10 pointer-events-none"></div>
 
       {/* ENCABEZADO + CONTROLES Y FILTRO DE PLAN */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white border border-[#c5c6cf]/30 rounded-3xl p-5 shadow-sm">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white/70 backdrop-blur-md border border-white/50 rounded-[2rem] p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-black text-[#1b1c1e] tracking-tight">Panel de Control</h1>
-          <p className="text-xs sm:text-sm text-[#75777f] font-medium mt-0.5">Gestión y seguimiento de horarios en tiempo real.</p>
+          <h1 className="text-2xl sm:text-3xl font-black text-[#1b1c1e] tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[#1c355e] to-blue-800">Panel de Control</h1>
+          <p className="text-xs sm:text-sm text-[#75777f] font-medium mt-1">Gestión y seguimiento de horarios en tiempo real.</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-between lg:justify-end">
           {/* Selector de Plan */}
-          <div className="flex bg-[#f4f3f6] p-1 rounded-2xl border border-[#c5c6cf]/40">
+          <div className="flex bg-[#f4f3f6]/80 backdrop-blur p-1.5 rounded-[1.25rem] border border-[#c5c6cf]/20 shadow-inner">
             <button
               onClick={() => setFiltroPlan('todos')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${filtroPlan === 'todos'
-                  ? 'bg-[#1c355e] text-white shadow-sm'
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ${filtroPlan === 'todos'
+                  ? 'bg-white text-[#1c355e] shadow-[0_2px_10px_rgb(0,0,0,0.08)] scale-[1.02]'
                   : 'text-[#44464e] hover:text-[#1b1c1e]'
                 }`}
             >
@@ -934,8 +936,8 @@ export default function VisualBd() {
             </button>
             <button
               onClick={() => setFiltroPlan('semestral')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${filtroPlan === 'semestral'
-                  ? 'bg-blue-600 text-white shadow-sm'
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ${filtroPlan === 'semestral'
+                  ? 'bg-blue-600 text-white shadow-[0_4px_15px_rgba(37,99,235,0.25)] scale-[1.02]'
                   : 'text-[#44464e] hover:text-[#1b1c1e]'
                 }`}
             >
@@ -943,8 +945,8 @@ export default function VisualBd() {
             </button>
             <button
               onClick={() => setFiltroPlan('cuatrimestral')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${filtroPlan === 'cuatrimestral'
-                  ? 'bg-purple-600 text-white shadow-sm'
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ${filtroPlan === 'cuatrimestral'
+                  ? 'bg-purple-600 text-white shadow-[0_4px_15px_rgba(147,51,234,0.25)] scale-[1.02]'
                   : 'text-[#44464e] hover:text-[#1b1c1e]'
                 }`}
             >
@@ -953,19 +955,19 @@ export default function VisualBd() {
           </div>
 
           {/* Indicador de estado */}
-          <div className={`flex items-center gap-2.5 bg-[#f4f3f6] rounded-2xl px-4 py-1.5 border ${errorConexion ? 'border-orange-300' : 'border-[#c5c6cf]/30'}`}>
+          <div className={`flex items-center gap-2.5 bg-white/80 backdrop-blur-sm rounded-2xl px-4 py-2 border shadow-sm transition-all ${errorConexion ? 'border-orange-300 shadow-orange-100' : 'border-[#c5c6cf]/20'}`}>
             {errorConexion ? (
               <>
-                <span className="material-symbols-outlined text-orange-500 text-[16px]">wifi_off</span>
-                <span className="text-xs font-bold text-orange-600">Sin conexión</span>
+                <span className="material-symbols-outlined text-orange-500 text-[18px]">wifi_off</span>
+                <span className="text-xs font-extrabold text-orange-600">Sin conexión</span>
               </>
             ) : (
               <>
-                <div className="relative">
-                  <span className="material-symbols-outlined text-green-500 text-[16px]">sensors</span>
-                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-green-400 animate-ping" />
+                <div className="relative flex items-center justify-center">
+                  <span className="material-symbols-outlined text-emerald-500 text-[18px]">sensors</span>
+                  <span className="absolute w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-75" />
                 </div>
-                <span className="text-xs font-semibold text-[#1b1c1e] capitalize">{fechaFormateada}</span>
+                <span className="text-xs font-bold text-[#1b1c1e] capitalize">{fechaFormateada}</span>
               </>
             )}
           </div>
@@ -980,22 +982,22 @@ export default function VisualBd() {
           const esReceso = sem?.estado === 'receso' || !sem?.hay_clases;
           const esExamen = sem?.estado?.includes('ordinario') || sem?.estado?.includes('extraordinario') || sem?.estado?.includes('parcial');
           return (
-            <div className={`px-4 py-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${esReceso ? 'bg-amber-50/60 border-amber-200/80' : esExamen ? 'bg-indigo-50/60 border-indigo-200/80' : 'bg-blue-50/50 border-blue-200/60'
-              }`}>
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center flex-shrink-0 font-bold text-xs">
+            <div className={`px-5 py-4 rounded-3xl border flex items-center justify-between gap-3 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${esReceso ? 'bg-gradient-to-r from-amber-50/80 to-white/60 border-amber-200/60 shadow-amber-100/50' : esExamen ? 'bg-gradient-to-r from-indigo-50/80 to-white/60 border-indigo-200/60 shadow-indigo-100/50' : 'bg-gradient-to-r from-blue-50/80 to-white/60 border-blue-200/50 shadow-blue-100/50'
+              } backdrop-blur-sm`}>
+              <div className="flex items-center gap-4 min-w-0">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 font-black text-xs shadow-sm ${esReceso ? 'bg-amber-100 text-amber-700' : esExamen ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'}`}>
                   SEM
                 </div>
                 <div className="min-w-0">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Plan Semestral</span>
-                  <p className="text-xs font-bold text-[#1c355e] truncate leading-tight">
+                  <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest block mb-0.5">Plan Semestral</span>
+                  <p className="text-[13px] font-bold text-[#1c355e] truncate leading-tight">
                     {sem?.descripcion || 'Seguimiento oficial de actividades.'}
                   </p>
                 </div>
               </div>
-              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider flex-shrink-0 ${esReceso ? 'bg-amber-100 text-amber-800 border border-amber-300/50' :
-                  esExamen ? 'bg-indigo-100 text-indigo-800 border border-indigo-300/50' :
-                    'bg-blue-100 text-blue-800 border border-blue-300/50'
+              <span className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex-shrink-0 shadow-sm ${esReceso ? 'bg-amber-100 text-amber-800 border border-amber-300/30' :
+                  esExamen ? 'bg-indigo-100 text-indigo-800 border border-indigo-300/30' :
+                    'bg-blue-600 text-white shadow-blue-500/20'
                 }`}>
                 {sem?.hay_clases ? (sem?.estado?.toUpperCase() || 'CLASES REGULARES') : 'RECESO / INHÁBIL'}
               </span>
@@ -1009,22 +1011,22 @@ export default function VisualBd() {
           const esReceso = cuat?.estado === 'receso' || !cuat?.hay_clases;
           const esExamen = cuat?.estado?.includes('ordinario') || cuat?.estado?.includes('extraordinario') || cuat?.estado?.includes('parcial');
           return (
-            <div className={`px-4 py-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${esReceso ? 'bg-amber-50/60 border-amber-200/80' : esExamen ? 'bg-fuchsia-50/60 border-fuchsia-200/80' : 'bg-purple-50/50 border-purple-200/60'
-              }`}>
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center flex-shrink-0 font-bold text-xs">
+            <div className={`px-5 py-4 rounded-3xl border flex items-center justify-between gap-3 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${esReceso ? 'bg-gradient-to-r from-amber-50/80 to-white/60 border-amber-200/60 shadow-amber-100/50' : esExamen ? 'bg-gradient-to-r from-fuchsia-50/80 to-white/60 border-fuchsia-200/60 shadow-fuchsia-100/50' : 'bg-gradient-to-r from-purple-50/80 to-white/60 border-purple-200/50 shadow-purple-100/50'
+              } backdrop-blur-sm`}>
+              <div className="flex items-center gap-4 min-w-0">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 font-black text-xs shadow-sm ${esReceso ? 'bg-amber-100 text-amber-700' : esExamen ? 'bg-fuchsia-100 text-fuchsia-700' : 'bg-purple-100 text-purple-700'}`}>
                   CUAT
                 </div>
                 <div className="min-w-0">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Plan Cuatrimestral</span>
-                  <p className="text-xs font-bold text-purple-900 truncate leading-tight">
+                  <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest block mb-0.5">Plan Cuatrimestral</span>
+                  <p className="text-[13px] font-bold text-[#1c355e] truncate leading-tight">
                     {cuat?.descripcion || 'Seguimiento oficial de actividades.'}
                   </p>
                 </div>
               </div>
-              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider flex-shrink-0 ${esReceso ? 'bg-amber-100 text-amber-800 border border-amber-300/50' :
-                  esExamen ? 'bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300/50' :
-                    'bg-purple-100 text-purple-800 border border-purple-300/50'
+              <span className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex-shrink-0 shadow-sm ${esReceso ? 'bg-amber-100 text-amber-800 border border-amber-300/30' :
+                  esExamen ? 'bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300/30' :
+                    'bg-purple-600 text-white shadow-purple-500/20'
                 }`}>
                 {cuat?.hay_clases ? (cuat?.estado?.toUpperCase() || 'CLASES REGULARES') : 'RECESO / INHÁBIL'}
               </span>
@@ -1034,7 +1036,7 @@ export default function VisualBd() {
       </div>
 
       {/* ══ MÉTRICAS + DONUT ════════════════════════════════════════════════════ */}
-      <div className="flex flex-col lg:flex-row gap-4 items-stretch sticky top-[72px] z-30 bg-[#faf9fc] pt-4 pb-2 border-b border-[#c5c6cf]/30 shadow-sm">
+      <div className="flex flex-col lg:flex-row gap-5 items-stretch sticky top-[72px] z-30 bg-[#faf9fc]/80 backdrop-blur-xl pt-4 pb-3 border-b border-[#c5c6cf]/20 shadow-[0_10px_30px_rgb(0,0,0,0.02)]">
 
         {/* 4 tarjetas de estadísticas */}
         <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -1042,29 +1044,29 @@ export default function VisualBd() {
           {/* En Curso */}
           <div
             onClick={verClasesEnCurso}
-            className={`rounded-2xl p-5 flex flex-col justify-between cursor-pointer transition-all hover:shadow-md hover:-translate-y-0.5 border ${stats.enCurso > 0
-                ? 'bg-blue-50 border-blue-200 shadow-sm shadow-blue-100'
-                : 'bg-white border-[#c5c6cf]/40 shadow-sm'
+            className={`rounded-[1.5rem] p-5 flex flex-col justify-between cursor-pointer transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border ${stats.enCurso > 0
+                ? 'bg-gradient-to-br from-blue-500 to-blue-700 border-blue-400 shadow-blue-500/30 text-white'
+                : 'bg-white/70 backdrop-blur-md border-[#c5c6cf]/30 shadow-sm text-[#44464e] hover:border-[#c5c6cf]/60'
               }`}
           >
             <div className="flex items-start justify-between mb-3">
-              <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">En Curso</p>
-              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${stats.enCurso > 0 ? 'bg-blue-100' : 'bg-[#f4f3f6]'}`}>
-                <span className={`material-symbols-outlined text-[16px] ${stats.enCurso > 0 ? 'text-blue-600' : 'text-[#c5c6cf]'}`}>play_circle</span>
+              <p className={`text-[10px] font-extrabold uppercase tracking-widest ${stats.enCurso > 0 ? 'text-blue-100' : 'text-[#75777f]'}`}>En Curso</p>
+              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-sm transition-colors ${stats.enCurso > 0 ? 'bg-white/20 text-white backdrop-blur-sm' : 'bg-[#f4f3f6] text-[#c5c6cf]'}`}>
+                <span className="material-symbols-outlined text-[18px]">play_circle</span>
               </div>
             </div>
             <div>
-              <h3 className={`text-4xl lg:text-5xl font-black leading-none ${stats.enCurso > 0 ? 'text-blue-700' : 'text-[#c5c6cf]'}`}>
+              <h3 className={`text-4xl lg:text-5xl font-black leading-none drop-shadow-sm ${stats.enCurso > 0 ? 'text-white' : 'text-[#c5c6cf]'}`}>
                 {stats.enCurso}
               </h3>
               {stats.enCurso > 0 && (
-                <p className="text-[11px] font-bold text-blue-600 mt-2">{stats.docentesEnCurso} maestros activos</p>
+                <p className="text-[11px] font-bold text-blue-100 mt-2 opacity-90">{stats.docentesEnCurso} maestros activos</p>
               )}
             </div>
             <div className="flex items-center justify-between mt-3">
-              <p className="text-[10px] text-[#75777f] font-semibold">Click para filtrar</p>
+              <p className={`text-[10px] font-bold ${stats.enCurso > 0 ? 'text-blue-200' : 'text-[#75777f]'}`}>Click para filtrar</p>
               {stats.enCurso > 0 && (
-                <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-blue-100 text-blue-600 uppercase tracking-wider">Ahora</span>
+                <span className="text-[9px] font-black px-2 py-0.5 rounded-lg bg-white/20 backdrop-blur-sm text-white uppercase tracking-wider shadow-sm">Ahora</span>
               )}
             </div>
           </div>
@@ -1072,58 +1074,60 @@ export default function VisualBd() {
           {/* Próximas Hoy */}
           <div
             onClick={verClasesProximas}
-            className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer ${(stats.proximas + stats.programadas) > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#c5c6cf]/40'
+            className={`rounded-[1.5rem] p-5 flex flex-col justify-between border shadow-sm transition-all duration-300 hover:shadow-xl hover:-translate-y-1 cursor-pointer ${(stats.proximas + stats.programadas) > 0 ? 'bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200/80 shadow-amber-500/10' : 'bg-white/70 backdrop-blur-md border-[#c5c6cf]/30 hover:border-[#c5c6cf]/60'
               }`}>
             <div className="flex items-start justify-between mb-3">
-              <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">Próximas</p>
-              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${(stats.proximas + stats.programadas) > 0 ? 'bg-amber-100' : 'bg-[#f4f3f6]'}`}>
-                <span className={`material-symbols-outlined text-[16px] ${(stats.proximas + stats.programadas) > 0 ? 'text-amber-600' : 'text-[#c5c6cf]'}`}>schedule</span>
+              <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-widest">Próximas</p>
+              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-sm ${(stats.proximas + stats.programadas) > 0 ? 'bg-amber-100 text-amber-600' : 'bg-[#f4f3f6] text-[#c5c6cf]'}`}>
+                <span className="material-symbols-outlined text-[18px]">schedule</span>
               </div>
             </div>
-            <h3 className={`text-4xl lg:text-5xl font-black leading-none ${(stats.proximas + stats.programadas) > 0 ? 'text-amber-700' : 'text-[#c5c6cf]'}`}>
+            <h3 className={`text-4xl lg:text-5xl font-black leading-none ${(stats.proximas + stats.programadas) > 0 ? 'text-amber-600' : 'text-[#c5c6cf]'}`}>
               {stats.proximas + stats.programadas}
             </h3>
-            <p className="text-[10px] text-[#75777f] font-semibold mt-3">
+            <p className="text-[11px] text-[#75777f] font-bold mt-3">
               {(stats.proximas + stats.programadas) === 0
                 ? 'Sin clases pendientes'
-                : `${stats.proximas} hoy · ${stats.programadas} semana`}
+                : `${stats.proximas} hoy · ${stats.programadas} sem`}
             </p>
           </div>
 
           {/* Finalizadas Hoy */}
           <div
             onClick={verClasesFinalizadas}
-            className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer ${stats.finalizadas > 0 ? 'bg-gray-50 border-gray-200' : 'bg-white border-[#c5c6cf]/40'
+            className={`rounded-[1.5rem] p-5 flex flex-col justify-between border shadow-sm transition-all duration-300 hover:shadow-xl hover:-translate-y-1 cursor-pointer ${stats.finalizadas > 0 ? 'bg-gradient-to-br from-gray-50 to-slate-100/50 border-gray-200 shadow-slate-500/10' : 'bg-white/70 backdrop-blur-md border-[#c5c6cf]/30 hover:border-[#c5c6cf]/60'
               }`}>
             <div className="flex items-start justify-between mb-3">
-              <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">Finalizadas Hoy</p>
-              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${stats.finalizadas > 0 ? 'bg-gray-200' : 'bg-[#f4f3f6]'}`}>
-                <span className={`material-symbols-outlined text-[16px] ${stats.finalizadas > 0 ? 'text-gray-600' : 'text-[#c5c6cf]'}`}>stop_circle</span>
+              <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-widest">Finalizadas</p>
+              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-sm ${stats.finalizadas > 0 ? 'bg-gray-200 text-gray-600' : 'bg-[#f4f3f6] text-[#c5c6cf]'}`}>
+                <span className="material-symbols-outlined text-[18px]">stop_circle</span>
               </div>
             </div>
             <h3 className={`text-4xl lg:text-5xl font-black leading-none ${stats.finalizadas > 0 ? 'text-gray-700' : 'text-[#c5c6cf]'}`}>
               {stats.finalizadas}
             </h3>
-            <p className="text-[10px] text-[#75777f] font-semibold mt-3">de {stats.total} totales</p>
+            <p className="text-[11px] text-[#75777f] font-bold mt-3">de {stats.total} totales</p>
           </div>
 
           {/* Ver BD Total */}
           <div
             onClick={verBaseDatosTotal}
-            className="rounded-2xl p-5 flex flex-col justify-between cursor-pointer transition-all hover:shadow-lg hover:-translate-y-0.5 border border-[#1c355e] shadow-lg shadow-[#1c355e]/10"
-            style={{ background: 'linear-gradient(145deg, #1c355e 0%, #0e1f3d 100%)' }}
+            className="rounded-[1.5rem] p-5 flex flex-col justify-between cursor-pointer transition-all duration-300 hover:shadow-[0_15px_40px_-10px_rgba(28,53,94,0.5)] hover:-translate-y-1 border border-[#1c355e]/20 relative overflow-hidden"
+            style={{ background: 'linear-gradient(135deg, #162c50 0%, #0a1324 100%)' }}
           >
-            <div className="flex items-start justify-between mb-3">
-              <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Clases Totales</p>
-              <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center">
-                <span className="material-symbols-outlined text-[16px] text-white/80">database</span>
+            {/* Decoración de brillo */}
+            <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-500/20 rounded-full blur-2xl"></div>
+            <div className="relative z-10 flex items-start justify-between mb-3">
+              <p className="text-[10px] font-extrabold text-blue-200/80 uppercase tracking-widest">BD Total</p>
+              <div className="w-8 h-8 rounded-xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/10 shadow-sm">
+                <span className="material-symbols-outlined text-[18px] text-white">database</span>
               </div>
             </div>
-            <div>
-              <h3 className="text-4xl lg:text-5xl font-black text-white leading-none">{stats.total}</h3>
-              <p className="text-[11px] font-bold text-white/80 mt-2">{stats.docentesTotales} maestros registrados</p>
+            <div className="relative z-10">
+              <h3 className="text-4xl lg:text-5xl font-black text-white leading-none drop-shadow-md">{stats.total}</h3>
+              <p className="text-[11px] font-bold text-blue-100 mt-2 opacity-90">{stats.docentesTotales} m. registrados</p>
             </div>
-            <p className="text-[10px] text-white/50 font-semibold mt-3">Click para mostrar todo</p>
+            <p className="text-[10px] text-white/50 font-bold mt-3 relative z-10">Click para mostrar todo</p>
           </div>
         </div>
 
@@ -1131,65 +1135,72 @@ export default function VisualBd() {
         <div className="flex flex-col gap-4 lg:w-56 xl:w-60 flex-shrink-0">
 
           {/* Tarjeta Donut — Ocupación de Aulas */}
-          <div className="bg-white rounded-2xl border border-[#c5c6cf]/40 shadow-sm p-5 flex flex-col flex-1">
+          <div className="bg-white/70 backdrop-blur-md rounded-[1.5rem] border border-[#c5c6cf]/30 shadow-sm p-5 flex flex-col flex-1 transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
             <div className="flex items-center justify-between mb-1">
-              <p className="text-[10px] font-bold text-[#44464e] uppercase tracking-widest">Ocupación de Aulas</p>
-              <div className="w-7 h-7 rounded-lg bg-[#f4f3f6] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[16px] text-[#1c355e]">meeting_room</span>
+              <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-widest">Aulas Ocupadas</p>
+              <div className="w-8 h-8 rounded-xl bg-[#f4f3f6]/80 flex items-center justify-center shadow-inner">
+                <span className="material-symbols-outlined text-[18px] text-[#1c355e]">meeting_room</span>
               </div>
             </div>
 
             {donutStats.total === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-2 py-4">
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 py-4 opacity-70">
                 <span className="material-symbols-outlined text-4xl text-[#c5c6cf]">meeting_room</span>
-                <p className="text-[11px] text-[#75777f] text-center">Sin aulas registradas</p>
+                <p className="text-[11px] font-bold text-[#75777f] text-center">Sin aulas registradas</p>
               </div>
             ) : (
               <div className="flex lg:flex-col items-center gap-4 flex-1 mt-3">
                 {/* SVG Donut */}
-                <div className="relative flex-shrink-0">
-                  <svg viewBox="0 0 100 100" className="w-28 h-28 lg:w-32 lg:h-32 drop-shadow-sm">
+                <div className="relative flex-shrink-0 group">
+                  <svg viewBox="0 0 100 100" className="w-28 h-28 lg:w-32 lg:h-32 drop-shadow-md transition-transform duration-500 group-hover:scale-105">
                     {/* Track (disponibles) */}
-                    <circle cx="50" cy="50" r={RADIO_DONUT} fill="none" stroke="#bbf7d0" strokeWidth="11" />
+                    <circle cx="50" cy="50" r={RADIO_DONUT} fill="none" stroke="#e0f2fe" strokeWidth="10" />
                     {/* Ocupadas */}
                     <circle
                       cx="50" cy="50" r={RADIO_DONUT}
                       fill="none"
-                      stroke="#1c355e"
-                      strokeWidth="11"
+                      stroke="url(#gradientDonut)"
+                      strokeWidth="10"
                       strokeDasharray={`${dashOcupadas} ${CIRC_DONUT}`}
                       strokeLinecap="round"
                       transform="rotate(-90 50 50)"
+                      className="transition-all duration-1000 ease-out"
                     />
+                    <defs>
+                      <linearGradient id="gradientDonut" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#1c355e" />
+                        <stop offset="100%" stopColor="#3b82f6" />
+                      </linearGradient>
+                    </defs>
                     {/* Porcentaje central */}
-                    <text x="50" y="45" textAnchor="middle" fontSize="17" fontWeight="800" fill="#1b1c1e">
+                    <text x="50" y="47" textAnchor="middle" fontSize="18" fontWeight="900" fill="#1b1c1e">
                       {donutStats.porcentaje}%
                     </text>
-                    <text x="50" y="58" textAnchor="middle" fontSize="6.5" fill="#75777f" fontWeight="700" letterSpacing="0.5">
-                      OCUPADAS
+                    <text x="50" y="60" textAnchor="middle" fontSize="6.5" fill="#75777f" fontWeight="800" letterSpacing="0.5">
+                      EN USO
                     </text>
                   </svg>
                 </div>
 
                 {/* Leyenda */}
-                <div className="flex-1 lg:w-full space-y-2.5">
+                <div className="flex-1 lg:w-full space-y-3">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#1c355e] flex-shrink-0" />
-                      <span className="text-xs text-[#44464e] font-medium">Ocupadas</span>
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-3 h-3 rounded-full bg-gradient-to-br from-[#1c355e] to-blue-500 shadow-sm flex-shrink-0" />
+                      <span className="text-xs text-[#44464e] font-bold">Ocupadas</span>
                     </div>
-                    <span className="text-xs font-black text-[#1b1c1e]">{donutStats.ocupadas}</span>
+                    <span className="text-xs font-black text-[#1b1c1e] bg-[#f4f3f6] px-2 py-0.5 rounded-md">{donutStats.ocupadas}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-green-300 flex-shrink-0" />
-                      <span className="text-xs text-[#44464e] font-medium">Disponibles</span>
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-3 h-3 rounded-full bg-[#e0f2fe] shadow-sm flex-shrink-0 border border-sky-100" />
+                      <span className="text-xs text-[#44464e] font-bold">Libres</span>
                     </div>
-                    <span className="text-xs font-black text-[#1b1c1e]">{donutStats.disponibles}</span>
+                    <span className="text-xs font-black text-[#1b1c1e] bg-[#f4f3f6] px-2 py-0.5 rounded-md">{donutStats.disponibles}</span>
                   </div>
-                  <div className="pt-2 border-t border-[#c5c6cf]/30 flex items-center justify-between">
-                    <span className="text-[10px] text-[#75777f] font-bold uppercase tracking-wider">Total Aulas</span>
-                    <span className="text-xs font-black text-[#1c355e]">{donutStats.total}</span>
+                  <div className="pt-2.5 border-t border-[#c5c6cf]/30 flex items-center justify-between">
+                    <span className="text-[10px] text-[#75777f] font-extrabold uppercase tracking-wider">Total Aulas</span>
+                    <span className="text-sm font-black text-[#1c355e]">{donutStats.total}</span>
                   </div>
                 </div>
               </div>
@@ -1197,15 +1208,17 @@ export default function VisualBd() {
           </div>
 
           {/* Tarjeta Laboratorios */}
-          <div className="bg-[#1c9c72] text-white rounded-2xl shadow-md p-5 flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-[10px] font-bold uppercase tracking-widest opacity-90">Total Laboratorios</p>
+          <div className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white rounded-[1.5rem] shadow-emerald-600/30 shadow-lg p-5 flex flex-col justify-between transition-all duration-300 hover:shadow-xl hover:shadow-emerald-600/40 hover:-translate-y-1 relative overflow-hidden">
+            <div className="absolute top-[-20px] right-[-20px] w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+            <div className="relative z-10 flex items-center justify-between mb-3">
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-100">Laboratorios</p>
+              <span className="material-symbols-outlined text-[18px] text-emerald-100">biotech</span>
             </div>
-            <div className="flex items-end justify-between">
-              <h3 className="text-4xl font-black">{donutStats.totalLabs}</h3>
+            <div className="relative z-10 flex items-end justify-between">
+              <h3 className="text-4xl font-black drop-shadow-sm">{donutStats.totalLabs}</h3>
               <div className="text-right">
-                <p className="text-sm font-bold">{donutStats.labsOcupados} en uso</p>
-                <p className="text-[10px] opacity-75">{donutStats.totalLabs - donutStats.labsOcupados} libres</p>
+                <p className="text-sm font-black text-white">{donutStats.labsOcupados} en uso</p>
+                <p className="text-[11px] font-bold text-emerald-100/90">{donutStats.totalLabs - donutStats.labsOcupados} libres</p>
               </div>
             </div>
           </div>
@@ -1213,35 +1226,35 @@ export default function VisualBd() {
       </div>
 
       {/* ══ PANEL DE FILTROS ════════════════════════════════════════════════════ */}
-      <div id="tabla-resultados" className="bg-white rounded-2xl border border-[#c5c6cf]/40 shadow-sm relative z-30">
+      <div id="tabla-resultados" className="bg-white/90 backdrop-blur-xl rounded-[2rem] border border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative z-30">
 
         {/* Fila 1: Búsqueda + acciones rápidas */}
-        <div className="px-5 pt-5 pb-4 flex flex-col lg:flex-row gap-3 items-center border-b border-[#c5c6cf]/30">
-          <div className="w-full lg:w-72 relative">
-            <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-[#c5c6cf] text-[18px]">search</span>
+        <div className="px-6 pt-6 pb-5 flex flex-col lg:flex-row gap-4 items-center border-b border-[#c5c6cf]/20">
+          <div className="w-full lg:w-80 relative group">
+            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#c5c6cf] group-focus-within:text-blue-500 transition-colors text-[20px]">search</span>
             <input
-              className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] transition-all placeholder:text-[#c5c6cf]"
+              className="w-full pl-12 pr-4 py-3 bg-[#f4f3f6]/60 backdrop-blur-sm border border-[#c5c6cf]/30 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all placeholder:text-[#a0a2aa] placeholder:font-medium shadow-inner"
               placeholder="Buscar por docente o aula..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
             />
           </div>
-          <div className="flex items-center gap-2 ml-auto flex-wrap">
-            <p className="text-[10px] font-bold text-[#75777f] uppercase tracking-wider hidden lg:block">Vista rápida:</p>
+          <div className="flex items-center gap-2.5 ml-auto flex-wrap w-full lg:w-auto justify-end">
+            <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider hidden lg:block mr-2">Vistas:</p>
             <button
               onClick={verClasesEnCurso}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${filtroEstado === 'en_curso'
-                  ? 'bg-blue-50 text-blue-700 border-blue-200'
-                  : 'bg-white text-[#44464e] border-[#c5c6cf]/50 hover:bg-[#f4f3f6]'
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all border ${filtroEstado === 'en_curso'
+                  ? 'bg-blue-500 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-[#44464e] border-[#c5c6cf]/40 hover:bg-[#f4f3f6]/80 hover:shadow-sm'
                 }`}
             >
               Solo En Curso
             </button>
             <button
               onClick={verBaseDatosTotal}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${filtroEstado === 'todas'
-                  ? 'bg-[#1c355e] text-white border-[#1c355e]'
-                  : 'bg-white text-[#44464e] border-[#c5c6cf]/50 hover:bg-[#f4f3f6]'
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all border ${filtroEstado === 'todas'
+                  ? 'bg-[#1c355e] text-white border-[#1c355e] shadow-sm'
+                  : 'bg-white text-[#44464e] border-[#c5c6cf]/40 hover:bg-[#f4f3f6]/80 hover:shadow-sm'
                 }`}
             >
               BD Total
@@ -1250,20 +1263,21 @@ export default function VisualBd() {
             {/* BOTÓN ÚNICO: CENTRO DE EXPORTACIÓN */}
             <button
               onClick={abrirCentroExportacion}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-[#1c355e] text-white hover:bg-[#162c50] transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-[#1c355e] to-blue-800 text-white hover:shadow-lg hover:shadow-blue-900/20 hover:-translate-y-0.5 transition-all flex items-center gap-2 cursor-pointer ml-1"
             >
-              <span className="material-symbols-outlined text-[16px]">download</span>
+              <span className="material-symbols-outlined text-[18px]">download</span>
               Exportar
             </button>
           </div>
         </div>
 
         {/* Fila 2: Selectores avanzados */}
-        <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+        <div className="px-6 py-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <select
-            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] text-[#1b1c1e] font-medium"
+            className="bg-[#f4f3f6]/50 backdrop-blur-sm border border-[#c5c6cf]/30 rounded-xl py-3 px-3.5 text-sm font-bold text-[#1b1c1e] outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all cursor-pointer appearance-none"
             onChange={(e) => { setFiltroEstado(e.target.value); resetFiltros(); }}
             value={filtroEstado}
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2375777f'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
           >
             <option value="todas">Todos los Estados</option>
             <option value="en_curso">▶ En Curso</option>
@@ -1274,9 +1288,10 @@ export default function VisualBd() {
           </select>
 
           <select
-            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] text-[#1b1c1e] font-medium"
+            className="bg-[#f4f3f6]/50 backdrop-blur-sm border border-[#c5c6cf]/30 rounded-xl py-3 px-3.5 text-sm font-bold text-[#1b1c1e] outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all cursor-pointer appearance-none"
             onChange={(e) => { setFiltroLic(e.target.value); setFiltroAsignatura(''); setFiltroHora(''); }}
             value={filtroLic}
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2375777f'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
           >
             <option value="">Todas las Licenciaturas</option>
             {opcionesLicenciatura.map(({ valor, etiqueta }) => (
@@ -1285,27 +1300,30 @@ export default function VisualBd() {
           </select>
 
           <select
-            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] text-[#1b1c1e] font-medium"
+            className="bg-[#f4f3f6]/50 backdrop-blur-sm border border-[#c5c6cf]/30 rounded-xl py-3 px-3.5 text-sm font-bold text-[#1b1c1e] outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all cursor-pointer appearance-none"
             onChange={(e) => { setFiltroAsignatura(e.target.value); setFiltroHora(''); }}
             value={filtroAsignatura}
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2375777f'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
           >
             <option value="">Todas las Asignaturas</option>
             {opcionesAsignatura.map(asig => <option key={asig} value={asig}>{asig}</option>)}
           </select>
 
           <select
-            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] text-[#1b1c1e] font-medium"
+            className="bg-[#f4f3f6]/50 backdrop-blur-sm border border-[#c5c6cf]/30 rounded-xl py-3 px-3.5 text-sm font-bold text-[#1b1c1e] outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all cursor-pointer appearance-none"
             onChange={(e) => setFiltroHora(e.target.value)}
             value={filtroHora}
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2375777f'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
           >
             <option value="">Horarios</option>
             {opcionesHora.map(hora => <option key={hora} value={hora}>{hora}</option>)}
           </select>
 
           <select
-            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] text-[#1b1c1e] font-medium"
+            className="bg-[#f4f3f6]/50 backdrop-blur-sm border border-[#c5c6cf]/30 rounded-xl py-3 px-3.5 text-sm font-bold text-[#1b1c1e] outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all cursor-pointer appearance-none"
             onChange={(e) => setFiltroDia(e.target.value)}
             value={filtroDia}
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2375777f'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
           >
             <option value="">Todos los Días</option>
             <option value="lunes">Lunes</option>
@@ -1319,13 +1337,13 @@ export default function VisualBd() {
 
         {/* Barra de resultado */}
         {!cargando && asignaturas.length > 0 && (
-          <div className="px-5 py-2.5 bg-[#faf9fc] border-t border-[#c5c6cf]/30 flex items-center justify-between">
-            <p className="text-[11px] text-[#75777f] font-medium">
-              Mostrando <span className="font-black text-[#1b1c1e]">{datosAgrupados.length}</span> resultado{datosAgrupados.length !== 1 ? 's' : ''}
+          <div className="px-6 py-3 bg-[#f4f3f6]/50 border-t border-[#c5c6cf]/20 flex items-center justify-between rounded-b-[2rem]">
+            <p className="text-xs text-[#75777f] font-medium">
+              Mostrando <span className="font-black text-[#1b1c1e] bg-white px-2 py-0.5 rounded-md shadow-sm">{datosAgrupados.length}</span> resultado{datosAgrupados.length !== 1 ? 's' : ''}
             </p>
             {(busqueda || filtroLic || filtroAsignatura || filtroHora || filtroDia) && (
-              <button onClick={resetFiltros} className="text-[11px] font-bold text-[#1c355e] hover:underline flex items-center gap-1">
-                <span className="material-symbols-outlined text-[13px]">close</span>
+              <button onClick={resetFiltros} className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors flex items-center gap-1 bg-blue-50 px-3 py-1 rounded-lg">
+                <span className="material-symbols-outlined text-[14px]">close</span>
                 Limpiar filtros
               </button>
             )}
@@ -1360,7 +1378,7 @@ export default function VisualBd() {
           ) : (
             <div className="divide-y divide-[#f0f0f4]">
               {datosAgrupados.map((item) => (
-                <div key={item._ids.join('-')} className={`px-4 py-3.5 transition-colors ${item.es_suplencia ? 'bg-blue-50/30' : 'hover:bg-[#faf9fc]'}`}>
+                <div key={item._ids.join('-')} className={`px-5 py-4 transition-all duration-300 border-b border-[#c5c6cf]/20 last:border-0 ${item.es_suplencia ? 'bg-blue-50/30' : 'hover:bg-blue-50/50'} group`}>
                   {/* Día + badge de estado */}
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <span className="text-xs font-black text-[#44464e] uppercase tracking-wider capitalize">{item.diaOriginal || '—'}</span>
@@ -1468,8 +1486,8 @@ export default function VisualBd() {
         </div>
 
         {/* ── VISTA ESCRITORIO: tabla (≥ lg) ──────────────────────────────────── */}
-        <div className="hidden lg:block overflow-x-auto">
-          <table className="w-full text-left border-collapse table-fixed min-w-[820px]">
+        <div className="hidden lg:block overflow-x-auto rounded-b-[2rem]">
+          <table className="w-full text-left border-collapse table-fixed min-w-[820px] bg-white/50 backdrop-blur-sm">
             <thead>
               <tr style={{ background: 'linear-gradient(135deg, #1c355e 0%, #162c50 100%)' }} className="text-white text-[10px] uppercase font-bold tracking-widest">
                 <th className="w-[8%]  py-4 px-5">Día</th>
@@ -1510,8 +1528,8 @@ export default function VisualBd() {
                 </tr>
               ) : (
                 datosAgrupados.map((item) => (
-                  <tr key={item._ids.join('-')} className={`text-sm hover:bg-[#faf9fc] transition-colors group ${item.es_suplencia ? 'bg-blue-50/40' : ''}`}>
-                    <td className="py-3.5 px-5 font-bold text-[#44464e] capitalize text-xs">{item.diaOriginal || '—'}</td>
+                  <tr key={item._ids.join('-')} className={`text-sm hover:bg-blue-50/50 transition-all duration-200 group ${item.es_suplencia ? 'bg-blue-50/20' : ''}`}>
+                    <td className="py-4 px-5 font-bold text-[#44464e] capitalize text-xs">{item.diaOriginal || '—'}</td>
                     <td className="py-3.5 px-5 break-words text-xs">
                       <span className="font-semibold text-[#1b1c1e]">{item.docente || '—'}</span>
                       {item.es_suplencia && (
@@ -1632,31 +1650,31 @@ export default function VisualBd() {
 
       {/* ═══════════════════ CENTRO DE EXPORTACIÓN UNIFICADO ═══════════════════ */}
       {mostrarCentroExportacion && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center z-[100] p-4 pointer-events-none">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-[100] p-4 pointer-events-none transition-opacity">
           <div
             style={{ transform: `translate(${dragExport.pos.x}px, ${dragExport.pos.y}px)` }}
-            className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl font-manrope max-h-[90vh] flex flex-col pointer-events-auto border border-[#c5c6cf]/30 transition-shadow"
+            className="bg-white/95 backdrop-blur-xl rounded-[2rem] w-full max-w-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] font-manrope max-h-[90vh] flex flex-col pointer-events-auto border border-white/60 transition-shadow"
           >
             {/* Header */}
             <div
               onMouseDown={dragExport.handleMouseDown}
-              className="flex justify-between items-center border-b border-[#c5c6cf]/30 p-5 shrink-0 cursor-grab active:cursor-grabbing select-none group"
+              className="flex justify-between items-center border-b border-[#c5c6cf]/20 p-6 shrink-0 cursor-grab active:cursor-grabbing select-none group bg-gradient-to-r from-white to-[#f4f3f6]/50 rounded-t-[2rem]"
               title="Haz clic y mantén presionado para arrastrar la ventana"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#1c355e] text-white flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[22px]">download</span>
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#1c355e] to-blue-800 text-white flex items-center justify-center shadow-lg shadow-blue-900/20">
+                  <span className="material-symbols-outlined text-[24px]">download</span>
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-[#1c355e] flex items-center gap-2">
+                  <h3 className="text-xl font-black text-[#1b1c1e] flex items-center gap-2 tracking-tight">
                     Centro de Exportación
                     <span className="material-symbols-outlined text-[#75777f] text-base group-hover:text-[#1c355e] transition-colors">drag_indicator</span>
                   </h3>
-                  <p className="text-xs text-[#75777f]">Selecciona el origen de datos, filtra y elige la acción</p>
+                  <p className="text-sm font-medium text-[#75777f] mt-0.5">Selecciona el origen de datos, filtra y elige la acción</p>
                 </div>
               </div>
-              <button onClick={() => setMostrarCentroExportacion(false)} className="w-8 h-8 rounded-xl bg-[#f4f3f6] hover:bg-[#e8e7ec] flex items-center justify-center transition-colors cursor-pointer">
-                <span className="material-symbols-outlined text-[20px] text-[#44464e]">close</span>
+              <button onClick={() => setMostrarCentroExportacion(false)} className="w-10 h-10 rounded-2xl bg-[#f4f3f6] hover:bg-red-50 hover:text-red-600 flex items-center justify-center transition-all cursor-pointer shadow-sm">
+                <span className="material-symbols-outlined text-[22px]">close</span>
               </button>
             </div>
 

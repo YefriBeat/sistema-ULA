@@ -137,6 +137,7 @@ export default function ConfiguracionPerfil() {
       if (res.ok) {
         localStorage.removeItem('usuarioLogueado');
         localStorage.removeItem('perfil_actualizado_en');
+        localStorage.removeItem('sesionFecha');
         toast('Cuenta eliminada correctamente.', 'exito');
         setTimeout(() => navigate('/login'), 1500);
       } else {

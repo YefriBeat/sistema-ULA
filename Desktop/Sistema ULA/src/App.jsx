@@ -37,9 +37,18 @@ function MantenimientoPagina() {
 
 
 function RutaProtegida({ children }) {
-  return localStorage.getItem('usuarioLogueado')
-    ? children
-    : <Navigate to="/login" replace />;
+  const usuario = localStorage.getItem('usuarioLogueado');
+  const sesionFecha = localStorage.getItem('sesionFecha');
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  if (!usuario || !sesionFecha || sesionFecha !== hoy) {
+    // Sesión inexistente, expirada (otro día), o sin fecha → limpiar y redirigir
+    localStorage.removeItem('usuarioLogueado');
+    localStorage.removeItem('sesionFecha');
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
 }
 
 function CargandoPagina() {

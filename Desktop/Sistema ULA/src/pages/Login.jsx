@@ -35,6 +35,7 @@ export default function Login() {
       const data = await response.json();
       if (response.ok) {
         localStorage.setItem('usuarioLogueado', JSON.stringify(data.usuario));
+        localStorage.setItem('sesionFecha', new Date().toISOString().slice(0, 10));
         actualizarUsuario(data.usuario);
         navigate('/dashboard');
       } else {

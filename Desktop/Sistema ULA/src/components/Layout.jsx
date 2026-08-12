@@ -174,23 +174,17 @@ export default function Layout() {
             
             setNotificaciones(notisUnicas);
 
-            // Mostrar burbuja de alerta si hay exámenes (con key por fecha para no spammear)
-            const alertKey = `examsAlertShown_${fechaActualStr}`;
-            const hasSeenExamsAlert = sessionStorage.getItem(alertKey);
-            if (!hasSeenExamsAlert) {
-              setTimeout(() => {
-                Swal.fire({
-                  toast: true,
-                  position: 'top-end',
-                  showConfirmButton: false,
-                  timer: 5000,
-                  timerProgressBar: true,
-                  icon: 'info',
-                  title: `Hoy hay ${notisUnicas.length} exámenes programados`,
-                });
-                sessionStorage.setItem(alertKey, 'true');
-              }, 1500); 
-            }
+            setTimeout(() => {
+              Swal.fire({
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 5000,
+                timerProgressBar: true,
+                icon: 'info',
+                title: `Hoy hay ${notisUnicas.length} exámenes programados`,
+              });
+            }, 1500);
           } else {
             setNotificaciones([]);
           }
@@ -232,6 +226,8 @@ export default function Layout() {
 
   const cerrarSesion = () => {
     localStorage.removeItem('usuarioLogueado');
+    localStorage.removeItem('sesionFecha');
+    sessionStorage.clear();
   };
 
   const isActive = (path) =>
