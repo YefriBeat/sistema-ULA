@@ -71,6 +71,13 @@ function useDraggableModal() {
   return { pos, handleMouseDown, resetPos };
 }
 
+export const normalizeSubject = (str) => {
+  if (!str) return '';
+  let s = str.trim().toLowerCase();
+  s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return s.split(' ').map(w => (w.length > 3 && w.endsWith('s')) ? w.slice(0, -1) : w).join(' ');
+};
+
 export default function GestionDocentes() {
   const { toast, toasts } = useToast();
   const [confirmacion, setConfirmacion] = useState(null);
@@ -116,17 +123,40 @@ export default function GestionDocentes() {
   const [historialReprogramaciones, setHistorialReprogramaciones] = useState([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
 
-  // Arrastre libre de modales (Suplencia, Reprogramación e Historial)
+  // Centro de exportación
+  const [mostrarCentroExportacion, setMostrarCentroExportacion] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [mostrarFormEmail, setMostrarFormEmail] = useState(false);
+  const [formEmail, setFormEmail] = useState({
+    destinatarios: '', cc: '', cco: '',
+    asunto: 'Reporte de Docentes — ULA',
+    mensaje: '', adjuntar_pdf: true, adjuntar_excel: false
+  });
+  const [usuariosRegistrados, setUsuariosRegistrados] = useState([]);
+  const [mostrarSugerenciasEmails, setMostrarSugerenciasEmails] = useState(false);
+  const [campoDestino, setCampoDestino] = useState('destinatarios');
+
+  // Arrastre libre de modales (Suplencia, Reprogramación, Historial, Exportación)
   const dragSuplente = useDraggableModal();
   const dragReprogramar = useDraggableModal();
   const dragHistorial = useDraggableModal();
+  const dragExport = useDraggableModal();
 
   // ── Fetch docentes (datos crudos del backend) ────────────────────────────
+  const [examenesHoy, setExamenesHoy] = useState([]);
+
   const fetchDocentes = async () => {
     try {
       const res = await fetch(`/api/docentes-horarios?fecha_ref=${encodeURIComponent(ahora.toISOString())}`);
       const data = await res.json();
       setDocentes(Array.isArray(data) ? data : []);
+
+      const exRes = await fetch(`/api/examenes-hoy`);
+      if (exRes.ok) {
+        const exData = await exRes.json();
+        setExamenesHoy(Array.isArray(exData) ? exData : []);
+      }
     } catch (e) {
       console.error('Error al cargar docentes:', e);
       setDocentes([]);
@@ -140,6 +170,60 @@ export default function GestionDocentes() {
     const interval = setInterval(fetchDocentes, 60000);
     return () => clearInterval(interval);
   }, [ahora]);
+
+  useEffect(() => {
+    if (mostrarFormEmail || mostrarCentroExportacion) {
+      fetch('/api/usuarios')
+        .then(res => res.ok ? res.json() : [])
+        .then(data => setUsuariosRegistrados(Array.isArray(data) ? data : []))
+        .catch(() => setUsuariosRegistrados([]));
+    }
+  }, [mostrarFormEmail, mostrarCentroExportacion]);
+
+  const renderBadgesCampo = (nombreCampo, valorCampo) => {
+    if (!valorCampo || !valorCampo.trim()) return null;
+    const correos = valorCampo.split(',').map(e => e.trim()).filter(Boolean);
+    if (correos.length === 0) return null;
+
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {correos.map((correo, idx) => {
+          const esReg = usuariosRegistrados.some(u => u.correo?.toLowerCase() === correo.toLowerCase());
+          return (
+            <span
+              key={idx}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold border ${esReg
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                  : 'bg-sky-50 text-sky-800 border-sky-300'
+                }`}
+            >
+              <span className="material-symbols-outlined text-[11px]">
+                {esReg ? 'verified' : 'mail'}
+              </span>
+              <span className="truncate max-w-[130px]" title={correo}>{correo}</span>
+              <span className={`px-1 py-0.2 rounded text-[8px] uppercase font-extrabold ${esReg ? 'bg-emerald-200 text-emerald-900' : 'bg-sky-200 text-sky-900'}`}>
+                {esReg ? 'Registrado' : 'Externo'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const rest = valorCampo
+                    .split(',')
+                    .map(c => c.trim())
+                    .filter(c => c.toLowerCase() !== correo.toLowerCase())
+                    .join(', ');
+                  setFormEmail({ ...formEmail, [nombreCampo]: rest });
+                }}
+                className="ml-0.5 hover:text-red-600 transition-colors cursor-pointer flex items-center"
+              >
+                <span className="material-symbols-outlined text-[12px]">close</span>
+              </button>
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
 
   const cargarHistorial = async () => {
     setCargandoHistorial(true);
@@ -199,15 +283,32 @@ export default function GestionDocentes() {
   const planTieneClases = (planStr) => {
     const academico = estadoAcademico[planStr];
     if (!academico) return true; // sin datos → asumir que sí
-    if (academico.hay_clases === false) return false;
-    const esPeriodoFinales = academico?.estado?.includes('ordinario') || academico?.estado?.includes('extraordinario');
-    return !esPeriodoFinales;
+    
+    if (academico.hay_clases === false) {
+      const esPeriodoFinales = academico?.estado?.includes('ordinario') || academico?.estado?.includes('extraordinario');
+      if (esPeriodoFinales) return "examenes";
+      return false;
+    }
+    return true;
   };
 
   // ── Motor de estado en tiempo real (recalcula cada vez que cambia ahora) ─
   const docentesConEstado = useMemo(() => {
     const diaHoy    = ahora.getDay(); // 0=Dom,1=Lun,...,6=Sab — igual que dia_index del backend
     const minsAhora = ahora.getHours() * 60 + ahora.getMinutes();
+
+    const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const mesesNombres = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const diaNombreStr = diasSemana[diaHoy];
+    const hoyDia = ahora.getDate().toString().padStart(2, '0');
+    const hoyMes = ahora.getMonth() + 1;
+    const hoyAnio = ahora.getFullYear();
+    // Formato "07 de agosto" (como lo almacena el parser del PDF)
+    const fechaHoyTexto = `${hoyDia} de ${mesesNombres[hoyMes]}`;
+    const fechaHoyStr1 = `${hoyDia}/${String(hoyMes).padStart(2, '0')}/${hoyAnio}`;
+    const fechaHoyStr2 = `${hoyAnio}-${String(hoyMes).padStart(2, '0')}-${hoyDia}`;
+
+
 
     const semClases  = planTieneClases('semestral');
     const cuatClases = planTieneClases('cuatrimestral');
@@ -253,7 +354,27 @@ export default function GestionDocentes() {
           if (h.dia_index !== diaHoy) return false;
           // Filtrar por plan: si es cuatrimestral y su plan no tiene clases hoy, excluir
           const planH = h.es_cuatri ? 'cuatrimestral' : 'semestral';
-          return planTieneClases(planH);
+          const estadoPlan = planTieneClases(planH);
+          if (!estadoPlan) return false;
+          
+          if (estadoPlan === "examenes") {
+            const tieneExamen = examenesHoy.some(ex => {
+              const fLow = (ex.fecha || '').trim().toLowerCase();
+              const dLow = (ex.dia || '').trim().toLowerCase();
+              const esHoy = fLow === fechaHoyTexto
+                         || fLow === fechaHoyStr1.toLowerCase()
+                         || fLow === fechaHoyStr2.toLowerCase()
+                         || (fLow === '' && dLow === diaNombreStr);
+              
+              if (!esHoy) return false;
+              const exMatNorm = normalizeSubject(ex.materia);
+              const hAsigNorm = normalizeSubject(h.asignatura);
+              if (exMatNorm.length < 3) return false;
+              return exMatNorm.includes(hAsigNorm) || hAsigNorm.includes(exMatNorm);
+            });
+            if (!tieneExamen) return false;
+          }
+          return true;
         })
         .sort((a, b) => a.inicio_mins - b.inicio_mins);
       const horarios_hoy = agruparClases(horarios_hoy_raw);
@@ -610,6 +731,103 @@ export default function GestionDocentes() {
       return aPrimera - bPrimera;
     });
 
+  const prepararRegistrosDocentes = () => {
+    return docentesFiltrados.map(d => ({
+      nombre: d.nombre,
+      estado: d.estado.replace('_', ' ').toUpperCase(),
+      licenciaturas: d.licenciaturas?.join(', ') || 'N/A',
+      asignaturas: d.asignaturas?.join(', ') || 'N/A'
+    }));
+  };
+
+  const obtenerFiltrosDict = () => {
+    const f = {};
+    if (filtro !== 'todos') f['Estado'] = filtro;
+    if (busqueda) f['Búsqueda'] = busqueda;
+    return f;
+  };
+
+  const handleExportarDocentesDesdePanel = async (formato) => {
+    setExportando(true);
+    try {
+      const registros = prepararRegistrosDocentes();
+      const filtrosDict = obtenerFiltrosDict();
+      const endpoint = '/api/exportar/docentes-excel';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario_nombre: 'Administrador',
+          filtros_aplicados: filtrosDict,
+          registros,
+          formato
+        })
+      });
+      if (!res.ok) throw new Error('Error al exportar');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ext = formato === 'pdf' ? 'pdf' : 'xlsx';
+      a.download = `Directorio_Docentes_${hoyStr}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast(`Reporte ${ext.toUpperCase()} generado exitosamente`, "exito");
+    } catch (e) {
+      console.error(e);
+      toast("Hubo un error al exportar", "error");
+    } finally {
+      setExportando(false);
+    }
+  };
+
+  const handleImprimirDocentes = () => {
+    window.print();
+  };
+
+  const handleEnviarEmailDocentes = async (e) => {
+    e.preventDefault();
+    if (!formEmail.destinatarios) {
+      toast("Especifica al menos un destinatario", "error");
+      return;
+    }
+    setEnviandoEmail(true);
+    try {
+      const registros = prepararRegistrosDocentes();
+      const filtrosDict = obtenerFiltrosDict();
+      const res = await fetch('/api/exportar/docentes-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario_nombre: 'Administrador',
+          usuario_correo: 'admin@universidadlatino.edu.mx',
+          destinatarios: formEmail.destinatarios,
+          cc: formEmail.cc,
+          cco: formEmail.cco,
+          asunto: formEmail.asunto,
+          mensaje: formEmail.mensaje,
+          adjuntar_pdf: formEmail.adjuntar_pdf,
+          adjuntar_excel: formEmail.adjuntar_excel,
+          filtros_aplicados: filtrosDict,
+          registros
+        })
+      });
+      if (res.ok) {
+        setMostrarFormEmail(false);
+        toast("Reporte enviado por correo con éxito", "exito");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast(err.detail || "Error al enviar correo", "error");
+      }
+    } catch {
+      toast("Error de conexión al enviar correo", "error");
+    } finally {
+      setEnviandoEmail(false);
+    }
+  };
+
   // ── Stats ─────────────────────────────────────────────────────────────────
   const totalDocentes = docentesConEstado.length;
   const disponibles   = docentesConEstado.filter(d => d.estado === 'disponible').length;
@@ -632,12 +850,12 @@ export default function GestionDocentes() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => { setModalHistorial(true); dragHistorial.resetPos(); }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100/80 rounded-xl text-sm font-bold transition-all shadow-xs cursor-pointer"
-            title="Ver historial de clases reprogramadas y descargar reporte semanal"
+            onClick={() => { setMostrarCentroExportacion(true); dragExport.resetPos(); }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-[#1c355e] text-white hover:bg-[#162c50] rounded-xl text-sm font-bold transition-all shadow-sm cursor-pointer"
+            title="Abrir centro de exportación: PDF, Excel, Imprimir, Correo"
           >
-            <span className="material-symbols-outlined text-[18px]">history_edu</span>
-            <span className="hidden sm:inline">Historial y Reporte Semanal</span>
+            <span className="material-symbols-outlined text-[18px]">download</span>
+            <span className="hidden sm:inline">Exportar</span>
           </button>
           <div className="relative">
             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[20px]">search</span>
@@ -1369,6 +1587,54 @@ export default function GestionDocentes() {
                       </div>
                     )}
 
+                    {/* ── Exámenes de hoy ── */}
+                    {(() => {
+                      const diasSemana2 = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+                      const mesesNombres2 = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+                      const diaNombre2 = diasSemana2[ahora.getDay()];
+                      const hoyD = ahora.getDate().toString().padStart(2, '0');
+                      const hoyM = ahora.getMonth() + 1;
+                      const hoyA = ahora.getFullYear();
+                      const fechaTexto2 = `${hoyD} de ${mesesNombres2[hoyM]}`;
+                      const fechaDDMMYYYY = `${hoyD}/${String(hoyM).padStart(2, '0')}/${hoyA}`;
+                      const fechaISO2 = `${hoyA}-${String(hoyM).padStart(2, '0')}-${hoyD}`;
+
+                      const examenesDelDocente = examenesHoy.filter(ex => {
+                        const fLow = (ex.fecha || '').trim().toLowerCase();
+                        const dLow = (ex.dia || '').trim().toLowerCase();
+                        const esHoy = fLow === fechaTexto2
+                                   || fLow === fechaDDMMYYYY.toLowerCase()
+                                   || fLow === fechaISO2.toLowerCase()
+                                   || (fLow === '' && dLow === diaNombre2);
+                        if (!esHoy) return false;
+
+                        const materiasDocenteRaw = (docente.materias_raw || '').split('|||').map(s => normalizeSubject(s));
+                        const exMatNorm = normalizeSubject(ex.materia);
+                        if (exMatNorm.length < 3) return false;
+                        return materiasDocenteRaw.some(hAsigNorm => 
+                          exMatNorm.includes(hAsigNorm) || hAsigNorm.includes(exMatNorm)
+                        );
+                      });
+
+                      if (examenesDelDocente.length === 0) return null;
+
+                      return (
+                        <div className="space-y-1 mb-3">
+                          {examenesDelDocente.map((ex, i) => (
+                            <div key={i} className="flex flex-col gap-0.5 px-2.5 py-1.5 bg-purple-50 border border-purple-200 rounded-lg shadow-sm">
+                              <div className="flex items-center gap-1.5 text-[10px] font-bold text-purple-700 uppercase tracking-wide">
+                                <span className="material-symbols-outlined text-[13px]">assignment_late</span>
+                                Examen {ex.periodo} - {ex.semestre}
+                              </div>
+                              <div className="text-[11px] text-purple-900 font-semibold truncate pl-5">
+                                {ex.materia}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
                     {/* ── Clases de hoy ── */}
                     {docente.horarios_hoy?.length > 0 ? (
                       <div className="space-y-1.5">
@@ -1642,6 +1908,232 @@ export default function GestionDocentes() {
                 className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
               >
                 Forzar verificación de completadas ahora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── MODAL CENTRO DE EXPORTACIÓN ──────────────────────────────────── */}
+      {mostrarCentroExportacion && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div
+            className="bg-white rounded-3xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col"
+            style={{ transform: `translate(${dragExport.pos.x}px, ${dragExport.pos.y}px)` }}
+          >
+            {/* Header */}
+            <div
+              onMouseDown={dragExport.handleMouseDown}
+              className="flex justify-between items-center border-b border-[#c5c6cf]/30 p-5 shrink-0 cursor-grab active:cursor-grabbing select-none group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#1c355e] text-white flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[22px]">download</span>
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-[#1c355e] flex items-center gap-2">
+                    Centro de Exportación
+                    <span className="material-symbols-outlined text-[#75777f] text-base group-hover:text-[#1c355e] transition-colors">drag_indicator</span>
+                  </h3>
+                  <p className="text-xs text-[#75777f]">Exportar directorio de docentes con filtros activos</p>
+                </div>
+              </div>
+              <button onClick={() => setMostrarCentroExportacion(false)} className="w-8 h-8 rounded-xl bg-[#f4f3f6] hover:bg-[#e8e7ec] flex items-center justify-center transition-colors cursor-pointer">
+                <span className="material-symbols-outlined text-[20px] text-[#44464e]">close</span>
+              </button>
+            </div>
+
+            {/* Body scrollable */}
+            <div className="overflow-y-auto flex-1 p-5 space-y-5">
+
+              {/* Info de filtros activos */}
+              <div className="bg-blue-50/50 border border-blue-200/50 rounded-2xl p-4">
+                <p className="text-xs text-blue-700 font-medium flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px]">info</span>
+                  Se exportarán {docentesFiltrados.length} docentes
+                  {filtro !== 'todos' && ` — Filtro: ${filtro.replace('_', ' ')}`}
+                  {busqueda && ` — Búsqueda: "${busqueda}"`}
+                </p>
+              </div>
+
+              {/* Acciones */}
+              <div>
+                <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider mb-3">Acciones</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <button
+                    disabled={exportando}
+                    onClick={() => handleExportarDocentesDesdePanel('pdf')}
+                    className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-[#c5c6cf]/40 hover:border-red-300 hover:bg-red-50/50 transition-all cursor-pointer group disabled:opacity-50"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center group-hover:bg-red-100 transition-colors">
+                      <span className="material-symbols-outlined text-[22px]">picture_as_pdf</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Descargar PDF</span>
+                  </button>
+
+                  <button
+                    disabled={exportando}
+                    onClick={() => handleExportarDocentesDesdePanel('excel')}
+                    className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-[#c5c6cf]/40 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all cursor-pointer group disabled:opacity-50"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
+                      <span className="material-symbols-outlined text-[22px]">table_chart</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Descargar Excel</span>
+                  </button>
+
+                  <button
+                    onClick={() => setMostrarFormEmail(!mostrarFormEmail)}
+                    className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all cursor-pointer group ${mostrarFormEmail
+                        ? 'border-blue-400 bg-blue-50/80 ring-2 ring-blue-200/50'
+                        : 'border-[#c5c6cf]/40 hover:border-blue-300 hover:bg-blue-50/50'
+                      }`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${mostrarFormEmail ? 'bg-blue-200 text-blue-700' : 'bg-blue-50 text-blue-600 group-hover:bg-blue-100'}`}>
+                      <span className="material-symbols-outlined text-[22px]">mail</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Enviar Correo</span>
+                  </button>
+
+                  <button
+                    onClick={handleImprimirDocentes}
+                    className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-[#c5c6cf]/40 hover:border-slate-300 hover:bg-slate-50/50 transition-all cursor-pointer group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-slate-50 text-slate-600 flex items-center justify-center group-hover:bg-slate-100 transition-colors">
+                      <span className="material-symbols-outlined text-[22px]">print</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Imprimir</span>
+                  </button>
+                </div>
+              </div>
+
+              {exportando && (
+                <div className="bg-amber-50 border border-amber-200/50 rounded-2xl p-3 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px] text-amber-600 animate-spin">progress_activity</span>
+                  <span className="text-xs font-bold text-amber-800">Generando reporte, por favor espera...</span>
+                </div>
+              )}
+
+              {/* Formulario de Correo */}
+              {mostrarFormEmail && (
+                <div className="bg-[#faf9fc] border border-blue-200/50 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[14px]">mail</span>
+                      Enviar Reporte por Correo Electrónico
+                    </p>
+                    <button type="button" onClick={() => setMostrarFormEmail(false)} className="text-[#75777f] hover:text-[#44464e] transition-colors cursor-pointer">
+                      <span className="material-symbols-outlined text-[18px]">expand_less</span>
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleEnviarEmailDocentes} className="space-y-3 text-xs">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="block font-bold text-[#44464e] uppercase">Destinatario(s) *</label>
+                        {usuariosRegistrados.length > 0 && (
+                          <button type="button" onClick={() => setMostrarSugerenciasEmails(!mostrarSugerenciasEmails)} className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer">
+                            <span className="material-symbols-outlined text-[14px]">how_to_reg</span>
+                            {mostrarSugerenciasEmails ? 'Ocultar usuarios' : `Ver registrados (${usuariosRegistrados.length})`}
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Escribe correos separados por coma..."
+                        value={formEmail.destinatarios}
+                        onFocus={() => setCampoDestino('destinatarios')}
+                        onChange={(e) => setFormEmail({ ...formEmail, destinatarios: e.target.value })}
+                        className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-sm outline-none transition-all font-medium ${campoDestino === 'destinatarios' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'}`}
+                      />
+                      {renderBadgesCampo('destinatarios', formEmail.destinatarios)}
+
+                      {mostrarSugerenciasEmails && usuariosRegistrados.length > 0 && (
+                        <div className="mt-2 p-2 bg-blue-50/80 border border-blue-200/90 rounded-xl space-y-1.5">
+                          <p className="text-[10px] font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px] text-blue-600">verified_user</span>
+                            Usuarios Registrados:
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {usuariosRegistrados.map((user) => {
+                              const correo = user.correo || user.email || '';
+                              const yaAgregado = formEmail[campoDestino]?.split(',').map(e => e.trim()).includes(correo);
+                              return (
+                                <button
+                                  key={correo}
+                                  type="button"
+                                  onClick={() => {
+                                    const actual = formEmail[campoDestino] || '';
+                                    if (!yaAgregado) {
+                                      const nuevo = actual ? `${actual}, ${correo}` : correo;
+                                      setFormEmail({ ...formEmail, [campoDestino]: nuevo });
+                                    }
+                                  }}
+                                  className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all border flex items-center gap-1 cursor-pointer ${yaAgregado ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-900 border-blue-200 hover:bg-blue-100/80'}`}
+                                >
+                                  <span className="material-symbols-outlined text-[12px]">{yaAgregado ? 'check_circle' : 'add_circle'}</span>
+                                  {user.nombre || correo}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-bold text-[#44464e] uppercase mb-1">CC</label>
+                        <input type="text" placeholder="copia@ula.edu.mx" value={formEmail.cc} onFocus={() => setCampoDestino('cc')} onChange={(e) => setFormEmail({ ...formEmail, cc: e.target.value })} className={`w-full px-3 py-2 bg-white border rounded-xl text-xs outline-none transition-all ${campoDestino === 'cc' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'}`} />
+                        {renderBadgesCampo('cc', formEmail.cc)}
+                      </div>
+                      <div>
+                        <label className="block font-bold text-[#44464e] uppercase mb-1">CCO</label>
+                        <input type="text" placeholder="oculta@ula.edu.mx" value={formEmail.cco} onFocus={() => setCampoDestino('cco')} onChange={(e) => setFormEmail({ ...formEmail, cco: e.target.value })} className={`w-full px-3 py-2 bg-white border rounded-xl text-xs outline-none transition-all ${campoDestino === 'cco' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'}`} />
+                        {renderBadgesCampo('cco', formEmail.cco)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Asunto</label>
+                      <input type="text" required value={formEmail.asunto} onChange={(e) => setFormEmail({ ...formEmail, asunto: e.target.value })} className="w-full px-3 py-2 bg-white border border-[#c5c6cf]/50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-600/20 font-medium" />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Mensaje</label>
+                      <textarea rows="2" placeholder="Escribe una nota..." value={formEmail.mensaje} onChange={(e) => setFormEmail({ ...formEmail, mensaje: e.target.value })} className="w-full px-3 py-2 bg-white border border-[#c5c6cf]/50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-600/20"></textarea>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border border-[#c5c6cf]/30 flex items-center gap-4">
+                      <p className="font-bold text-[#1c355e] uppercase text-[10px]">Adjuntar:</p>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={formEmail.adjuntar_pdf} onChange={(e) => setFormEmail({ ...formEmail, adjuntar_pdf: e.target.checked })} className="w-4 h-4 rounded text-blue-600" />
+                        <span className="font-bold text-gray-700 text-xs">PDF</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={formEmail.adjuntar_excel} onChange={(e) => setFormEmail({ ...formEmail, adjuntar_excel: e.target.checked })} className="w-4 h-4 rounded text-emerald-600" />
+                        <span className="font-bold text-gray-700 text-xs">Excel</span>
+                      </label>
+                    </div>
+
+                    <div className="flex gap-3 pt-1">
+                      <button type="button" onClick={() => setMostrarFormEmail(false)} className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all cursor-pointer">
+                        Cancelar
+                      </button>
+                      <button type="submit" disabled={enviandoEmail} className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer">
+                        <span className="material-symbols-outlined text-[16px]">send</span>
+                        {enviandoEmail ? 'Enviando...' : 'Enviar Reporte'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-[#c5c6cf]/30 p-4 flex justify-end shrink-0">
+              <button onClick={() => setMostrarCentroExportacion(false)} className="px-5 py-2 rounded-xl border border-[#c5c6cf]/50 text-xs font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-colors cursor-pointer">
+                Cerrar
               </button>
             </div>
           </div>

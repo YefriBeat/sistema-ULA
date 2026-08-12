@@ -274,15 +274,15 @@ export default function VisualBd() {
   const [campoDestino, setCampoDestino] = useState('destinatarios');
 
   const [filtrosDisponiblesHistorial, setFiltrosDisponiblesHistorial] = useState({
-    licenciaturas: [],
-    semestres: [],
-    asignaturas: []
+    usuarios: [],
+    modulos: []
   });
   const [cargandoFiltrosHistorial, setCargandoFiltrosHistorial] = useState(false);
   const [filtrosHistorial, setFiltrosHistorial] = useState({
-    licenciatura: 'Todos',
-    semestre: 'Todos',
-    asignatura: 'Todos'
+    fechaInicio: '',
+    fechaFin: '',
+    usuario: 'Todos',
+    modulo: 'Todos'
   });
 
   const renderBadgesCampo = (nombreCampo, valorCampo) => {
@@ -786,7 +786,7 @@ export default function VisualBd() {
     setFiltrosHistorial({ licenciatura: 'Todos', semestre: 'Todos', asignatura: 'Todos' });
     setCargandoFiltrosHistorial(true);
     try {
-      const res = await fetch('/api/historial/filtros-disponibles');
+      const res = await fetch('/api/bitacora/filtros-disponibles');
       if (res.ok) {
         const data = await res.json();
         setFiltrosDisponiblesHistorial(data);
@@ -810,16 +810,20 @@ export default function VisualBd() {
         usuario_correo: 'admin@universidadlatino.edu.mx',
         es_historial_completo: esHistorial,
         filtros_aplicados: esHistorial ? {
-          licenciatura: filtrosHistorial.licenciatura,
-          semestre: filtrosHistorial.semestre,
-          asignatura: filtrosHistorial.asignatura
+          fecha_inicio: filtrosHistorial.fechaInicio,
+          fecha_fin: filtrosHistorial.fechaFin,
+          modulo: filtrosHistorial.modulo,
+          usuario: filtrosHistorial.usuario
         } : obtenerResumenFiltros(),
         registros: []
       };
       if (esHistorial) {
-        bodyData.licenciatura = filtrosHistorial.licenciatura;
-        bodyData.semestre = filtrosHistorial.semestre;
-        bodyData.asignatura = filtrosHistorial.asignatura;
+        bodyData.filtros_bitacora = {
+          fecha_inicio: filtrosHistorial.fechaInicio,
+          fecha_fin: filtrosHistorial.fechaFin,
+          modulo: filtrosHistorial.modulo,
+          usuario: filtrosHistorial.usuario
+        };
       } else {
         registrosAExportar = await obtenerRegistrosAExportar(false);
         bodyData.registros = registrosAExportar;
@@ -1030,7 +1034,7 @@ export default function VisualBd() {
       </div>
 
       {/* ══ MÉTRICAS + DONUT ════════════════════════════════════════════════════ */}
-      <div className="flex flex-col lg:flex-row gap-4 items-stretch">
+      <div className="flex flex-col lg:flex-row gap-4 items-stretch sticky top-[72px] z-30 bg-[#faf9fc] pt-4 pb-2 border-b border-[#c5c6cf]/30 shadow-sm">
 
         {/* 4 tarjetas de estadísticas */}
         <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -1681,7 +1685,7 @@ export default function VisualBd() {
                       }`}
                   >
                     <span className="material-symbols-outlined text-[16px]">history</span>
-                    Historial de Clases
+                    Bitácora Histórica
                   </button>
                 </div>
               </div>
@@ -1689,47 +1693,53 @@ export default function VisualBd() {
               {/* SECCIÓN 2: Filtros Historial */}
               {origenExportacion === 'historial' && (
                 <div className="bg-[#faf9fc] border border-[#c5c6cf]/30 rounded-2xl p-4 space-y-3">
-                  <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider">2. Filtros del Historial</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider">2. Filtros de Bitácora</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                     <div>
-                      <label className="block font-bold text-[#44464e] uppercase mb-1">Licenciatura</label>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Desde</label>
+                      <input
+                        type="date"
+                        value={filtrosHistorial.fechaInicio}
+                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, fechaInicio: e.target.value })}
+                        disabled={cargandoFiltrosHistorial}
+                        className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Hasta</label>
+                      <input
+                        type="date"
+                        value={filtrosHistorial.fechaFin}
+                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, fechaFin: e.target.value })}
+                        disabled={cargandoFiltrosHistorial}
+                        className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Módulo</label>
                       <select
-                        value={filtrosHistorial.licenciatura}
-                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, licenciatura: e.target.value })}
+                        value={filtrosHistorial.modulo}
+                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, modulo: e.target.value })}
                         disabled={cargandoFiltrosHistorial}
                         className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
                       >
-                        <option value="Todos">Todas las Licenciaturas</option>
-                        {filtrosDisponiblesHistorial.licenciaturas.map((lic) => (
-                          <option key={lic} value={lic}>{lic}</option>
+                        <option value="Todos">Todos los Módulos</option>
+                        {filtrosDisponiblesHistorial.modulos?.map((mod) => (
+                          <option key={mod} value={mod}>{mod}</option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="block font-bold text-[#44464e] uppercase mb-1">Grado / Cuatrimestre</label>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Usuario</label>
                       <select
-                        value={filtrosHistorial.semestre}
-                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, semestre: e.target.value })}
+                        value={filtrosHistorial.usuario}
+                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, usuario: e.target.value })}
                         disabled={cargandoFiltrosHistorial}
                         className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
                       >
-                        <option value="Todos">Todos los Grados</option>
-                        {filtrosDisponiblesHistorial.semestres.map((sem) => (
-                          <option key={sem} value={sem}>{sem}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block font-bold text-[#44464e] uppercase mb-1">Asignatura</label>
-                      <select
-                        value={filtrosHistorial.asignatura}
-                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, asignatura: e.target.value })}
-                        disabled={cargandoFiltrosHistorial}
-                        className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
-                      >
-                        <option value="Todos">Todas las Asignaturas</option>
-                        {filtrosDisponiblesHistorial.asignaturas.map((asig) => (
-                          <option key={asig} value={asig}>{asig}</option>
+                        <option value="Todos">Todos los Usuarios</option>
+                        {filtrosDisponiblesHistorial.usuarios?.map((usr) => (
+                          <option key={usr} value={usr}>{usr}</option>
                         ))}
                       </select>
                     </div>
@@ -1803,17 +1813,6 @@ export default function VisualBd() {
                     </div>
                     <span className="text-xs font-bold text-[#1b1c1e]">Imprimir</span>
                   </button>
-                </div>
-
-                <div className="mt-3">
-                  <a
-                    href={getUrlExportarReposiciones()}
-                    download="reporte_reprogramaciones_semanal.csv"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-[#c5c6cf]/40 text-xs font-semibold text-[#44464e] hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300 transition-all cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[16px] text-indigo-600">history_edu</span>
-                    Descargar Reporte de Reposiciones (.CSV)
-                  </a>
                 </div>
               </div>
 

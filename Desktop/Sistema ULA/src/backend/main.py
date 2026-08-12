@@ -643,6 +643,64 @@ class ReprogramacionRequest(BaseModel):
 # ---------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------
+from urllib.parse import unquote
+
+def obtener_usuario(request: Request) -> str:
+    user = request.headers.get("x-usuario", "Sistema")
+    return unquote(user)
+
+def registrar_bitacora(
+    cursor,
+    usuario: str,
+    tipo_operacion: str,
+    modulo_afectado: str,
+    registro_id: int = None,
+    docente: str = None,
+    suplente: str = None,
+    licenciatura: str = None,
+    grado_cuatrimestre: str = None,
+    asignatura: str = None,
+    grupo: str = None,
+    dia_anterior: str = None,
+    dia_nuevo: str = None,
+    hora_anterior: str = None,
+    hora_nueva: str = None,
+    aula_anterior: str = None,
+    aula_nueva: str = None,
+    turno_anterior: str = None,
+    turno_nuevo: str = None,
+    estado_anterior: str = None,
+    estado_nuevo: str = None,
+    motivo: str = None,
+    datos_anteriores: dict = None,
+    datos_nuevos: dict = None
+):
+    query = """
+        INSERT INTO bitacora_cambios (
+            usuario, tipo_operacion, modulo_afectado, registro_id,
+            docente, suplente, licenciatura, grado_cuatrimestre, asignatura, grupo,
+            dia_anterior, dia_nuevo, hora_anterior, hora_nueva,
+            aula_anterior, aula_nueva, turno_anterior, turno_nuevo,
+            estado_anterior, estado_nuevo, motivo, datos_anteriores, datos_nuevos
+        ) VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s
+        )
+    """
+    d_ant = json.dumps(datos_anteriores, ensure_ascii=False) if datos_anteriores else None
+    d_nue = json.dumps(datos_nuevos, ensure_ascii=False) if datos_nuevos else None
+    
+    cursor.execute(query, (
+        usuario, tipo_operacion, modulo_afectado, registro_id,
+        docente, suplente, licenciatura, grado_cuatrimestre, asignatura, grupo,
+        dia_anterior, dia_nuevo, hora_anterior, hora_nueva,
+        aula_anterior, aula_nueva, turno_anterior, turno_nuevo,
+        estado_anterior, estado_nuevo, motivo, d_ant, d_nue
+    ))
+
 _DIAS_MAP = {'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6}
 
 def _parse_horario_minutos(horario_str: str):
@@ -1660,7 +1718,7 @@ def estado_academico(plan: str = "semestral", fecha: str = None):
                 ord_inicio = cursor.fetchone()
                 if ord_inicio and today >= ord_inicio['fecha_inicio']:
                     hay_clases = False
-                    estado = 'receso'
+                    estado = 'examen_ordinario'
                     descripcion = 'Periodo de Evaluación Final'
 
             for ev in eventos_hoy:
@@ -2695,8 +2753,9 @@ def _verificar_conflicto_aula(cursor, aula: str, horario_str: str, excluir_id: i
 
 
 @app.post("/api/guardar-horarios")
-def guardar_horarios(horarios: list[dict]):
+def guardar_horarios(horarios: list[dict], request: Request):
     connection = get_db_connection()
+    usuario = obtener_usuario(request)
     try:
         with connection.cursor() as cursor:
             # Verificar conflictos antes de insertar
@@ -2727,6 +2786,16 @@ def guardar_horarios(horarios: list[dict]):
                     h.get("cuatrimestre", ""),
                     h.get("grupo", "")
                 ))
+                horario_id = cursor.lastrowid
+                registrar_bitacora(
+                    cursor, usuario, 'crear_clase', 'horarios', registro_id=horario_id,
+                    docente=h.get("docente"), asignatura=h.get("asignatura"),
+                    licenciatura=h.get("licenciatura"), 
+                    grado_cuatrimestre=h.get("semestre") or h.get("cuatrimestre"),
+                    grupo=h.get("grupo"), 
+                    hora_nueva=h.get("horario", h.get("horario_resumen", "")),
+                    aula_nueva=h.get("aulaAsignada", h.get("aula_asignada", "Por asignar"))
+                )
         connection.commit()
         return {"message": "Horarios guardados"}
     except HTTPException:
@@ -2871,7 +2940,7 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
                         """, (plan, periodo_info['ciclo'], periodo_info['periodo']))
                         ord_inicio = cursor.fetchone()
                         if ord_inicio and date_obj >= ord_inicio['fecha_inicio']:
-                            clases_ok = False  # Periodo de evaluación final
+                            clases_ok = "examenes"  # Periodo de evaluación final
 
                 hay_clases_plan[plan] = clases_ok
 
@@ -2907,9 +2976,59 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
             """)
             todas = cursor.fetchall()
 
+            # Función de normalización robusta para comparar materias
+            def normalize_subject(s: str) -> str:
+                if not s: return ""
+                import unicodedata
+                s = s.strip().lower()
+                s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+                words = []
+                for w in s.split():
+                    if len(w) > 3 and w.endswith('s'):
+                        words.append(w[:-1])
+                    else:
+                        words.append(w)
+                return ' '.join(words)
+
+            # Si hay algún plan en estado "examenes", necesitamos consultar qué exámenes hay hoy
+            if "examenes" in hay_clases_plan.values():
+                meses_nombres = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+                dias_semana = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+                dia_str = dias_semana[dia_hoy - 1] if 1 <= dia_hoy <= 7 else ''
+                # Formato "07 de agosto" (como lo almacena el parser del PDF)
+                date_str_texto = f"{date_obj.day:02d} de {meses_nombres[date_obj.month]}"
+                date_str_iso = date_obj.strftime("%Y-%m-%d")
+                date_str_ddmmyyyy = date_obj.strftime("%d/%m/%Y")
+                
+                cursor.execute("""
+                    SELECT materia FROM examenes_calendario 
+                    WHERE LOWER(fecha) = LOWER(%s)
+                       OR LOWER(fecha) = LOWER(%s)
+                       OR LOWER(fecha) = LOWER(%s)
+                       OR (TRIM(fecha) = '' AND LOWER(dia) = LOWER(%s))
+                """, (date_str_texto, date_str_iso, date_str_ddmmyyyy, dia_str))
+                examenes_hoy_materias = {normalize_subject(row['materia']) for row in cursor.fetchall()}
+            else:
+                examenes_hoy_materias = set()
+
         # Agrupar bloques consecutivos de la misma clase (ej. 17:10-18:00 y 18:00-18:50 -> 17:10-18:50)
         mapa_grupos = defaultdict(list)
         for clase in (todas or []):
+            # Filtrar por estado académico del plan
+            plan_clase = 'cuatrimestral' if clase.get('cuatrimestre') else 'semestral'
+            estado_plan = hay_clases_plan.get(plan_clase, True)
+            if not estado_plan: continue
+            if estado_plan == "examenes":
+                clase_asig_norm = normalize_subject(clase.get('asignatura', ''))
+                match_examen = False
+                for ex_mat in examenes_hoy_materias:
+                    if len(ex_mat) >= 3 and (ex_mat in clase_asig_norm or clase_asig_norm in ex_mat):
+                        match_examen = True
+                        break
+                if not match_examen:
+                    continue
+
             if clase.get('es_reposicion'):
                 if str(clase.get('fecha_reposicion')) != str(date_obj):
                     continue
@@ -2978,7 +3097,8 @@ class LiberarAulaRequest(BaseModel):
 
 
 @app.post("/api/aulas/liberar")
-def liberar_aula(datos: LiberarAulaRequest):
+def liberar_aula(datos: LiberarAulaRequest, request: Request):
+    usuario = obtener_usuario(request)
     ahora = datetime.now()
     fecha_val = datos.fecha if datos.fecha else ahora.strftime("%Y-%m-%d")
     connection = get_db_connection()
@@ -2994,6 +3114,13 @@ def liberar_aula(datos: LiberarAulaRequest):
                 INSERT INTO aulas_liberadas (aula_nombre, fecha, docente, asignatura, horario, motivo, activa)
                 VALUES (%s, %s, %s, %s, %s, %s, TRUE)
             """, (datos.aula_nombre, fecha_val, datos.docente or "", datos.asignatura or "", datos.horario or "", datos.motivo or "Liberación manual"))
+            
+            registrar_bitacora(
+                cursor, usuario, 'liberar_aula', 'aulas', 
+                aula_anterior=datos.aula_nombre, aula_nueva=None,
+                docente=datos.docente, asignatura=datos.asignatura,
+                hora_anterior=datos.horario, motivo=datos.motivo
+            )
 
             # Registrar snapshot inmediato en clases_historico
             date_obj = datetime.strptime(fecha_val, "%Y-%m-%d").date()
@@ -3043,10 +3170,18 @@ def obtener_aulas_liberadas(fecha: Optional[str] = None):
 
 
 @app.delete("/api/aulas/liberar/{liberacion_id}")
-def reactivar_aula(liberacion_id: int):
+def reactivar_aula(liberacion_id: int, request: Request):
+    usuario = obtener_usuario(request)
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT aula_nombre FROM aulas_liberadas WHERE id = %s", (liberacion_id,))
+            row = cursor.fetchone()
+            if row:
+                registrar_bitacora(
+                    cursor, usuario, 'reactivar_aula', 'aulas',
+                    registro_id=liberacion_id, aula_nueva=row['aula_nombre']
+                )
             cursor.execute("UPDATE aulas_liberadas SET activa = FALSE WHERE id = %s", (liberacion_id,))
             connection.commit()
         return {"message": "Liberación cancelada y aula reactivada"}
@@ -3066,13 +3201,14 @@ def obtener_ocupacion_aulas():
     Matutino  : inicio < 14:00 (840 min).
     Vespertino: inicio >= 14:00.
     No depende de la hora actual — refleja la semana completa.
+    Incluye lista de carreras (licenciaturas) con sus horarios por aula.
     """
     LIMITE_VESPERTINO = 14 * 60  # 840 min = 14:00
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT aula_asignada, horario
+                SELECT aula_asignada, horario, licenciatura, semestre, cuatrimestre
                 FROM horarios
                 WHERE aula_asignada IS NOT NULL
                   AND TRIM(aula_asignada) != ''
@@ -3087,11 +3223,34 @@ def obtener_ocupacion_aulas():
             if inicio is None:
                 continue
             if aula not in ocupacion:
-                ocupacion[aula] = {'matutino': False, 'vespertino': False}
+                ocupacion[aula] = {'matutino': False, 'vespertino': False, 'carreras': []}
             if inicio < LIMITE_VESPERTINO:
                 ocupacion[aula]['matutino'] = True
             else:
                 ocupacion[aula]['vespertino'] = True
+
+            # Agregar info de carrera, grado y horario
+            lic = (r.get('licenciatura') or '').strip()
+            horario = (r.get('horario') or '').strip()
+            semestre = (r.get('semestre') or '').strip()
+            cuatrimestre = (r.get('cuatrimestre') or '').strip()
+            
+            grado = semestre if semestre else cuatrimestre
+            if not grado:
+                grado = 'N/A'
+
+            if lic:
+                # Verificar si ya existe esta combinación
+                ya_existe = any(
+                    c['licenciatura'] == lic and c['horario'] == horario and c.get('grado', 'N/A') == grado
+                    for c in ocupacion[aula]['carreras']
+                )
+                if not ya_existe:
+                    ocupacion[aula]['carreras'].append({
+                        'licenciatura': lic,
+                        'horario': horario,
+                        'grado': grado
+                    })
 
         return ocupacion
     except pymysql.Error as e:
@@ -3137,13 +3296,14 @@ def obtener_aulas():
 
 
 @app.post("/api/aulas")
-def crear_aula(aula: Aula):
+def crear_aula(aula: Aula, request: Request):
     """
     Crea una nueva aula
     """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            usuario = obtener_usuario(request)
             # Convertir lista de equipos a JSON string
             equipos_json = json.dumps(aula.equipos)
             
@@ -3155,6 +3315,11 @@ def crear_aula(aula: Aula):
                 equipos_json,
                 aula.estado
             ))
+            aula_id = cursor.lastrowid
+            registrar_bitacora(
+                cursor, usuario, 'crear_aula', 'aulas', registro_id=aula_id,
+                aula_nueva=aula.nombre, estado_nuevo=aula.estado
+            )
         connection.commit()
         return {"message": "Aula creada exitosamente"}
     except pymysql.Error as e:
@@ -3164,15 +3329,24 @@ def crear_aula(aula: Aula):
 
 
 @app.put("/api/aulas/{aula_id}")
-def actualizar_aula(aula_id: int, aula: Aula):
+def actualizar_aula(aula_id: int, aula: Aula, request: Request):
     """Actualiza los datos de un aula existente."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            usuario = obtener_usuario(request)
+            cursor.execute("SELECT nombre, estado FROM aulas WHERE id = %s", (aula_id,))
+            ant = cursor.fetchone() or {}
+            
             equipos_json = json.dumps(aula.equipos)
             cursor.execute(
                 "UPDATE aulas SET nombre=%s, edificio=%s, capacidad=%s, equipos=%s, estado=%s WHERE id=%s",
                 (aula.nombre, aula.edificio, aula.capacidad, equipos_json, aula.estado, aula_id)
+            )
+            registrar_bitacora(
+                cursor, usuario, 'actualizar_aula', 'aulas', registro_id=aula_id,
+                aula_anterior=ant.get('nombre'), aula_nueva=aula.nombre,
+                estado_anterior=ant.get('estado'), estado_nuevo=aula.estado
             )
         connection.commit()
         return {"message": "Aula actualizada exitosamente"}
@@ -3183,7 +3357,7 @@ def actualizar_aula(aula_id: int, aula: Aula):
 
 
 @app.post("/api/aulas/{aula_id}/mantenimiento")
-def actualizar_mantenimiento(aula_id: int, datos: MantenimientoUpdate):
+def actualizar_mantenimiento(aula_id: int, datos: MantenimientoUpdate, request: Request):
     inicio_dt = None
     if datos.inicio_mantenimiento:
         try:
@@ -3201,6 +3375,10 @@ def actualizar_mantenimiento(aula_id: int, datos: MantenimientoUpdate):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            usuario = obtener_usuario(request)
+            cursor.execute("SELECT nombre FROM aulas WHERE id = %s", (aula_id,))
+            row = cursor.fetchone() or {}
+            
             cursor.execute(
                 "UPDATE aulas SET en_mantenimiento=%s, inicio_mantenimiento=%s, fin_mantenimiento=%s, aula_temporal=%s WHERE id=%s",
                 (
@@ -3211,6 +3389,12 @@ def actualizar_mantenimiento(aula_id: int, datos: MantenimientoUpdate):
                     aula_id
                 )
             )
+            registrar_bitacora(
+                cursor, usuario, 'mantenimiento_aula', 'aulas', registro_id=aula_id,
+                aula_anterior=row.get('nombre'),
+                estado_nuevo="Mantenimiento" if datos.en_mantenimiento else "Disponible",
+                motivo=f"Temporal: {datos.aula_temporal}" if datos.aula_temporal else ""
+            )
         connection.commit()
         return {"message": "Estado de mantenimiento actualizado"}
     except pymysql.Error as e:
@@ -3220,14 +3404,22 @@ def actualizar_mantenimiento(aula_id: int, datos: MantenimientoUpdate):
 
 
 @app.delete("/api/aulas/{aula_id}")
-def eliminar_aula(aula_id: int):
+def eliminar_aula(aula_id: int, request: Request):
     """
     Elimina un aula por su ID
     """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            usuario = obtener_usuario(request)
+            cursor.execute("SELECT nombre FROM aulas WHERE id = %s", (aula_id,))
+            row = cursor.fetchone() or {}
+            
             cursor.execute("DELETE FROM aulas WHERE id = %s", (aula_id,))
+            registrar_bitacora(
+                cursor, usuario, 'eliminar_aula', 'aulas', registro_id=aula_id,
+                aula_anterior=row.get('nombre')
+            )
         connection.commit()
         return {"message": "Aula eliminada exitosamente"}
     except pymysql.Error as e:
@@ -3356,15 +3548,16 @@ def obtener_horarios_archivo(nombre_archivo: str):
 
 
 @app.put("/api/horarios/{horario_id}")
-def actualizar_horario(horario_id: int, datos: dict):
+def actualizar_horario(horario_id: int, datos: dict, request: Request):
     """Actualiza un horario específico (aula, docente, asignatura). Valida conflictos de aula."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             nueva_aula = datos.get("aula_asignada", "Por asignar")
+            usuario = obtener_usuario(request)
             # Obtener el horario original para parsear día y hora
-            cursor.execute("SELECT horario FROM horarios WHERE id = %s", (horario_id,))
-            actual = cursor.fetchone()
+            cursor.execute("SELECT docente, asignatura, horario, aula_asignada FROM horarios WHERE id = %s", (horario_id,))
+            actual = cursor.fetchone() or {}
             if actual:
                 msg = _verificar_conflicto_aula(cursor, nueva_aula, actual.get('horario', ''), excluir_id=horario_id)
                 if msg:
@@ -3376,6 +3569,12 @@ def actualizar_horario(horario_id: int, datos: dict):
                 datos.get("asignatura", ""),
                 horario_id
             ))
+            registrar_bitacora(
+                cursor, usuario, 'actualizar_clase', 'horarios', registro_id=horario_id,
+                docente=datos.get("docente", ""), asignatura=datos.get("asignatura", ""),
+                aula_anterior=actual.get('aula_asignada'), aula_nueva=nueva_aula,
+                datos_anteriores={"docente": actual.get("docente"), "asignatura": actual.get("asignatura")}
+            )
         connection.commit()
         return {"message": "Horario actualizado exitosamente"}
     except HTTPException:
@@ -3387,14 +3586,19 @@ def actualizar_horario(horario_id: int, datos: dict):
 
 
 @app.delete("/api/archivos/{nombre_archivo}")
-def eliminar_archivo(nombre_archivo: str):
+def eliminar_archivo(nombre_archivo: str, request: Request):
     """
     Elimina un archivo y todos sus horarios asociados
     """
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            usuario = obtener_usuario(request)
             cursor.execute("DELETE FROM horarios WHERE archivo = %s", (nombre_archivo,))
+            registrar_bitacora(
+                cursor, usuario, 'eliminar_archivo_horarios', 'horarios',
+                datos_anteriores={"archivo": nombre_archivo}
+            )
         connection.commit()
         return {"message": f"Archivo '{nombre_archivo}' y sus horarios eliminados exitosamente"}
     except pymysql.Error as e:
@@ -3482,13 +3686,18 @@ def obtener_docentes():
 
 
 @app.post("/api/docentes")
-def crear_docente(docente: Docente):
+def crear_docente(docente: Docente, request: Request):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO docentes (nombre, especialidad, materias, correo) VALUES (%s, %s, %s, %s)",
-                (docente.nombre.strip(), docente.especialidad.strip(), json.dumps(docente.materias), docente.correo.strip())
+            )
+            doc_id = cursor.lastrowid
+            registrar_bitacora(
+                cursor, obtener_usuario(request), 'crear_docente', 'docentes', registro_id=doc_id,
+                docente=docente.nombre.strip(),
+                datos_nuevos={"especialidad": docente.especialidad.strip(), "correo": docente.correo.strip()}
             )
         connection.commit()
         return {"message": "Docente registrado exitosamente"}
@@ -3499,13 +3708,22 @@ def crear_docente(docente: Docente):
 
 
 @app.put("/api/docentes/{docente_id}")
-def actualizar_docente(docente_id: int, docente: Docente):
+def actualizar_docente(docente_id: int, docente: Docente, request: Request):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT nombre, especialidad, correo FROM docentes WHERE id = %s", (docente_id,))
+            ant = cursor.fetchone() or {}
+            
             cursor.execute(
                 "UPDATE docentes SET nombre=%s, especialidad=%s, materias=%s, correo=%s WHERE id=%s",
                 (docente.nombre.strip(), docente.especialidad.strip(), json.dumps(docente.materias), docente.correo.strip(), docente_id)
+            )
+            registrar_bitacora(
+                cursor, obtener_usuario(request), 'actualizar_docente', 'docentes', registro_id=docente_id,
+                docente=docente.nombre.strip(),
+                datos_anteriores={"nombre": ant.get('nombre'), "especialidad": ant.get('especialidad'), "correo": ant.get('correo')},
+                datos_nuevos={"nombre": docente.nombre.strip(), "especialidad": docente.especialidad.strip(), "correo": docente.correo.strip()}
             )
         connection.commit()
         return {"message": "Docente actualizado exitosamente"}
@@ -3516,12 +3734,19 @@ def actualizar_docente(docente_id: int, docente: Docente):
 
 
 @app.delete("/api/docentes/{docente_id}")
-def eliminar_docente(docente_id: int):
+def eliminar_docente(docente_id: int, request: Request):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT nombre FROM docentes WHERE id = %s", (docente_id,))
+            ant = cursor.fetchone() or {}
+            
             cursor.execute("DELETE FROM suplencias WHERE docente_id = %s OR suplente_id = %s", (docente_id, docente_id))
             cursor.execute("DELETE FROM docentes WHERE id = %s", (docente_id,))
+            registrar_bitacora(
+                cursor, obtener_usuario(request), 'eliminar_docente', 'docentes', registro_id=docente_id,
+                docente=ant.get('nombre')
+            )
         connection.commit()
         return {"message": "Docente eliminado exitosamente"}
     except pymysql.Error as e:
@@ -3563,7 +3788,7 @@ def obtener_suplencias():
 
 
 @app.post("/api/suplencias")
-def crear_suplencia(s: Suplencia):
+def crear_suplencia(s: Suplencia, request: Request):
     if s.docente_id == s.suplente_id:
         raise HTTPException(status_code=400, detail="El docente no puede ser su propio suplente.")
     connection = get_db_connection()
@@ -3580,6 +3805,18 @@ def crear_suplencia(s: Suplencia):
                 INSERT INTO suplencias (docente_id, suplente_id, materia, dia, fecha, hora_inicio, hora_fin, activa)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
             """, (s.docente_id, s.suplente_id, s.materia, s.dia, s.fecha, s.hora_inicio, s.hora_fin))
+            suplencia_id = cursor.lastrowid
+            
+            cursor.execute("SELECT id, nombre FROM docentes WHERE id IN (%s, %s)", (s.docente_id, s.suplente_id))
+            docentes = {row['id']: row['nombre'] for row in cursor.fetchall()}
+            
+            registrar_bitacora(
+                cursor, obtener_usuario(request), 'asignar_suplente', 'suplencias', registro_id=suplencia_id,
+                docente=docentes.get(s.docente_id, str(s.docente_id)),
+                suplente=docentes.get(s.suplente_id, str(s.suplente_id)),
+                asignatura=s.materia,
+                hora_nueva=f"{s.hora_inicio}-{s.hora_fin}", dia_nuevo=s.dia
+            )
         connection.commit()
         return {"message": "Suplencia asignada correctamente."}
     except HTTPException:
@@ -3591,11 +3828,24 @@ def crear_suplencia(s: Suplencia):
 
 
 @app.delete("/api/suplencias/{suplencia_id}")
-def eliminar_suplencia(suplencia_id: int):
+def eliminar_suplencia(suplencia_id: int, request: Request):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT s.materia, d.nombre AS docente, ds.nombre AS suplente 
+                FROM suplencias s 
+                LEFT JOIN docentes d ON s.docente_id = d.id 
+                LEFT JOIN docentes ds ON s.suplente_id = ds.id 
+                WHERE s.id = %s
+            """, (suplencia_id,))
+            ant = cursor.fetchone() or {}
+            
             cursor.execute("UPDATE suplencias SET activa = FALSE WHERE id = %s", (suplencia_id,))
+            registrar_bitacora(
+                cursor, obtener_usuario(request), 'retiro_suplente', 'suplencias', registro_id=suplencia_id,
+                docente=ant.get('docente'), suplente=ant.get('suplente'), asignatura=ant.get('materia')
+            )
         connection.commit()
         return {"message": "Suplencia cancelada."}
     except pymysql.Error as e:
@@ -3773,7 +4023,7 @@ def obtener_aulas_disponibles_reprogramacion(
 
 
 @app.post("/api/reprogramaciones")
-def crear_reprogramacion(req: ReprogramacionRequest):
+def crear_reprogramacion(req: ReprogramacionRequest, request: Request):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
@@ -3834,6 +4084,16 @@ def crear_reprogramacion(req: ReprogramacionRequest):
                 nota_reposicion_origen,
                 req.nueva_fecha
             ))
+            
+            reposicion_id = cursor.lastrowid
+            registrar_bitacora(
+                cursor, obtener_usuario(request), 'reprogramar_clase', 'horarios',
+                registro_id=reposicion_id,
+                docente=orig_primera['docente'], asignatura=req.clase_original_asignatura or orig_primera['asignatura'] or '',
+                hora_anterior=horarios_orig_str, hora_nueva=nuevo_horario_str,
+                aula_anterior=orig_primera['aula_asignada'], aula_nueva=req.nueva_aula,
+                motivo=req.motivo or 'Clase pospuesta'
+            )
 
         connection.commit()
         return {"message": "Clase reprogramada exitosamente en la base de datos."}
@@ -3848,7 +4108,7 @@ def crear_reprogramacion(req: ReprogramacionRequest):
 
 
 @app.delete("/api/reprogramaciones/{clase_id}")
-def cancelar_reprogramacion(clase_id: int):
+def cancelar_reprogramacion(clase_id: int, request: Request):
     """
     Revoca la reprogramación de una clase (ya sea por ID de clase pospuesta o por ID de clase de reposición):
     1. Reestablece la clase original a estado programada (sin nota de pospuesta).
@@ -3884,6 +4144,10 @@ def cancelar_reprogramacion(clase_id: int):
                     WHERE docente = %s AND (es_reposicion = TRUE OR estado_slug = 'reposicion_programada')
                 """, (docente,))
 
+            registrar_bitacora(
+                cursor, obtener_usuario(request), 'cancelar_reprogramacion', 'horarios',
+                registro_id=clase_id, docente=docente, asignatura=item.get('asignatura')
+            )
         connection.commit()
         return {"message": "Reprogramación cancelada y revertida en la base de datos."}
     except HTTPException:
@@ -4601,14 +4865,18 @@ def _generar_excel_reporte(registros: list[dict], filtros: dict, usuario_nombre:
 
 
 class ExportarRequest(BaseModel):
-    usuario_nombre: Optional[str] = "Administrador"
-    usuario_correo: Optional[str] = ""
-    es_historial_completo: Optional[bool] = False
+    usuario_nombre: str = "Administrador"
+    usuario_correo: str = "admin@universidadlatino.edu.mx"
+    es_historial_completo: bool = False
+    filtros_aplicados: dict = {}
+    registros: list = []
     licenciatura: Optional[str] = None
     semestre: Optional[str] = None
     asignatura: Optional[str] = None
+    filtros_bitacora: Optional[dict] = None
     filtros_aplicados: Optional[dict] = {}
     registros: list[dict] = []
+    formato: Optional[str] = "excel"
 
 class EnviarReporteEmailRequest(BaseModel):
     usuario_nombre: Optional[str] = "Administrador"
@@ -4671,6 +4939,165 @@ def obtener_filtros_disponibles_historial():
         connection.close()
 
 
+
+def _consultar_bitacora_para_exportacion(filtros: dict) -> list[dict]:
+    fecha_inicio = filtros.get('fecha_inicio') if filtros else None
+    fecha_fin = filtros.get('fecha_fin') if filtros else None
+    modulo = filtros.get('modulo') if filtros else None
+    usuario = filtros.get('usuario') if filtros else None
+
+    connection = get_db_connection()
+    try:
+        query = "SELECT * FROM bitacora_cambios WHERE 1=1"
+        params = []
+        if fecha_inicio:
+            query += " AND DATE(fecha_cambio) >= %s"
+            params.append(fecha_inicio)
+        if fecha_fin:
+            query += " AND DATE(fecha_cambio) <= %s"
+            params.append(fecha_fin)
+        if modulo and modulo.lower() != "todos":
+            query += " AND modulo_afectado = %s"
+            params.append(modulo.lower())
+        if usuario and usuario.lower() != "todos":
+            query += " AND usuario = %s"
+            params.append(usuario)
+            
+        query += " ORDER BY fecha_cambio DESC LIMIT 1000"
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            registros = cursor.fetchall()
+        for r in (registros or []):
+            if r.get('fecha_cambio'):
+                r['fecha_cambio'] = r['fecha_cambio'].strftime("%Y-%m-%d %H:%M:%S")
+        return registros if registros else []
+    except Exception as e:
+        print(f"Error consultando bitacora para exportacion: {e}")
+        return []
+    finally:
+        connection.close()
+
+def _generar_pdf_bitacora(registros: list[dict], filtros: dict, usuario_nombre: str) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), leftMargin=36, rightMargin=36, topMargin=54, bottomMargin=54)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('DocTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=15, leading=18, textColor=colors.HexColor('#1c355e'))
+    sub_style = ParagraphStyle('SubTitle', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=11, textColor=colors.HexColor('#75777f'))
+    cell_head_style = ParagraphStyle('CellHead', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.white, alignment=1)
+    cell_text_style = ParagraphStyle('CellText', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#1b1c1e'))
+
+    story = []
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    story.append(Paragraph("<b>UNIVERSIDAD LATINO — BITÁCORA DE CAMBIOS DEL SISTEMA</b>", title_style))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(f"Generado por: <b>{usuario_nombre}</b> | Fecha y Hora: <b>{ahora_str}</b> | Total Registros: <b>{len(registros)}</b>", sub_style))
+    story.append(Spacer(1, 6))
+
+    if filtros:
+        filtros_str_list = [f"<b>{k}:</b> {v}" for k, v in filtros.items() if v]
+        if filtros_str_list:
+            filtros_text = " | ".join(filtros_str_list)
+            filtros_style = ParagraphStyle('FiltrosText', parent=sub_style, fontSize=8, leading=10, textColor=colors.HexColor('#1c355e'))
+            story.append(Paragraph(f"<b>Filtros Activos:</b> {filtros_text}", filtros_style))
+            story.append(Spacer(1, 8))
+
+    col_widths = [90, 80, 80, 70, 80, 220, 100]
+    table_data = [[
+        Paragraph("Fecha", cell_head_style),
+        Paragraph("Usuario", cell_head_style),
+        Paragraph("Módulo", cell_head_style),
+        Paragraph("Acción", cell_head_style),
+        Paragraph("Entidad", cell_head_style),
+        Paragraph("Detalles", cell_head_style),
+        Paragraph("IP", cell_head_style),
+    ]]
+
+    for r in registros:
+        det_txt = str(r.get('detalles_json') or '')
+        if len(det_txt) > 200: det_txt = det_txt[:197] + "..."
+        row = [
+            Paragraph(str(r.get('fecha_cambio') or '—'), cell_text_style),
+            Paragraph(str(r.get('usuario') or '—'), cell_text_style),
+            Paragraph(str(r.get('modulo_afectado') or '—').capitalize(), cell_text_style),
+            Paragraph(str(r.get('accion') or '—'), cell_text_style),
+            Paragraph(f"{r.get('entidad_tipo') or ''} {r.get('entidad_id') or ''}", cell_text_style),
+            Paragraph(det_txt, cell_text_style),
+            Paragraph(str(r.get('ip_address') or '—'), cell_text_style),
+        ]
+        table_data.append(row)
+
+    t = Table(table_data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1c355e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e8')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+    ]))
+    story.append(t)
+    doc.build(story, canvasmaker=NumberedCanvas)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def _generar_excel_bitacora(registros: list[dict], filtros: dict, usuario_nombre: str) -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Bitácora"
+
+    header_fill = PatternFill(start_color="1C355E", end_color="1C355E", fill_type="solid")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    title_font = Font(name="Calibri", size=14, bold=True, color="1C355E")
+    meta_font = Font(name="Calibri", size=9, italic=True, color="555555")
+    cell_font = Font(name="Calibri", size=10)
+    thin_border = Border(left=Side(style='thin', color='E0E0E8'), right=Side(style='thin', color='E0E0E8'), top=Side(style='thin', color='E0E0E8'), bottom=Side(style='thin', color='E0E0E8'))
+
+    ws.cell(row=1, column=1, value="UNIVERSIDAD LATINO — BITÁCORA DE CAMBIOS DEL SISTEMA").font = title_font
+    ws.cell(row=2, column=1, value=f"Generado por: {usuario_nombre} | Fecha y hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Total registros: {len(registros)}").font = meta_font
+
+    row_offset = 4
+    if filtros:
+        filtros_str = ", ".join([f"{k}: {v}" for k, v in filtros.items() if v])
+        if filtros_str:
+            ws.cell(row=3, column=1, value=f"Filtros aplicados: {filtros_str}").font = meta_font
+            row_offset = 5
+
+    headers = ["Fecha", "Usuario", "Módulo", "Acción", "Entidad Tipo", "Entidad ID", "Detalles", "IP"]
+    for col_num, h in enumerate(headers, 1):
+        c = ws.cell(row=row_offset, column=col_num, value=h)
+        c.fill = header_fill
+        c.font = header_font
+        c.border = thin_border
+        
+    for i, r in enumerate(registros):
+        row_num = row_offset + 1 + i
+        vals = [
+            str(r.get('fecha_cambio') or '—'),
+            str(r.get('usuario') or '—'),
+            str(r.get('modulo_afectado') or '—').capitalize(),
+            str(r.get('accion') or '—'),
+            str(r.get('entidad_tipo') or '—'),
+            str(r.get('entidad_id') or '—'),
+            str(r.get('detalles_json') or '—'),
+            str(r.get('ip_address') or '—')
+        ]
+        for col_num, val in enumerate(vals, 1):
+            c = ws.cell(row=row_num, column=col_num, value=val)
+            c.font = cell_font
+            c.border = thin_border
+            
+    col_w = [20, 20, 15, 15, 15, 10, 40, 15]
+    for i, cw in enumerate(col_w, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = cw
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
 def _consultar_historial_para_exportacion(licenciatura: Optional[str] = None, semestre: Optional[str] = None, asignatura: Optional[str] = None):
     _evaluar_y_cerrar_clases_vencidas()
     query = "SELECT * FROM clases_historico WHERE 1=1"
@@ -4722,8 +5149,13 @@ def _consultar_historial_para_exportacion(licenciatura: Optional[str] = None, se
 @app.post("/api/exportar/pdf")
 def exportar_pdf(req: ExportarRequest):
     try:
-        registros_data = _consultar_historial_para_exportacion(req.licenciatura, req.semestre, req.asignatura) if req.es_historial_completo else req.registros
-        pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        if req.es_historial_completo:
+            registros_data = _consultar_bitacora_para_exportacion(req.filtros_bitacora)
+            pdf_bytes = _generar_pdf_bitacora(registros_data, req.filtros_aplicados, req.usuario_nombre)
+        else:
+            registros_data = req.registros
+            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, False)
+        
         _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "PDF", req.es_historial_completo, req.filtros_aplicados, len(registros_data))
         
         fecha_str = datetime.now().strftime("%Y-%m-%d")
@@ -4740,19 +5172,244 @@ def exportar_pdf(req: ExportarRequest):
 @app.post("/api/exportar/excel")
 def exportar_excel(req: ExportarRequest):
     try:
-        registros_data = _consultar_historial_para_exportacion(req.licenciatura, req.semestre, req.asignatura) if req.es_historial_completo else req.registros
-        xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
+        if req.es_historial_completo:
+            registros_data = _consultar_bitacora_para_exportacion(req.filtros_bitacora)
+            excel_bytes = _generar_excel_bitacora(registros_data, req.filtros_aplicados, req.usuario_nombre)
+        else:
+            registros_data = req.registros
+            excel_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, False)
+
         _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "Excel", req.es_historial_completo, req.filtros_aplicados, len(registros_data))
-        
+
         fecha_str = datetime.now().strftime("%Y-%m-%d")
         filename = f"Bitacora_Eventos_{fecha_str}.xlsx" if req.es_historial_completo else f"Dashboard_Clases_{fecha_str}.xlsx"
         return Response(
-            content=xlsx_bytes,
+            content=excel_bytes,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al generar Excel: {str(e)}")
+
+
+def _generar_excel_docentes(registros: list[dict], filtros_str: str, usuario_nombre: str) -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Directorio de Docentes"
+
+    header_fill = PatternFill(start_color="1C355E", end_color="1C355E", fill_type="solid")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    title_font = Font(name="Calibri", size=14, bold=True, color="1C355E")
+    meta_font = Font(name="Calibri", size=9, italic=True, color="555555")
+    cell_font = Font(name="Calibri", size=10)
+    thin_border = Border(
+        left=Side(style='thin', color='E0E0E8'),
+        right=Side(style='thin', color='E0E0E8'),
+        top=Side(style='thin', color='E0E0E8'),
+        bottom=Side(style='thin', color='E0E0E8')
+    )
+    zebra_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+
+    ws.cell(row=1, column=1, value="UNIVERSIDAD LATINO — DIRECTORIO DE DOCENTES Y ESTADO ACTUAL").font = title_font
+    
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws.cell(row=2, column=1, value=f"Generado por: {usuario_nombre} | Fecha y hora: {ahora_str} | Total registros: {len(registros)}").font = meta_font
+
+    row_offset = 4
+    if filtros_str:
+        ws.cell(row=3, column=1, value=f"Filtros aplicados: {filtros_str}").font = meta_font
+        row_offset = 5
+
+    headers = ["Docente", "Estado Actual", "Licenciaturas", "Asignaturas"]
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=row_offset, column=col_num, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+
+    col_widths = {"A": 40, "B": 25, "C": 50, "D": 60}
+    for col_letter, width in col_widths.items():
+        ws.column_dimensions[col_letter].width = width
+
+    for i, r in enumerate(registros, start=1):
+        row_num = row_offset + i
+        ws.cell(row=row_num, column=1, value=r.get('nombre', '')).font = cell_font
+        ws.cell(row=row_num, column=2, value=r.get('estado', '')).font = cell_font
+        ws.cell(row=row_num, column=3, value=r.get('licenciaturas', '')).font = cell_font
+        ws.cell(row=row_num, column=4, value=r.get('asignaturas', '')).font = cell_font
+
+        for col_num in range(1, len(headers) + 1):
+            c = ws.cell(row=row_num, column=col_num)
+            c.border = thin_border
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+            if i % 2 == 0:
+                c.fill = zebra_fill
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+@app.post("/api/exportar/docentes-excel")
+def exportar_docentes_excel(req: ExportarRequest):
+    try:
+        filtros_str = ""
+        if req.filtros_aplicados and isinstance(req.filtros_aplicados, dict):
+            filtros_str = ", ".join([f"{k}: {v}" for k, v in req.filtros_aplicados.items() if v])
+        elif req.filtros_aplicados:
+            filtros_str = str(req.filtros_aplicados)
+
+        fecha_str = datetime.now().strftime("%Y-%m-%d")
+        formato = req.formato or "excel"
+
+        if formato == 'pdf':
+            pdf_bytes = _generar_pdf_docentes(req.registros, filtros_str, req.usuario_nombre or "Administrador")
+            filename = f"Directorio_Docentes_{fecha_str}.pdf"
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+
+        excel_bytes = _generar_excel_docentes(req.registros, filtros_str, req.usuario_nombre or "Administrador")
+        filename = f"Directorio_Docentes_{fecha_str}.xlsx"
+        return Response(
+            content=excel_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar reporte: {str(e)}")
+
+
+def _generar_pdf_docentes(registros: list[dict], filtros_str: str, usuario_nombre: str) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), topMargin=60, bottomMargin=40)
+    styles = getSampleStyleSheet()
+    story = []
+
+    title_style = ParagraphStyle('TitleDoc', parent=styles['Title'], fontSize=14, textColor=colors.HexColor('#1c355e'), spaceAfter=6)
+    sub_style = ParagraphStyle('SubDoc', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#555555'), spaceAfter=4)
+    cell_head_style = ParagraphStyle('CellHeadDoc', parent=styles['Normal'], fontSize=8, textColor=colors.white, fontName='Helvetica-Bold')
+    cell_text_style = ParagraphStyle('CellTextDoc', parent=styles['Normal'], fontSize=8, leading=10)
+
+    story.append(Paragraph("UNIVERSIDAD LATINO — DIRECTORIO DE DOCENTES", title_style))
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    story.append(Paragraph(f"Generado por: {usuario_nombre} | {ahora_str} | Total: {len(registros)} docentes", sub_style))
+    if filtros_str:
+        story.append(Paragraph(f"<b>Filtros:</b> {filtros_str}", sub_style))
+    story.append(Spacer(1, 12))
+
+    col_widths = [200, 100, 200, 250]
+    table_data = [[
+        Paragraph("Docente", cell_head_style),
+        Paragraph("Estado", cell_head_style),
+        Paragraph("Licenciaturas", cell_head_style),
+        Paragraph("Asignaturas", cell_head_style),
+    ]]
+
+    for r in registros:
+        row = [
+            Paragraph(str(r.get('nombre', '—')), cell_text_style),
+            Paragraph(str(r.get('estado', '—')), cell_text_style),
+            Paragraph(str(r.get('licenciaturas', '—')), cell_text_style),
+            Paragraph(str(r.get('asignaturas', '—')), cell_text_style),
+        ]
+        table_data.append(row)
+
+    t = Table(table_data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1c355e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e8')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+    ]))
+    story.append(t)
+    doc.build(story, canvasmaker=NumberedCanvas)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+class ExportarDocentesEmailRequest(BaseModel):
+    usuario_nombre: str = "Administrador"
+    usuario_correo: str = "admin@universidadlatino.edu.mx"
+    destinatarios: str
+    cc: Optional[str] = ""
+    cco: Optional[str] = ""
+    asunto: Optional[str] = "Reporte de Docentes — ULA"
+    mensaje: Optional[str] = ""
+    adjuntar_pdf: Optional[bool] = True
+    adjuntar_excel: Optional[bool] = False
+    filtros_aplicados: Optional[dict] = {}
+    registros: list[dict] = []
+
+
+@app.post("/api/exportar/docentes-email")
+def exportar_docentes_email(req: ExportarDocentesEmailRequest):
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.base import MIMEBase
+    from email import encoders
+
+    try:
+        filtros_str = ""
+        if req.filtros_aplicados and isinstance(req.filtros_aplicados, dict):
+            filtros_str = ", ".join([f"{k}: {v}" for k, v in req.filtros_aplicados.items() if v])
+
+        fecha_str = datetime.now().strftime("%Y-%m-%d")
+
+        msg = MIMEMultipart()
+        msg['From'] = os.getenv("SMTP_FROM", req.usuario_correo)
+        msg['To'] = req.destinatarios
+        if req.cc:
+            msg['Cc'] = req.cc
+        msg['Subject'] = req.asunto or f"Directorio de Docentes — {fecha_str}"
+        body = req.mensaje or f"Se adjunta el reporte del directorio de docentes generado el {fecha_str}."
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        if req.adjuntar_pdf:
+            pdf_bytes = _generar_pdf_docentes(req.registros, filtros_str, req.usuario_nombre)
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(pdf_bytes)
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="Directorio_Docentes_{fecha_str}.pdf"')
+            msg.attach(part)
+
+        if req.adjuntar_excel:
+            excel_bytes = _generar_excel_docentes(req.registros, filtros_str, req.usuario_nombre)
+            part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            part.set_payload(excel_bytes)
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="Directorio_Docentes_{fecha_str}.xlsx"')
+            msg.attach(part)
+
+        smtp_server = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_user = os.getenv("SMTP_USER", "")
+        smtp_pass = os.getenv("SMTP_PASS", "")
+
+        all_recipients = [e.strip() for e in req.destinatarios.split(',') if e.strip()]
+        if req.cc:
+            all_recipients += [e.strip() for e in req.cc.split(',') if e.strip()]
+        if req.cco:
+            all_recipients += [e.strip() for e in req.cco.split(',') if e.strip()]
+
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            if smtp_user and smtp_pass:
+                server.login(smtp_user, smtp_pass)
+            server.sendmail(msg['From'], all_recipients, msg.as_string())
+
+        return {"message": "Correo enviado exitosamente", "destinatarios": len(all_recipients)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
 
 
 REPORTES_COMPARTIDOS_CACHE = {}
@@ -5161,6 +5818,7 @@ def _evaluar_y_cerrar_clases_vencidas():
         connection.close()
 
 
+
 @app.get("/api/clases-historico")
 def obtener_clases_historico(
     rango_fecha: Optional[str] = "esta_semana",
@@ -5253,3 +5911,59 @@ def obtener_clases_historico(
     finally:
         connection.close()
 
+@app.get("/api/bitacora")
+def obtener_bitacora(
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None,
+    modulo: Optional[str] = None,
+    usuario: Optional[str] = None
+):
+    connection = get_db_connection()
+    try:
+        query = "SELECT * FROM bitacora_cambios WHERE 1=1"
+        params = []
+        if fecha_inicio:
+            query += " AND DATE(fecha_cambio) >= %s"
+            params.append(fecha_inicio)
+        if fecha_fin:
+            query += " AND DATE(fecha_cambio) <= %s"
+            params.append(fecha_fin)
+        if modulo and modulo.lower() != "todos":
+            query += " AND modulo_afectado = %s"
+            params.append(modulo.lower())
+        if usuario and usuario.lower() != "todos":
+            query += " AND usuario = %s"
+            params.append(usuario)
+            
+        query += " ORDER BY fecha_cambio DESC LIMIT 500"
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            registros = cursor.fetchall()
+        for r in (registros or []):
+            if r.get('fecha_cambio'):
+                r['fecha_cambio'] = r['fecha_cambio'].isoformat()
+        return registros if registros else []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener bitacora: {str(e)}")
+    finally:
+        connection.close()
+
+@app.get("/api/bitacora/filtros-disponibles")
+def obtener_filtros_bitacora():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT DISTINCT usuario FROM bitacora_cambios WHERE usuario IS NOT NULL AND usuario != ''")
+            usuarios = [row['usuario'] for row in cursor.fetchall()]
+        return {
+            "usuarios": usuarios,
+            "modulos": ["Aulas", "Docentes", "Horarios", "Suplencias"]
+        }
+    except pymysql.Error:
+        return {"usuarios": [], "modulos": []}
+    finally:
+        connection.close()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

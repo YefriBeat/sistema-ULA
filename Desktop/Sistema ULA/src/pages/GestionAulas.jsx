@@ -37,6 +37,9 @@ export default function GestionAulas() {
   const [motivoLiberacion, setMotivoLiberacion] = useState('Salida anticipada');
   const [guardandoLiberacion, setGuardandoLiberacion] = useState(false);
 
+  // Estado para el modal de horarios de carrera
+  const [modalCarrera, setModalCarrera] = useState(null);
+
   // Estado para el modal de mantenimiento
   const [modalMantAula, setModalMantAula] = useState(null);
   const [formMant, setFormMant] = useState({ en_mantenimiento: false, inicio_mantenimiento: '', fin_mantenimiento: '', aula_temporal: '' });
@@ -413,7 +416,7 @@ export default function GestionAulas() {
 
     // Filtro por Estado
     if (filtroEstado === 'en_curso' && !enClase) return false;
-    if (filtroEstado === 'disponible' && estAula !== 'disponible') return false;
+    if (filtroEstado === 'disponible' && (enMant || enClase)) return false;
 
     return true;
   }).sort((a, b) => {
@@ -427,12 +430,12 @@ export default function GestionAulas() {
   const totalAulas         = aulasNormales.length;
   const capacidadInstalada = aulasNormales.reduce((t, a) => t + (Number(a.capacidad) || 0), 0);
   const aulasEnClaseAhora  = aulasNormales.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
-  const aulasDisponibles   = aulasNormales.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
+  const aulasDisponibles   = aulasNormales.filter(a => !estaEnMantenimiento(a) && !obtenerClaseEnCurso(a.nombre)).length;
   const aulasEnMant        = aulasNormales.filter(a => estaEnMantenimiento(a)).length;
 
   const totalLaboratorios  = laboratorios.length;
   const labsEnUso          = laboratorios.filter(a => !estaEnMantenimiento(a) && !!obtenerClaseEnCurso(a.nombre)).length;
-  const labsDisponibles    = laboratorios.filter(a => !estaEnMantenimiento(a) && obtenerEstadoAula(a.nombre) === 'disponible').length;
+  const labsDisponibles    = laboratorios.filter(a => !estaEnMantenimiento(a) && !obtenerClaseEnCurso(a.nombre)).length;
   const labsEnMant         = laboratorios.filter(a => estaEnMantenimiento(a)).length;
 
   const totalEnMantenimiento = aulasEnMant + labsEnMant;
@@ -776,6 +779,18 @@ export default function GestionAulas() {
             const claseActiva   = !enMant ? obtenerClaseEnCurso(aula.nombre) : null;
             const liberacionManual = liberaciones.find(l => l.aula_nombre === aula.nombre);
             const estadoHorario = enMant ? 'mantenimiento' : obtenerEstadoAula(aula.nombre);
+            const carrerasAula  = (ocupacion[aula.nombre]?.carreras || []);
+
+            // Agrupar carreras por licenciatura para mostrar horarios agrupados
+            const carrerasAgrupadas = {};
+            carrerasAula.forEach(c => {
+              if (!carrerasAgrupadas[c.licenciatura]) {
+                carrerasAgrupadas[c.licenciatura] = [];
+              }
+              carrerasAgrupadas[c.licenciatura].push(c);
+            });
+            const carrerasKeys = Object.keys(carrerasAgrupadas);
+            const tieneCarreras = carrerasKeys.length > 0;
 
             // Prioridad visual: mantenimiento > mant_programado > en_clase > estado por horario
             const BADGE = {
@@ -787,7 +802,7 @@ export default function GestionAulas() {
               vespertino:      { cls: 'bg-indigo-100 text-indigo-700',  icon: 'nights_stay',     label: 'Ocupado: Vespertino' },
               bloqueada:       { cls: 'bg-purple-100 text-purple-700',  icon: 'domain',          label: 'Ocupado: Ambos'     },
             };
-            const badgeKey = enMant ? 'mantenimiento' : mantProg ? 'mant_programado' : claseActiva ? 'en_clase' : estadoHorario;
+            const badgeKey = enMant ? 'mantenimiento' : mantProg ? 'mant_programado' : claseActiva ? 'en_clase' : 'disponible';
             const badge    = BADGE[badgeKey] || BADGE.disponible;
 
             const borderClass = enMant        ? 'border-orange-200'
@@ -908,6 +923,80 @@ export default function GestionAulas() {
                       </button>
                     </div>
                   )}
+
+                  {/* ── Estado de Disponibilidad Actual ── */}
+                  {!enMant && !claseActiva && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-center gap-3">
+                      <span className="material-symbols-outlined text-emerald-500 text-[20px]">check_circle</span>
+                      <div>
+                        <p className="text-[11px] font-black text-emerald-600 uppercase tracking-wide">Disponible</p>
+                        <p className="text-[10px] text-emerald-500 font-medium">El aula se encuentra desocupada en este momento</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Panel de Carreras que ocupan el aula en el día ── */}
+                  {!enMant && tieneCarreras && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-2">
+                        <span className="material-symbols-outlined text-[14px]">school</span>
+                        Carreras asignadas a este espacio hoy
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {carrerasKeys.map((lic) => (
+                          <button
+                            key={lic}
+                            onClick={() => setModalCarrera({ aulaNombre: aula.nombre, licenciatura: lic, horarios: carrerasAgrupadas[lic] })}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase border w-fit hover:scale-105 hover:shadow-sm cursor-pointer transition-all ${obtenerColorLicenciatura(lic)}`}
+                            title={`Ver horarios de ${lic} en ${aula.nombre}`}
+                          >
+                            <span className="material-symbols-outlined text-[14px]">school</span>
+                            {lic}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Estadísticas de Horarios ── */}
+                  {!enMant && tieneCarreras && (
+                    <div className="space-y-1.5 pt-2">
+                      <div className="flex justify-between items-center text-sm">
+                        <div className="flex items-center gap-1.5 text-[#44464e]">
+                          <span className="material-symbols-outlined text-[18px]">list_alt</span>
+                          <span className="font-medium">Horarios</span>
+                        </div>
+                        <span className="font-bold text-[#1c355e]">{carrerasAula.length}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <div className="flex items-center gap-1.5 text-[#44464e]">
+                          <span className="material-symbols-outlined text-[18px]">schedule</span>
+                          <span className="font-medium">Rango horario</span>
+                        </div>
+                        <span className="font-bold text-[#1c355e]">
+                          {(() => {
+                            let min = Infinity;
+                            let max = -Infinity;
+                            carrerasAula.forEach(c => {
+                              const match = c.horario.match(/(\d{1,2}:\d{2}).*?(\d{1,2}:\d{2})/);
+                              if (match) {
+                                const parse = (t) => {
+                                  const [h, m] = t.split(':').map(Number);
+                                  return h * 60 + m;
+                                };
+                                min = Math.min(min, parse(match[1]));
+                                max = Math.max(max, parse(match[2]));
+                              }
+                            });
+                            if (min === Infinity) return '—';
+                            const format = (mins) => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
+                            return `${format(min)} a ${format(max)}`;
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <p className="text-[10px] text-[#44464e] font-bold uppercase">Edificio</p>
                     <p className="text-sm font-medium">{aula.edificio || '—'}</p>
@@ -1108,6 +1197,105 @@ export default function GestionAulas() {
               >
                 <span className="material-symbols-outlined text-[18px]">lock_open</span>
                 {guardandoLiberacion ? 'Liberando...' : 'Liberar Aula'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL HORARIOS DE CARRERA */}
+      {modalCarrera && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-lg space-y-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-[#c5c6cf]/30 pb-3">
+              <div>
+                <h3 className="text-lg font-bold text-[#1c355e] flex items-center gap-2">
+                  <span className="material-symbols-outlined text-blue-600">event_note</span>
+                  Horarios Asignados
+                </h3>
+                <p className="text-xs text-[#75777f] mt-0.5">
+                  Aula: <span className="font-bold text-[#1c355e]">{modalCarrera.aulaNombre}</span>
+                </p>
+              </div>
+              <button onClick={() => setModalCarrera(null)} className="text-[#44464e] hover:text-[#1c355e] p-1 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold uppercase border w-fit shadow-sm ${obtenerColorLicenciatura(modalCarrera.licenciatura)}`}>
+                <span className="material-symbols-outlined text-[16px]">school</span>
+                {modalCarrera.licenciatura}
+              </span>
+
+              {(() => {
+                const diasOrden = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+                const parseTime = (t) => {
+                  const [h, m] = t.split(':').map(Number);
+                  return h * 60 + m;
+                };
+                const formatTime = (mins) => {
+                  const h = Math.floor(mins / 60);
+                  const m = mins % 60;
+                  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+                };
+
+                const horariosPorGrado = {};
+                modalCarrera.horarios.forEach(item => {
+                  const grado = item.grado || 'N/A';
+                  if (!horariosPorGrado[grado]) horariosPorGrado[grado] = {};
+                  
+                  const parts = item.horario.split(' ');
+                  const dia = parts[0];
+                  const timeStr = parts.slice(1).join(' ');
+                  const match = timeStr.match(/(\d{1,2}:\d{2}).*?(\d{1,2}:\d{2})/);
+                  
+                  if (match) {
+                    const t1 = parseTime(match[1]);
+                    const t2 = parseTime(match[2]);
+                    if (!horariosPorGrado[grado][dia]) {
+                      horariosPorGrado[grado][dia] = { min: t1, max: t2 };
+                    } else {
+                      horariosPorGrado[grado][dia].min = Math.min(horariosPorGrado[grado][dia].min, t1);
+                      horariosPorGrado[grado][dia].max = Math.max(horariosPorGrado[grado][dia].max, t2);
+                    }
+                  }
+                });
+
+                return Object.entries(horariosPorGrado).map(([grado, diasMap]) => {
+                  const dias = Object.keys(diasMap).sort((a, b) => diasOrden.indexOf(a) - diasOrden.indexOf(b));
+                  
+                  return (
+                    <div key={grado} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[14px]">stairs</span>
+                        Grado: {grado}
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {dias.map(dia => (
+                          <div key={dia} className="flex flex-col justify-center bg-white border border-slate-200/70 rounded-lg p-2.5 shadow-sm gap-1">
+                            <span className="text-[10px] font-bold text-slate-500 flex items-center gap-1 uppercase tracking-wide">
+                              <span className="material-symbols-outlined text-[14px] text-slate-400">calendar_today</span>
+                              {dia}
+                            </span>
+                            <span className="text-xs font-mono font-bold text-[#1c355e] pl-5">
+                              {formatTime(diasMap[dia].min)} - {formatTime(diasMap[dia].max)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={() => setModalCarrera(null)}
+                className="w-full py-2.5 rounded-xl bg-slate-100 text-[#44464e] text-sm font-bold hover:bg-slate-200 transition-all"
+              >
+                Cerrar
               </button>
             </div>
           </div>
