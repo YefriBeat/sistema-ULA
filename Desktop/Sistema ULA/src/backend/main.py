@@ -412,6 +412,10 @@ UPLOAD_DIR = os.path.join(base_dir, "uploads", "calendarios")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=os.path.join(base_dir, "uploads")), name="uploads")
 
+@app.get("/")
+def read_root():
+    return {"status": "online", "message": "Sistema ULA Backend API is running", "version": "1.0"}
+
 
 import urllib.request
 import urllib.error
