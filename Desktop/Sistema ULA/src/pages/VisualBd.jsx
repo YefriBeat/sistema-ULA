@@ -982,9 +982,9 @@ export default function VisualBd() {
           const esReceso = sem?.estado === 'receso' || !sem?.hay_clases;
           const esExamen = sem?.estado?.includes('ordinario') || sem?.estado?.includes('extraordinario') || sem?.estado?.includes('parcial');
           return (
-            <div className={`px-5 py-4 rounded-3xl border flex items-center justify-between gap-3 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${esReceso ? 'bg-gradient-to-r from-amber-50/80 to-white/60 border-amber-200/60 shadow-amber-100/50' : esExamen ? 'bg-gradient-to-r from-indigo-50/80 to-white/60 border-indigo-200/60 shadow-indigo-100/50' : 'bg-gradient-to-r from-blue-50/80 to-white/60 border-blue-200/50 shadow-blue-100/50'
+            <div className={`px-4 sm:px-5 py-4 rounded-3xl border flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${esReceso ? 'bg-gradient-to-r from-amber-50/80 to-white/60 border-amber-200/60 shadow-amber-100/50' : esExamen ? 'bg-gradient-to-r from-indigo-50/80 to-white/60 border-indigo-200/60 shadow-indigo-100/50' : 'bg-gradient-to-r from-blue-50/80 to-white/60 border-blue-200/50 shadow-blue-100/50'
               } backdrop-blur-sm`}>
-              <div className="flex items-center gap-4 min-w-0">
+              <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 font-black text-xs shadow-sm ${esReceso ? 'bg-amber-100 text-amber-700' : esExamen ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'}`}>
                   SEM
                 </div>
@@ -1011,9 +1011,9 @@ export default function VisualBd() {
           const esReceso = cuat?.estado === 'receso' || !cuat?.hay_clases;
           const esExamen = cuat?.estado?.includes('ordinario') || cuat?.estado?.includes('extraordinario') || cuat?.estado?.includes('parcial');
           return (
-            <div className={`px-5 py-4 rounded-3xl border flex items-center justify-between gap-3 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${esReceso ? 'bg-gradient-to-r from-amber-50/80 to-white/60 border-amber-200/60 shadow-amber-100/50' : esExamen ? 'bg-gradient-to-r from-fuchsia-50/80 to-white/60 border-fuchsia-200/60 shadow-fuchsia-100/50' : 'bg-gradient-to-r from-purple-50/80 to-white/60 border-purple-200/50 shadow-purple-100/50'
+            <div className={`px-4 sm:px-5 py-4 rounded-3xl border flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${esReceso ? 'bg-gradient-to-r from-amber-50/80 to-white/60 border-amber-200/60 shadow-amber-100/50' : esExamen ? 'bg-gradient-to-r from-fuchsia-50/80 to-white/60 border-fuchsia-200/60 shadow-fuchsia-100/50' : 'bg-gradient-to-r from-purple-50/80 to-white/60 border-purple-200/50 shadow-purple-100/50'
               } backdrop-blur-sm`}>
-              <div className="flex items-center gap-4 min-w-0">
+              <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 font-black text-xs shadow-sm ${esReceso ? 'bg-amber-100 text-amber-700' : esExamen ? 'bg-fuchsia-100 text-fuchsia-700' : 'bg-purple-100 text-purple-700'}`}>
                   CUAT
                 </div>
@@ -1123,9 +1123,9 @@ export default function VisualBd() {
                 <span className="material-symbols-outlined text-[18px] text-white">database</span>
               </div>
             </div>
-            <div className="relative z-10">
+            <div className="relative z-10 min-w-0">
               <h3 className="text-4xl lg:text-5xl font-black text-white leading-none drop-shadow-md">{stats.total}</h3>
-              <p className="text-[11px] font-bold text-blue-100 mt-2 opacity-90">{stats.docentesTotales} m. registrados</p>
+              <p className="text-[11px] font-bold text-blue-100 mt-2 opacity-90 truncate">{stats.docentesTotales} m. registrados</p>
             </div>
             <p className="text-[10px] text-white/50 font-bold mt-3 relative z-10">Click para mostrar todo</p>
           </div>

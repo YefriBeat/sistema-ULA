@@ -461,7 +461,7 @@ export default function Layout() {
 
       {/* ESTADO ACADÉMICO MÓVIL — visible solo en pantallas pequeñas */}
       {estadoAcademico && (estadoAcademico.semestral || estadoAcademico.cuatrimestral) && (
-        <div className="fixed top-16 left-0 right-0 z-20 bg-white/95 backdrop-blur-sm border-b border-[#c5c6cf]/20 px-3 py-2 flex items-center justify-center gap-3 sm:hidden shadow-sm">
+        <div className="fixed top-16 left-0 right-0 z-20 bg-white/95 backdrop-blur-sm border-b border-[#c5c6cf]/20 px-3 py-2 flex items-center justify-start sm:justify-center overflow-x-auto gap-3 sm:hidden shadow-sm">
           {estadoAcademico.semestral && (
             <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1 rounded-full border border-slate-200/60">
               <span className="relative flex h-1.5 w-1.5">
