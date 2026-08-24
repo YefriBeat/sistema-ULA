@@ -25,6 +25,7 @@ export default function GestionAulas() {
   const [ocupacion, setOcupacion] = useState({});
   // clases: clases que están en sesión AHORA MISMO
   const [clases, setClases] = useState([]);
+  const [examenesHoy, setExamenesHoy] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState('todos');
@@ -96,9 +97,10 @@ export default function GestionAulas() {
   useEffect(() => {
     const fetchEstado = async () => {
       try {
-        const [resSem, resCuat] = await Promise.all([
+        const [resSem, resCuat, exRes] = await Promise.all([
           fetch(`/api/estado-academico?plan=semestral&fecha=${hoyStr}`),
-          fetch(`/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`)
+          fetch(`/api/estado-academico?plan=cuatrimestral&fecha=${hoyStr}`),
+          fetch(`/api/examenes-hoy`)
         ]);
         if (resSem.ok && resCuat.ok) {
           setEstadoAcademico({
@@ -106,8 +108,12 @@ export default function GestionAulas() {
             cuatrimestral: await resCuat.json()
           });
         }
+        if (exRes.ok) {
+          const exData = await exRes.json();
+          setExamenesHoy(Array.isArray(exData) ? exData : []);
+        }
       } catch (e) {
-        console.error("Error al cargar estado académico:", e);
+        console.error("Error al cargar estado académico o exámenes:", e);
       }
     };
     fetchEstado();
@@ -443,41 +449,52 @@ export default function GestionAulas() {
   // Nombres de aulas disponibles para el dropdown de aula temporal
   const nombresAulas = aulas.map(a => a.nombre).filter(n => n !== modalMantAula?.nombre);
 
+  const hoyD = ahora.getDate().toString().padStart(2, '0');
+  const hoyM = ahora.getMonth() + 1;
+  const hoyA = ahora.getFullYear();
+  const mesesNombres = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const diasSemana = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+  const diaNombre = diasSemana[ahora.getDay()];
+  const fechaTexto = `${hoyD} de ${mesesNombres[hoyM]}`;
+  const fechaDDMMYYYY = `${hoyD}/${String(hoyM).padStart(2, '0')}/${hoyA}`;
+  const fechaISO = `${hoyA}-${String(hoyM).padStart(2, '0')}-${hoyD}`;
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 font-manrope p-4">
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-[#1c355e] tracking-tight">Registro Global de Aulas</h1>
-          <p className="text-base text-[#44464e] mt-1.5">Consulte y gestione todos los espacios en tiempo real.</p>
+          <h1 className="text-3xl font-black text-[#1c355e] tracking-tight">Registro Global de Aulas</h1>
+          <p className="text-sm text-[#44464e]/80 mt-1 font-medium">Consulte y gestione todos los espacios en tiempo real.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto bg-white p-2 rounded-2xl shadow-sm border border-[#c5c6cf]/40">
           {/* Buscador Inteligente */}
-          <div className="relative flex-1 sm:w-72">
-            <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-[#75777f] text-[20px]">
+          <div className="relative flex-1 w-full sm:w-64">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[18px]">
               search
             </span>
             <input
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar por nombre o número de aula..."
-              className="w-full pl-10 pr-9 py-2.5 bg-white border border-[#c5c6cf]/40 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#1c355e]/15 focus:border-[#1c355e] text-[#1b1c1e] placeholder:text-[#75777f] font-medium shadow-sm transition-all"
+              placeholder="Buscar aula o laboratorio..."
+              className="w-full pl-9 pr-8 py-2 bg-[#f4f3f6] border-transparent rounded-xl text-sm outline-none focus:bg-white focus:border-[#1c355e]/30 focus:ring-2 focus:ring-[#1c355e]/10 text-[#1b1c1e] placeholder:text-[#75777f] font-semibold transition-all"
             />
             {busqueda && (
               <button
                 onClick={() => setBusqueda('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#75777f] hover:text-[#1c355e]"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#75777f] hover:text-[#1c355e] bg-white rounded-full p-0.5 shadow-sm"
               >
-                <span className="material-symbols-outlined text-[16px]">close</span>
+                <span className="material-symbols-outlined text-[14px]">close</span>
               </button>
             )}
           </div>
+          <div className="h-8 w-px bg-[#c5c6cf]/30 hidden sm:block"></div>
           <button
             onClick={() => setMostrarFormulario(!mostrarFormulario)}
-            className="bg-[#1c355e] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#152a4a] transition-all flex items-center gap-2 flex-shrink-0 shadow-sm"
+            className="w-full sm:w-auto bg-[#1c355e] text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-[#152a4a] transition-all flex items-center justify-center gap-1.5 shadow-sm flex-shrink-0"
           >
-            <span className="material-symbols-outlined text-[20px]">add_circle</span> Nueva Aula
+            <span className="material-symbols-outlined text-[18px]">add_circle</span> Nueva Aula
           </button>
         </div>
       </div>
@@ -723,9 +740,9 @@ export default function GestionAulas() {
 
 
       {/* FILTROS ELEGANTES DE ESPACIOS Y ESTADOS */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-[#c5c6cf]/30 shadow-sm">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-[#c5c6cf]/40 shadow-sm">
         {/* Tabs Principales por Tipo de Espacio */}
-        <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto">
+        <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto w-full sm:w-auto">
           {[
             { id: 'todos',        label: 'Todos los Espacios', icon: 'grid_view' },
             { id: 'aulas',        label: 'Aulas',             icon: 'meeting_room' },
@@ -748,12 +765,14 @@ export default function GestionAulas() {
         </div>
 
         {/* Filtro por Estado (Ocupación) */}
-        <div className="flex items-center gap-2 px-2 pb-1 sm:pb-0">
-          <span className="material-symbols-outlined text-[#75777f] text-[18px]">filter_alt</span>
+        <div className="flex items-center gap-2 px-2 pb-1 sm:pb-0 w-full sm:w-auto">
+          <span className="text-sm font-bold text-slate-600 flex items-center gap-1">
+            <span className="material-symbols-outlined text-[18px]">filter_list</span> Filtros:
+          </span>
           <select
             value={filtroEstado}
             onChange={(e) => setFiltroEstado(e.target.value)}
-            className="bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl py-2 px-3 text-xs outline-none focus:ring-2 focus:ring-[#1c355e]/15 text-[#1b1c1e] font-bold cursor-pointer transition-all"
+            className="flex-1 sm:flex-none bg-slate-50 border border-slate-200 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-[#1c355e] cursor-pointer"
           >
             <option value="todos">Todos los Estados</option>
             <option value="en_curso">▶ Solo En Curso / En Uso</option>
@@ -811,6 +830,30 @@ export default function GestionAulas() {
                               : estadoHorario === 'bloqueada' ? 'border-red-200'
                               : 'border-[#c5c6cf]/30';
 
+            const norm = (s) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            const asignaturasEnAula = new Set(carrerasAula.map(c => norm(c.asignatura)).filter(Boolean));
+            if (claseActiva?.asignatura) {
+              asignaturasEnAula.add(norm(claseActiva.asignatura));
+            }
+            const asignaturasArr = Array.from(asignaturasEnAula);
+
+            const examenesEnAula = examenesHoy.filter(ex => {
+              const fLow = (ex.fecha || '').trim().toLowerCase();
+              const dLow = (ex.dia || '').trim().toLowerCase();
+              const esHoy = fLow === fechaTexto
+                         || fLow === fechaDDMMYYYY.toLowerCase()
+                         || fLow === fechaISO.toLowerCase()
+                         || (fLow === '' && dLow === diaNombre);
+              if (!esHoy) return false;
+
+              let matReal = ex.materia;
+              try { matReal = decodeURIComponent(escape(ex.materia)); } catch (e) { }
+              const matNorm = norm(matReal);
+              if (!matNorm || matNorm.length < 3) return false;
+
+              return asignaturasArr.some(asigNorm => asigNorm.includes(matNorm) || matNorm.includes(asigNorm));
+            });
+
             return (
               <div key={aula.id} className={`bg-white border rounded-2xl p-6 shadow-sm transition-all ${borderClass}`}>
                 <div className="flex justify-between items-start mb-4">
@@ -854,6 +897,20 @@ export default function GestionAulas() {
                 </div>
 
                 <div className="space-y-3">
+                  {/* Tarjetas de exámenes si hay exámenes hoy en esta aula */}
+                  {examenesEnAula.length > 0 && (
+                    <div className="space-y-1 mb-3">
+                      {examenesEnAula.map((ex, i) => (
+                        <div key={i} className="flex flex-col gap-0.5 px-2.5 py-1.5 bg-purple-50 border border-purple-200 rounded-lg shadow-sm">
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-purple-700 uppercase tracking-wide">
+                            <span className="material-symbols-outlined text-[12px]">assignment_late</span>
+                            Examen {ex.periodo}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Panel docente en tiempo real — solo visible cuando hay clase activa */}
                   {claseActiva && (
                     <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 space-y-1.5">
@@ -1024,11 +1081,11 @@ export default function GestionAulas() {
         </div>
 
         {/* ── ESTADÍSTICAS (COSTADO DERECHO INTERACTIVO) ─────────────────────── */}
-        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-24 self-start">
+        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-3 xl:sticky xl:top-24 self-start xl:max-h-[calc(100vh-8rem)] overflow-y-auto pr-1 pb-4">
           {/* Total de Aulas */}
           <div
             onClick={() => { setFiltroTipo(filtroTipo === 'aulas' ? 'todos' : 'aulas'); setFiltroEstado('todos'); }}
-            className={`bg-[#1c355e] text-white p-5 rounded-2xl shadow-md cursor-pointer transition-all hover:scale-[1.02] ${
+            className={`bg-[#1c355e] text-white p-4 rounded-2xl shadow-md cursor-pointer transition-all hover:scale-[1.02] ${
               filtroTipo === 'aulas' && filtroEstado === 'todos' ? 'ring-4 ring-[#1c355e]/40 shadow-xl' : ''
             }`}
             title="Haz clic para ver todas las Aulas"
@@ -1043,7 +1100,7 @@ export default function GestionAulas() {
           {/* Aulas en Clase */}
           <div
             onClick={() => { setFiltroTipo('aulas'); setFiltroEstado(filtroEstado === 'en_curso' ? 'todos' : 'en_curso'); }}
-            className={`bg-white border p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
+            className={`bg-white border p-4 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
               filtroTipo === 'aulas' && filtroEstado === 'en_curso' ? 'border-blue-500 ring-4 ring-blue-100 shadow-md' : 'border-[#c5c6cf]/30'
             }`}
             title="Haz clic para ver las Aulas en clase ahora"
@@ -1062,7 +1119,7 @@ export default function GestionAulas() {
           {/* Total Laboratorios */}
           <div
             onClick={() => { setFiltroTipo(filtroTipo === 'laboratorios' ? 'todos' : 'laboratorios'); setFiltroEstado('todos'); }}
-            className={`bg-[#1c9c72] text-white p-5 rounded-2xl shadow-md cursor-pointer transition-all hover:scale-[1.02] ${
+            className={`bg-[#1c9c72] text-white p-4 rounded-2xl shadow-md cursor-pointer transition-all hover:scale-[1.02] ${
               filtroTipo === 'laboratorios' && filtroEstado === 'todos' ? 'ring-4 ring-[#1c9c72]/40 shadow-xl' : ''
             }`}
             title="Haz clic para ver todos los Laboratorios"
@@ -1077,7 +1134,7 @@ export default function GestionAulas() {
           {/* Laboratorios en Uso */}
           <div
             onClick={() => { setFiltroTipo('laboratorios'); setFiltroEstado(filtroEstado === 'en_curso' ? 'todos' : 'en_curso'); }}
-            className={`bg-white border p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
+            className={`bg-white border p-4 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
               filtroTipo === 'laboratorios' && filtroEstado === 'en_curso' ? 'border-[#1c9c72] ring-4 ring-teal-100 shadow-md' : 'border-[#1c9c72]/30'
             }`}
             title="Haz clic para ver los Laboratorios en uso ahora"
@@ -1096,7 +1153,7 @@ export default function GestionAulas() {
           {/* Espacios en Mantenimiento */}
           <div
             onClick={() => { setFiltroTipo(filtroTipo === 'mantenimiento' ? 'todos' : 'mantenimiento'); setFiltroEstado('todos'); }}
-            className={`bg-white border p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
+            className={`bg-white border p-4 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02] ${
               filtroTipo === 'mantenimiento' ? 'border-orange-500 ring-4 ring-orange-100 shadow-md' : 'border-orange-200'
             }`}
             title="Haz clic para ver los espacios en mantenimiento"
@@ -1111,7 +1168,7 @@ export default function GestionAulas() {
           {/* Capacidad Total (Aulas) */}
           <div
             onClick={() => setFiltro('aulas')}
-            className="bg-white border border-[#c5c6cf]/30 p-5 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02]"
+            className="bg-white border border-[#c5c6cf]/30 p-4 rounded-2xl shadow-sm flex flex-col items-center xl:items-start text-center xl:text-left cursor-pointer transition-all hover:scale-[1.02]"
             title="Haz clic para filtrar las Aulas"
           >
             <p className="text-xs font-bold uppercase text-[#44464e]">Capacidad Total (Aulas)</p>

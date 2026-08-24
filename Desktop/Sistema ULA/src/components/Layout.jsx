@@ -506,8 +506,12 @@ export default function Layout() {
 
           <div className="px-6 py-10 w-full flex flex-col items-center justify-center">
             <div className="relative flex flex-col items-center group cursor-default">
-              <div className="absolute inset-0 bg-[#fdbb11]/20 blur-[35px] rounded-full w-24 h-24 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -z-10 group-hover:bg-[#fdbb11]/30 transition-all duration-500"></div>
-              <img src={logo} alt="Universidad Latino Logo" className="w-28 h-auto object-contain drop-shadow-2xl mb-5 relative z-10 group-hover:scale-105 transition-transform duration-500" />
+              {/* Efecto de resplandor sutil que se adapta a la forma del logo, sin ser un círculo gigante */}
+              <img 
+                src={logo} 
+                alt="Universidad Latino Logo" 
+                className="w-28 h-auto object-contain drop-shadow-[0_0_8px_rgba(255,255,255,0.7)] group-hover:drop-shadow-[0_0_15px_rgba(253,187,17,0.8)] mb-5 relative z-10 group-hover:scale-105 transition-all duration-500" 
+              />
               <p className="text-transparent bg-clip-text bg-gradient-to-r from-white to-[#fdbb11] text-[12px] uppercase tracking-[0.3em] font-black text-center drop-shadow-sm">SIPREF</p>
             </div>
           </div>
@@ -549,7 +553,7 @@ export default function Layout() {
         </aside>
 
         {/* CONTENIDO PRINCIPAL - RESPONSIVO MÓVIL / TABLET / COMPUTADORA */}
-        <main className="flex-1 lg:ml-64 p-3 sm:p-6 lg:p-8 w-full max-w-full min-w-0 overflow-x-clip transition-all duration-300">
+        <main className="flex-1 lg:ml-64 p-3 sm:p-6 lg:p-8 w-full max-w-full min-w-0 transition-all duration-300">
           <Outlet />
         </main>
       </div>

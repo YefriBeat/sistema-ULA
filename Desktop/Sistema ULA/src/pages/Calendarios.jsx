@@ -417,21 +417,27 @@ export default function Calendarios() {
       {/* Input oculto para subir archivos */}
       <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="application/pdf" className="hidden" />
 
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black text-[#1c355e] capitalize">Calendarios Académicos</h1>
-          <p className="text-sm text-slate-500 font-medium">Gestión de calendarios generales y fechas de exámenes</p>
+          <h1 className="text-3xl font-black text-[#1c355e] tracking-tight">Calendarios Académicos</h1>
+          <p className="text-sm text-[#44464e]/80 mt-1 font-medium">Gestión de calendarios generales y fechas de exámenes</p>
         </div>
 
         {/* ── SELECTOR DE CICLO ESCOLAR ── */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-white rounded-xl border border-[#c5c6cf]/30 shadow-sm px-4 py-2.5">
-            <span className="material-symbols-outlined text-[20px] text-[#1c355e]">date_range</span>
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto bg-white p-2 rounded-2xl shadow-sm border border-[#c5c6cf]/40">
+          {cicloSeleccionado !== cicloActual && (
+            <span className="hidden sm:flex text-[10px] font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 items-center gap-1">
+              <span className="material-symbols-outlined text-[12px]">info</span>
+              Ciclo futuro
+            </span>
+          )}
+          <div className="flex flex-1 items-center gap-2 bg-[#f4f3f6] rounded-xl px-4 py-2 w-full sm:w-64">
+            <span className="material-symbols-outlined text-[18px] text-[#75777f]">date_range</span>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider hidden sm:block">Ciclo:</label>
             <select
               value={cicloSeleccionado}
               onChange={(e) => setCicloSeleccionado(e.target.value)}
-              className="bg-transparent text-[#1c355e] font-black text-sm outline-none cursor-pointer pr-2"
+              className="bg-transparent text-[#1c355e] font-bold text-sm outline-none cursor-pointer flex-1 w-full"
             >
               {ciclosDisponibles.map(c => (
                 <option key={c} value={c}>
@@ -440,33 +446,39 @@ export default function Calendarios() {
               ))}
             </select>
           </div>
-          
+          <div className="h-8 w-px bg-[#c5c6cf]/30 hidden sm:block"></div>
           <button 
             onClick={handleDeleteCiclo}
-            className="flex items-center justify-center w-10 h-10 rounded-xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors shadow-sm border border-red-100"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white rounded-xl text-sm font-bold transition-all shadow-sm flex-shrink-0"
             title={`Eliminar ciclo ${cicloSeleccionado}`}
           >
-            <span className="material-symbols-outlined text-[20px]">delete</span>
+            <span className="material-symbols-outlined text-[18px]">delete</span>
+            <span className="sm:hidden">Eliminar Ciclo</span>
           </button>
-
-          {cicloSeleccionado !== cicloActual && (
-            <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 flex items-center gap-1">
-              <span className="material-symbols-outlined text-[12px]">info</span>
-              Ciclo futuro
-            </span>
-          )}
         </div>
       </div>
 
-      <div className="flex gap-6 border-b border-[#c5c6cf]/30">
-        <button onClick={() => setTabActual('generales')}
-          className={`pb-3 text-sm font-bold transition-all border-b-[3px] ${tabActual === 'generales' ? 'border-[#fdbb11] text-[#1c355e]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
-          Calendarios Generales
-        </button>
-        <button onClick={() => setTabActual('examenes')}
-          className={`pb-3 text-sm font-bold transition-all border-b-[3px] ${tabActual === 'examenes' ? 'border-[#fdbb11] text-[#1c355e]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
-          Calendarios de Exámenes
-        </button>
+      {/* ── TABS NAVEGACIÓN ── */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-[#c5c6cf]/40 shadow-sm">
+        <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto w-full sm:w-auto">
+          {[
+            { id: 'generales', label: 'Calendarios Generales', icon: 'event' },
+            { id: 'examenes',  label: 'Calendarios de Exámenes', icon: 'assignment' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setTabActual(tab.id)}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                tabActual === tab.id
+                  ? 'bg-white text-[#1c355e] shadow-sm'
+                  : 'text-[#75777f] hover:text-[#1c355e]'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="pt-2">
@@ -478,7 +490,7 @@ export default function Calendarios() {
           <div className="flex flex-col lg:flex-row gap-6">
             
             {/* Columna izquierda: Tarjetas de control */}
-            <div className="flex flex-col gap-6 w-full lg:w-1/3">
+            <div className="flex flex-col gap-6 w-full lg:w-1/3 lg:sticky lg:top-6 self-start">
               {/* Calendario Institucional (Cuatrimestral y Semestral) */}
             <div className={`bg-white rounded-2xl shadow-sm border ${getCal('general') ? 'border-emerald-200' : 'border-[#c5c6cf]/30'} p-6 flex flex-col transition-colors`}>
               <div className="flex items-center gap-4 mb-5">

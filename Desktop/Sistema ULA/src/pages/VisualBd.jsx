@@ -1036,7 +1036,7 @@ export default function VisualBd() {
       </div>
 
       {/* ══ MÉTRICAS + DONUT ════════════════════════════════════════════════════ */}
-      <div className="flex flex-col lg:flex-row gap-5 items-stretch sticky top-[72px] z-30 bg-[#faf9fc]/80 backdrop-blur-xl pt-4 pb-3 border-b border-[#c5c6cf]/20 shadow-[0_10px_30px_rgb(0,0,0,0.02)]">
+      <div className="flex flex-col lg:flex-row gap-5 items-stretch mb-8">
 
         {/* 4 tarjetas de estadísticas */}
         <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4">

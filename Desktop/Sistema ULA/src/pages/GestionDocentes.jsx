@@ -841,31 +841,40 @@ export default function GestionDocentes() {
     <div className="max-w-7xl mx-auto space-y-8 font-manrope p-4">
 
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-[#1c355e] tracking-tight">Gestión de Docentes</h1>
-          <p className="text-base text-[#44464e] mt-1.5">
+          <h1 className="text-3xl font-black text-[#1c355e] tracking-tight">Gestión de Docentes</h1>
+          <p className="text-sm text-[#44464e]/80 mt-1 font-medium">
             Directorio en tiempo real — actualizado a las <span className="font-bold text-[#1c355e]">{horaActual}</span>
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => { setMostrarCentroExportacion(true); dragExport.resetPos(); }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-[#1c355e] text-white hover:bg-[#162c50] rounded-xl text-sm font-bold transition-all shadow-sm cursor-pointer"
-            title="Abrir centro de exportación: PDF, Excel, Imprimir, Correo"
-          >
-            <span className="material-symbols-outlined text-[18px]">download</span>
-            <span className="hidden sm:inline">Exportar</span>
-          </button>
-          <div className="relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[20px]">search</span>
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto bg-white p-2 rounded-2xl shadow-sm border border-[#c5c6cf]/40">
+          <div className="relative flex-1 w-full sm:w-64">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[18px]">search</span>
             <input
-              className="pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#1c355e] w-60"
-              placeholder="Buscar por nombre o carrera..."
+              className="w-full pl-9 pr-8 py-2 bg-[#f4f3f6] border-transparent rounded-xl text-sm outline-none focus:bg-white focus:border-[#1c355e]/30 focus:ring-2 focus:ring-[#1c355e]/10 text-[#1b1c1e] placeholder:text-[#75777f] font-semibold transition-all"
+              placeholder="Buscar docente o carrera..."
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
             />
+            {busqueda && (
+              <button
+                onClick={() => setBusqueda('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#75777f] hover:text-[#1c355e] bg-white rounded-full p-0.5 shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            )}
           </div>
+          <div className="h-8 w-px bg-[#c5c6cf]/30 hidden sm:block"></div>
+          <button
+            onClick={() => { setMostrarCentroExportacion(true); dragExport.resetPos(); }}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-white text-[#1c355e] border border-[#1c355e]/20 hover:bg-[#1c355e]/5 rounded-xl text-sm font-bold transition-all shadow-sm cursor-pointer flex-shrink-0"
+            title="Abrir centro de exportación: PDF, Excel, Imprimir, Correo"
+          >
+            <span className="material-symbols-outlined text-[18px]">download</span>
+            <span>Exportar</span>
+          </button>
         </div>
       </div>
 
@@ -1351,8 +1360,8 @@ export default function GestionDocentes() {
       )}
 
       {/* ── FILTROS ────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex gap-3 flex-wrap">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-[#c5c6cf]/40 shadow-sm">
+        <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto w-full sm:w-auto">
           {[
             { id: 'todos',             label: 'Todos' },
             { id: 'en_clase',          label: 'En Clase' },
@@ -1362,16 +1371,16 @@ export default function GestionDocentes() {
             <button
               key={btn.id}
               onClick={() => setFiltro(btn.id)}
-              className={`px-6 py-2.5 rounded-xl font-bold transition-all ${
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
                 filtro === btn.id
-                  ? 'bg-[#1c355e] text-white'
-                  : 'bg-white border border-[#c5c6cf]/30 text-[#44464e] hover:border-[#1c355e]/50'
+                  ? 'bg-white text-[#1c355e] shadow-sm'
+                  : 'text-[#75777f] hover:text-[#1c355e]'
               }`}
             >
               {btn.label}
               {btn.id !== 'todos' && docentesConEstado.filter(d => d.estado === btn.id).length > 0 && (
-                <span className={`ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
-                  filtro === btn.id ? 'bg-white/20 text-white' : 'bg-[#1c355e]/10 text-[#1c355e]'
+                <span className={`ml-1.5 px-1.5 py-0.5 rounded font-black text-[10px] ${
+                  filtro === btn.id ? 'bg-[#1c355e]/10 text-[#1c355e]' : 'bg-[#c5c6cf]/30 text-[#44464e]'
                 }`}>
                   {docentesConEstado.filter(d => d.estado === btn.id).length}
                 </span>
@@ -1379,17 +1388,19 @@ export default function GestionDocentes() {
             </button>
           ))}
         </div>
-        <button
-          onClick={() => setOrdenAZ(v => !v)}
-          className={`px-4 py-2.5 rounded-xl font-bold transition-all flex items-center gap-2 ${
-            ordenAZ
-              ? 'bg-[#1c355e] text-white'
-              : 'bg-white border border-[#c5c6cf]/30 text-[#44464e] hover:border-[#1c355e]/50'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px]">sort_by_alpha</span>
-          A–Z
-        </button>
+        <div className="flex items-center px-2 pb-1 sm:pb-0 w-full sm:w-auto">
+          <button
+            onClick={() => setOrdenAZ(v => !v)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              ordenAZ
+                ? 'bg-[#1c355e]/10 text-[#1c355e]'
+                : 'text-[#75777f] hover:text-[#1c355e] hover:bg-slate-50'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">sort_by_alpha</span>
+            A–Z
+          </button>
+        </div>
       </div>
 
       {/* ── CONTENEDOR PRINCIPAL: DOCENTES (Izquierda/Centro) y ESTADÍSTICAS (Derecha) ── */}
@@ -1612,7 +1623,7 @@ export default function GestionDocentes() {
                         const exMatNorm = normalizeSubject(ex.materia);
                         if (exMatNorm.length < 3) return false;
                         return materiasDocenteRaw.some(hAsigNorm => 
-                          exMatNorm.includes(hAsigNorm) || hAsigNorm.includes(exMatNorm)
+                          hAsigNorm.length >= 3 && (exMatNorm.includes(hAsigNorm) || hAsigNorm.includes(exMatNorm))
                         );
                       });
 
@@ -1624,10 +1635,7 @@ export default function GestionDocentes() {
                             <div key={i} className="flex flex-col gap-0.5 px-2.5 py-1.5 bg-purple-50 border border-purple-200 rounded-lg shadow-sm">
                               <div className="flex items-center gap-1.5 text-[10px] font-bold text-purple-700 uppercase tracking-wide">
                                 <span className="material-symbols-outlined text-[13px]">assignment_late</span>
-                                Examen {ex.periodo} - {ex.semestre}
-                              </div>
-                              <div className="text-[11px] text-purple-900 font-semibold truncate pl-5">
-                                {ex.materia}
+                                Examen {ex.periodo}
                               </div>
                             </div>
                           ))}
@@ -1704,7 +1712,7 @@ export default function GestionDocentes() {
         </div>
 
         {/* ── ESTADÍSTICAS (COSTADO DERECHO) ─────────────────────────────────── */}
-        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-24 self-start">
+        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-24 self-start xl:max-h-[calc(100vh-7rem)] overflow-y-auto pr-1">
           <button
             onClick={() => setFiltro('todos')}
             className={`text-left w-full transition-all cursor-pointer rounded-2xl ${
