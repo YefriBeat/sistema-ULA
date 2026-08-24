@@ -6,7 +6,8 @@ const SECCIONES = [
   { id: 'acceso',       icono: 'login',           titulo: 'Acceso al sistema' },
   { id: 'dashboard',    icono: 'dashboard',       titulo: 'Panel principal' },
   { id: 'horarios',     icono: 'schedule',        titulo: 'Gestión de horarios por grupos' },
-  { id: 'aulas',        icono: 'door_open',       titulo: 'Gestión de aulas' },
+  { id: 'historial',    icono: 'history',         titulo: 'Historial académico' },
+  { id: 'aulas',        icono: 'door_open',       titulo: 'Registro global de aulas' },
   { id: 'docentes',     icono: 'group',           titulo: 'Gestión de docentes' },
   { id: 'calendarios',  icono: 'calendar_month',  titulo: 'Calendarios académicos' },
   { id: 'perfil',       icono: 'manage_accounts', titulo: 'Configuración de perfil' },
@@ -129,7 +130,7 @@ export default function ManualUsuario() {
             <div>
               <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-1">Universidad Latino</p>
               <h1 className="text-2xl font-black">Manual de Usuario Oficial</h1>
-              <p className="text-sm text-white/70 mt-1">SIPREF — Versión 2.2 (Edición Completa)</p>
+              <p className="text-sm text-white/70 mt-1">SIPREF — Versión 2.3 (Edición Completa)</p>
             </div>
           </div>
           <button
@@ -201,20 +202,20 @@ export default function ManualUsuario() {
           <Seccion id="introduccion" icono="info" titulo="Introducción">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
-                El <strong className="text-[#1b1c1e]">SIPREF (Sistema de Gestión de Prefectura)</strong> es la plataforma web institucional desarrollada para la <strong className="text-[#1b1c1e]">Universidad Latino</strong>. Centraliza y automatiza la administración de horarios académicos, disponibilidad de aulas, suplencias docentes y calendarios institucionales conectados a la nube en tiempo real.
+                El <strong className="text-[#1b1c1e]">SIPREF (Sistema de Gestión de Prefectura)</strong> es la plataforma web institucional desarrollada para la <strong className="text-[#1b1c1e]">Universidad Latino</strong>. En su versión 2.3 centraliza y automatiza la administración de horarios académicos, disponibilidad de aulas, suplencias docentes, historiales académicos y calendarios institucionales, todo conectado a la nube en tiempo real.
               </p>
             </Tarjeta>
 
             <div className="grid sm:grid-cols-3 gap-3">
               {[
                 { icono: 'schedule',       titulo: 'Horarios en tiempo real',     desc: 'Monitorea clases activas, próximas e instruidas con actualización cada 30 segundos.' },
-                { icono: 'door_open',      titulo: 'Control de Aulas y Labs',     desc: 'Gestión diferenciada de salones y laboratorios con control de mantenimiento.' },
-                { icono: 'group',          titulo: 'Gestión de Docentes',         desc: 'Directorio académico, clases agrupadas cronológicamente y registro de suplencias.' },
-                { icono: 'calendar_month', titulo: 'Calendarios Oficiales',      desc: 'Consulta de calendarios escolares e importación de exámenes parciales por carrera.' },
-                { icono: 'picture_as_pdf', titulo: 'Exportación a PDF',         desc: 'Descarga rápida del manual y de calendarios en formato PDF oficial.' },
+                { icono: 'door_open',      titulo: 'Registro de Aulas global',    desc: 'Gestión diferenciada de salones y laboratorios con control de mantenimiento, y un buscador unificado.' },
+                { icono: 'group',          titulo: 'Gestión de Docentes',         desc: 'Directorio académico, buscador, clases agrupadas cronológicamente y registro de suplencias.' },
+                { icono: 'history',        titulo: 'Historiales Académicos',      desc: 'Consulta y exporta a Excel el historial de cualquier ciclo escolar cerrado.' },
+                { icono: 'calendar_month', titulo: 'Calendarios Oficiales',       desc: 'Consulta de calendarios escolares e importación de exámenes parciales por carrera.' },
                 { icono: 'cloud_sync',     titulo: 'Conexión TiDB Cloud',         desc: 'Sincronización en la nube mediante TiDB Cloud (MySQL) de alta disponibilidad.' },
               ].map(f => (
-                <div key={f.titulo} className="bg-white border border-[#c5c6cf]/30 rounded-xl p-4 shadow-sm">
+                <div key={f.titulo} className="bg-white border border-[#c5c6cf]/30 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
                   <span className="material-symbols-outlined text-2xl text-[#1c355e] mb-2 block">{f.icono}</span>
                   <p className="text-xs font-bold text-[#1b1c1e] mb-1">{f.titulo}</p>
                   <p className="text-[11px] text-[#75777f] leading-relaxed">{f.desc}</p>
@@ -237,7 +238,7 @@ export default function ManualUsuario() {
               <div className="space-y-3 mt-1">
                 <Paso numero={1} titulo='Ingresa a la URL del sistema y dirígete al formulario de Inicio de Sesión.' />
                 <Paso numero={2} titulo="Escribe tu correo electrónico registrado y tu contraseña." />
-                <Paso numero={3} titulo='Haz clic en "Ingresar".' descripcion='Al autenticarte correctamente, accederás directamente al Panel Principal (Dashboard).' />
+                <Paso numero={3} titulo='Haz clic en "Ingresar".' descripcion='Al autenticarte correctamente recibirás un mensaje de bienvenida con tu nombre y accederás directamente al Panel Principal (Dashboard).' />
               </div>
               <Aviso tipo="warning" texto='Si olvidaste tu contraseña o necesitas restablecerla, ponte en contacto con el administrador del sistema o ajústala desde la sección Configuración de Perfil.' />
             </Tarjeta>
@@ -295,16 +296,6 @@ export default function ManualUsuario() {
               </div>
             </Tarjeta>
 
-            <Tarjeta titulo="Ocupación de Aulas y Laboratorios" icono="meeting_room">
-              <p className="text-xs text-[#44464e] leading-relaxed mb-2">
-                El panel derecho incluye un análisis diferenciado para evitar distorsiones en los porcentajes:
-              </p>
-              <div className="space-y-2 mt-1 text-xs text-[#44464e]">
-                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">pie_chart</span><span><strong className="text-[#1b1c1e]">Gráfico de Aulas:</strong> Calcula la ocupación exclusivamente sobre salones de clases regulares.</span></div>
-                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-teal-600 flex-shrink-0 mt-0.5">science</span><span><strong className="text-[#1b1c1e]">Métricas de Laboratorios:</strong> Tarjeta independiente que computa los espacios etiquetados como "Lab" (disponibles, en uso y mantenimientos).</span></div>
-              </div>
-            </Tarjeta>
-
             <Tarjeta titulo="Búsqueda y Filtros de Horarios" icono="filter_alt">
               <div className="space-y-2 mt-1 text-xs text-[#44464e]">
                 <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">search</span><span><strong className="text-[#1b1c1e]">Buscador rápido:</strong> Encuentra clases introduciendo el nombre del docente, materia o clave de aula.</span></div>
@@ -318,14 +309,14 @@ export default function ManualUsuario() {
           <Seccion id="horarios" icono="schedule" titulo="Gestión de horarios por grupos">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
-                Permite la importación de archivos de horarios académicos, asignación inteligente de aulas, edición puntual de asignaturas y mantenimiento de archivos.
+                El sistema de Gestión de Horarios está diseñado con 3 pestañas principales que centralizan el control del ciclo escolar activo: <strong className="text-[#1b1c1e]">1. Cargar Archivos, 2. Editor y 3. Cierre de Periodo.</strong>
               </p>
             </Tarjeta>
 
-            <Tarjeta titulo="Importar horarios (PDF / Excel)" icono="upload_file">
+            <Tarjeta titulo="1. Cargar Horarios (PDF / Excel)" icono="upload_file">
               <div className="space-y-3 mt-1">
                 <Paso numero={1} titulo='En el menú principal, abre "Gestión de Horarios por Grupos".' />
-                <Paso numero={2} titulo='Selecciona la pestaña "Cargar Horario".' />
+                <Paso numero={2} titulo='Selecciona la pestaña "Cargar Archivos".' />
                 <Paso numero={3} titulo="Sube el archivo en formato PDF o Excel oficial facilitado por la universidad." />
                 <Paso numero={4} titulo="Revisa la vista previa de datos extraídos (docente, materia, horas, días y grupo)." />
                 <Paso numero={5} titulo='Aplica la "Asignación Automática de Aulas" o define manualmente los espacios.' />
@@ -334,28 +325,64 @@ export default function ManualUsuario() {
               <Aviso tipo="tip" texto="La asignación automática omite salones que se encuentren en mantenimiento y balancea la carga de aulas entre los turnos matutino y vespertino." />
             </Tarjeta>
 
-            <Tarjeta titulo="Gestor de Archivos y Edición" icono="edit_note">
+            <Tarjeta titulo="2. Editor de Archivos Activos" icono="edit_note">
               <div className="space-y-3 mt-1">
-                <Paso numero={1} titulo='Ingresa a la pestaña "Gestor de Archivos".' />
+                <Paso numero={1} titulo='Ingresa a la pestaña "Editor de Archivos".' />
                 <Paso numero={2} titulo="Selecciona la carrera o el archivo de horario previamente cargado." />
-                <Paso numero={3} titulo="Para realizar cambios, presiona el botón de edición en la clase correspondiente." />
-                <Paso numero={4} titulo="Actualiza los datos requeridos (aula, horario, docente) y guarda los cambios." />
+                <Paso numero={3} titulo="Visualiza de inmediato cuántas materias del archivo carecen de docente o aula." />
+                <Paso numero={4} titulo="Haz clic en el botón de edición para actualizar el aula, horario o asignar un profesor y presiona Guardar." />
               </div>
+            </Tarjeta>
+
+            <Tarjeta titulo="3. Cierre de Periodo (Generar Historial)" icono="inventory_2">
+              <div className="space-y-3 mt-1">
+                <Paso numero={1} titulo='Al finalizar el cuatrimestre o semestre, ingresa a la pestaña "Cierre de Periodo".' />
+                <Paso numero={2} titulo='Haz clic en "Guardar y Cerrar Periodo Actual".' />
+                <Paso numero={3} titulo="Ingresa un identificador para el ciclo (ej. 2026-B) y su modalidad (Semestral o Cuatrimestral)." />
+                <Paso numero={4} titulo='Confirma. Esto vaciará los horarios activos del dashboard y los archivará permanentemente en el "Historial Académico" para futura referencia.' />
+              </div>
+              <Aviso tipo="warning" texto="Esta acción no se puede deshacer. Todos los datos pasarán a ser parte del registro histórico y la tabla principal quedará limpia para importar el nuevo ciclo escolar." />
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 5. GESTIÓN DE AULAS ══ */}
-          <Seccion id="aulas" icono="door_open" titulo="Gestión de aulas">
+          {/* ══ 5. HISTORIAL ACADÉMICO ══ */}
+          <Seccion id="historial" icono="history" titulo="Historial académico">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
-                Supervisa todo el catálogo de espacios físicos de la universidad (salones de clase y laboratorios), consultando su estado actual y programando mantenimientos.
+                Consulta los registros históricos de periodos escolares anteriores, y genera reportes consolidados en formato Excel.
               </p>
             </Tarjeta>
 
-            <Tarjeta titulo="Clasificación de Espacios" icono="domain">
+            <Tarjeta titulo="Explorar Periodos Cerrados" icono="view_agenda">
+              <div className="space-y-3 mt-1">
+                <Paso numero={1} titulo='Abre "Historial Académico" en el menú izquierdo de la aplicación.' />
+                <Paso numero={2} titulo="Utiliza los selectores superiores para filtrar los historiales por Ciclo (ej. 2025-A) y Modalidad (ej. Semestral)." />
+                <Paso numero={3} titulo="Al seleccionar un filtro, las tarjetas actualizarán dinámicamente el conteo de registros guardados de esa época." />
+              </div>
+            </Tarjeta>
+
+            <Tarjeta titulo="Exportar Datos Históricos a Excel" icono="table_chart">
+              <div className="space-y-3 mt-1">
+                <Paso numero={1} titulo='Selecciona el ciclo o modalidad en los filtros superiores.' />
+                <Paso numero={2} titulo='Haz clic en el botón verde "Exportar a Excel".' />
+                <Paso numero={3} titulo="El sistema procesará miles de registros antiguos y generará una hoja de cálculo perfectamente tabulada." />
+              </div>
+              <Aviso tipo="info" texto="El archivo Excel resultante conservará el nombre exacto del filtro (ej. Historial_2025-A.xlsx) o en su defecto 'Historial_Completo.xlsx'." />
+            </Tarjeta>
+          </Seccion>
+
+          {/* ══ 6. REGISTRO GLOBAL DE AULAS ══ */}
+          <Seccion id="aulas" icono="door_open" titulo="Registro global de aulas">
+            <Tarjeta>
+              <p className="text-sm text-[#44464e] leading-relaxed">
+                Supervisa de manera unificada todo el catálogo de espacios físicos de la universidad (salones de clase y laboratorios), consultando su estado actual y programando mantenimientos.
+              </p>
+            </Tarjeta>
+
+            <Tarjeta titulo="Buscador Unificado y Filtros Rápidos" icono="filter_list">
               <div className="space-y-2 mt-1 text-xs text-[#44464e]">
-                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">meeting_room</span><span><strong>Aulas de Clase:</strong> Salones normales (ej: A1, A2, B5) priorizados en el listado alfanumérico.</span></div>
-                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-teal-600 flex-shrink-0 mt-0.5">science</span><span><strong>Laboratorios:</strong> Espacios especializados (ej: Lab Sistemas, Lab Química) agrupados de forma independiente.</span></div>
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">search</span><span><strong>Búsqueda en tiempo real:</strong> Escribe la letra del edificio (ej: 'C') o el nombre del laboratorio para filtrar al instante.</span></div>
+                <div className="flex gap-2"><span className="material-symbols-outlined text-[14px] text-[#1c355e] flex-shrink-0 mt-0.5">meeting_room</span><span><strong>Filtros por Tipo:</strong> Haz clic en "Todas", "Aulas" o "Laboratorios" para separar los espacios comunes de los especializados.</span></div>
               </div>
             </Tarjeta>
 
@@ -378,7 +405,7 @@ export default function ManualUsuario() {
             <Tarjeta titulo="Configurar Modo Mantenimiento" icono="construction">
               <div className="space-y-3 mt-1">
                 <Paso numero={1} titulo="En la lista de aulas, ubica la tarjeta del espacio a modificar." />
-                <Paso numero={2} titulo='Haz clic en el ícono de llave inglesa ("Mantenimiento").' />
+                <Paso numero={2} titulo='Haz clic en el ícono de engranaje o la llave inglesa ("Mantenimiento").' />
                 <Paso numero={3} titulo="Activa el interruptor e ingresa la fecha/hora de inicio y la fecha/hora de fin del mantenimiento." />
                 <Paso numero={4} titulo="Opcional: Asigna un aula temporal de sustitución para mover las clases agendadas." />
                 <Paso numero={5} titulo='Presiona "Guardar".' />
@@ -386,17 +413,23 @@ export default function ManualUsuario() {
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 6. GESTIÓN DE DOCENTES ══ */}
+          {/* ══ 7. GESTIÓN DE DOCENTES ══ */}
           <Seccion id="docentes" icono="group" titulo="Gestión de docentes">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
-                Administra la plantilla docente, visualiza el horario de clases agrupadas por jornada y gestiona suplencias de forma rápida ante inasistencias.
+                Administra la plantilla docente de manera más visual, encuentra profesores rápidamente, revisa todas las materias que tienen asignadas y gestiona suplencias al instante.
+              </p>
+            </Tarjeta>
+
+            <Tarjeta titulo="Buscador Inteligente de Docentes" icono="person_search">
+               <p className="text-xs text-[#44464e] leading-relaxed mb-3">
+                Con la versión 2.3, ahora cuentas con una barra de búsqueda dedicada. Solo debes comenzar a escribir el nombre completo, apellido, o asignatura de un profesor, y la plataforma filtrará el directorio instantáneamente mostrando únicamente a las coincidencias exactas y sus correspondientes estados de clase.
               </p>
             </Tarjeta>
 
             <Tarjeta titulo="Agrupación Cronológica de Clases" icono="auto_awesome">
               <p className="text-xs text-[#44464e] leading-relaxed mb-3">
-                Para evitar redundancia, el sistema agrupa automáticamente clases consecutivas de la misma materia en un solo bloque (ej: dos horas seguidas de 07:00 a 08:40).
+                Para evitar redundancia, el sistema agrupa automáticamente clases consecutivas de la misma materia en un solo bloque (ej: dos horas seguidas de 07:00 a 08:40) y te permite visualizar de manera expansible toda la carga horaria del maestro del día.
               </p>
               <div className="space-y-2 mt-1">
                 {[
@@ -415,17 +448,17 @@ export default function ManualUsuario() {
 
             <Tarjeta titulo="Asignar una Suplencia" icono="swap_horiz">
               <div className="space-y-3 mt-1">
-                <Paso numero={1} titulo="Ubica al docente titular en el directorio." />
+                <Paso numero={1} titulo="Ubica al docente titular en el directorio o utiliza la barra de búsqueda." />
                 <Paso numero={2} titulo='Haz clic en el botón "Asignar Suplente".' />
                 <Paso numero={3} titulo="Selecciona la asignatura y horario a cubrir." />
                 <Paso numero={4} titulo="Elige a un docente registrado del sistema o marca 'Suplente Externo' e introduce su nombre." />
                 <Paso numero={5} titulo='Haz clic en "Confirmar Suplencia".' />
               </div>
-              <Aviso tipo="tip" texto="La suplencia se reflejará de inmediato en el Dashboard indicando el nombre del profesor sustituto." />
+              <Aviso tipo="tip" texto="La suplencia se reflejará de inmediato en el Dashboard indicando el nombre del profesor sustituto en azul." />
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 7. CALENDARIOS ACADÉMICOS ══ */}
+          {/* ══ 8. CALENDARIOS ACADÉMICOS ══ */}
           <Seccion id="calendarios" icono="calendar_month" titulo="Calendarios académicos">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
@@ -448,7 +481,7 @@ export default function ManualUsuario() {
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 8. CONFIGURACIÓN DE PERFIL ══ */}
+          {/* ══ 9. CONFIGURACIÓN DE PERFIL ══ */}
           <Seccion id="perfil" icono="manage_accounts" titulo="Configuración de perfil y sistema">
             <Tarjeta>
               <p className="text-sm text-[#44464e] leading-relaxed">
@@ -466,7 +499,7 @@ export default function ManualUsuario() {
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 9. SOPORTE TÉCNICO ══ */}
+          {/* ══ 10. SOPORTE TÉCNICO ══ */}
           <Seccion id="soporte" icono="support_agent" titulo="Soporte técnico">
             <Tarjeta titulo="Canales Oficiales de Atención" icono="contact_support">
               <p className="text-xs text-[#44464e] leading-relaxed mb-4">
@@ -507,7 +540,7 @@ export default function ManualUsuario() {
             </Tarjeta>
           </Seccion>
 
-          {/* ══ 10. PREGUNTAS FRECUENTES ══ */}
+          {/* ══ 11. PREGUNTAS FRECUENTES ══ */}
           <Seccion id="faq" icono="help" titulo="Preguntas frecuentes">
             {[
               {
@@ -519,8 +552,8 @@ export default function ManualUsuario() {
                 a: 'Sí, la plataforma cuenta con un diseño responsivo adaptativo que transforma las tablas en tarjetas legibles para pantallas táctiles de celulares y tabletas.',
               },
               {
-                q: '¿Por qué los laboratorios tienen métricas independientes?',
-                a: 'Se diferencian para no alterar la tasa real de ocupación de las aulas regulares, dado que los laboratorios cuentan con un régimen de uso especializado.',
+                q: '¿Qué diferencia hay entre "Historial Académico" y el Dashboard?',
+                a: 'El Dashboard muestra únicamente las clases activas en el periodo vigente de la universidad. El "Historial Académico" alberga los registros de periodos que ya han concluido (fueron cerrados).',
               },
               {
                 q: '¿Qué sucede si se interrumpe la conexión a internet?',
@@ -554,7 +587,7 @@ export default function ManualUsuario() {
           </Seccion>
 
           <p className="text-[10px] text-center text-[#75777f] pb-4">
-            SIPREF v2.2 · Universidad Latino · 2026
+            SIPREF v2.3 · Universidad Latino · 2026
           </p>
 
         </main>
