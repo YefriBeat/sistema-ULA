@@ -24,13 +24,15 @@ export default function GestionHorarios() {
   const [filtroH_semestre, setFiltroH_semestre] = useState('');
   const [filtroH_cuatri, setFiltroH_cuatri] = useState('');
   const [filtroH_carrera, setFiltroH_carrera] = useState('');
+  
+  const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : 'https://sistema-ula-backend.onrender.com';
 
   
   const abrirHistorial = async () => {
     setModalHistorial(true);
     setCargandoHistorial(true);
     try {
-      const res = await fetch('/api/historial-periodos');
+      const res = await fetch(`${API_URL}/api/historial-periodos`);
       const data = await res.json();
       if (res.ok) setDatosHistorial(data);
       else toast(data.detail || "Error al cargar el historial.", "error");
@@ -124,7 +126,7 @@ export default function GestionHorarios() {
 
   const handleExportarHistorial = (grupoId, grupoData) => {
     if (!grupoId) {
-      window.location.href = '/api/historial-periodos/exportar';
+      window.location.href = `${API_URL}/api/historial-periodos/exportar`;
       return;
     }
     
@@ -148,10 +150,10 @@ export default function GestionHorarios() {
         cancelButtonText: 'Cancelar'
       }).then((result) => {
         if (result.isConfirmed) {
-           let url = `/api/historial-periodos/exportar?ciclo=${encodeURIComponent(nombre_ciclo)}&modalidad=${encodeURIComponent(tipo_periodo)}&fecha=${encodeURIComponent(fecha)}`;
+           let url = `${API_URL}/api/historial-periodos/exportar?ciclo=${encodeURIComponent(nombre_ciclo)}&modalidad=${encodeURIComponent(tipo_periodo)}&fecha=${encodeURIComponent(fecha)}`;
            window.location.href = url;
         } else if (result.isDenied) {
-           let url = `/api/historial-periodos/exportar?ciclo=${encodeURIComponent(nombre_ciclo)}&modalidad=${encodeURIComponent(tipo_periodo)}&fecha=${encodeURIComponent(fecha)}`;
+           let url = `${API_URL}/api/historial-periodos/exportar?ciclo=${encodeURIComponent(nombre_ciclo)}&modalidad=${encodeURIComponent(tipo_periodo)}&fecha=${encodeURIComponent(fecha)}`;
            if (filtroH_semestre) url += `&semestre=${encodeURIComponent(filtroH_semestre)}`;
            if (filtroH_cuatri) url += `&cuatrimestre=${encodeURIComponent(filtroH_cuatri)}`;
            if (filtroH_carrera) url += `&carrera=${encodeURIComponent(filtroH_carrera)}`;
@@ -159,7 +161,7 @@ export default function GestionHorarios() {
         }
       });
     } else {
-       let url = `/api/historial-periodos/exportar?ciclo=${encodeURIComponent(nombre_ciclo)}&modalidad=${encodeURIComponent(tipo_periodo)}&fecha=${encodeURIComponent(fecha)}`;
+       let url = `${API_URL}/api/historial-periodos/exportar?ciclo=${encodeURIComponent(nombre_ciclo)}&modalidad=${encodeURIComponent(tipo_periodo)}&fecha=${encodeURIComponent(fecha)}`;
        window.location.href = url;
     }
   };
