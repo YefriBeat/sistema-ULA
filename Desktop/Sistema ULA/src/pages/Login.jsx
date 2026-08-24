@@ -37,6 +37,7 @@ export default function Login() {
         localStorage.setItem('usuarioLogueado', JSON.stringify(data.usuario));
         localStorage.setItem('sesionFecha', new Date().toISOString().slice(0, 10));
         actualizarUsuario(data.usuario);
+        toast(`Bienvenido/a al sistema, ${data.usuario.nombre}`, "exito");
         navigate('/dashboard');
       } else {
         toast(data.detail || "Credenciales inválidas.", "error");
