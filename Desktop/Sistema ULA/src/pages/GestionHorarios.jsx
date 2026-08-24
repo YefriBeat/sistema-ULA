@@ -1536,7 +1536,10 @@ export default function GestionHorarios() {
         const ORDEN_GRADOS = ["PRIMERO", "SEGUNDO", "TERCERO", "CUARTO", "QUINTO", "SEXTO", "SEPTIMO", "SÉPTIMO", "OCTAVO", "NOVENO", "DECIMO", "DÉCIMO"];
         const gruposHistorial = {};
         datosHistorial.forEach(reg => {
-          const truncDate = reg.fecha_archivado ? reg.fecha_archivado.split(' ')[0] : 'Desconocida';
+          let truncDate = 'Desconocida';
+          if (reg.fecha_archivado) {
+            truncDate = reg.fecha_archivado.includes('T') ? reg.fecha_archivado.split('T')[0] : reg.fecha_archivado.split(' ')[0];
+          }
           const key = `${reg.nombre_ciclo}|${reg.tipo_periodo}|${truncDate}`;
           if (!gruposHistorial[key]) {
             gruposHistorial[key] = { key, nombre_ciclo: reg.nombre_ciclo, tipo_periodo: reg.tipo_periodo, fecha: truncDate, registros: [] };

@@ -6028,13 +6028,10 @@ def obtener_historial_periodos():
         with connection.cursor() as cursor:
             cursor.execute("""
                 SELECT 
-                    nombre_ciclo, 
-                    tipo_periodo, 
-                    DATE_FORMAT(MAX(fecha_archivado), '%Y-%m-%d') as fecha_archivado,
-                    COUNT(*) as total_registros
+                    *,
+                    DATE_FORMAT(fecha_archivado, '%Y-%m-%d %H:%i:%s') as fecha_archivado_str
                 FROM historial_periodos_cerrados
-                GROUP BY nombre_ciclo, tipo_periodo
-                ORDER BY MAX(fecha_archivado) DESC
+                ORDER BY fecha_archivado DESC, carrera, semestre, cuatrimestre
             """)
             historial = cursor.fetchall()
             return historial
