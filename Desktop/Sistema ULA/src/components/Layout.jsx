@@ -290,14 +290,14 @@ export default function Layout() {
       )}
 
       {/* HEADER SIEMPRE VISIBLE - Corrección: Se eliminó 'w-full' para que no se salga de la pantalla */}
-      <header className="bg-white border-b border-[#c5c6cf]/30 flex justify-between items-center px-4 sm:px-8 py-3 h-16 z-30 fixed top-0 right-0 left-0 lg:left-64 shadow-sm transition-all duration-300">
+      <header className="bg-white border-b border-[#c5c6cf]/30 flex justify-between items-center px-2 sm:px-8 py-3 h-16 z-30 fixed top-0 right-0 left-0 lg:left-64 shadow-sm transition-all duration-300">
 
         {/* Botón Menú y Logo (Izquierda - Solo Móvil) */}
-        <div className="flex items-center gap-3 lg:hidden">
-          <button onClick={() => setMenuAbierto(true)} aria-label="Abrir menú de navegación" className="p-1 hover:bg-slate-100 rounded-md">
-            <span className="material-symbols-outlined text-2xl text-[#1c355e]">menu</span>
+        <div className="flex items-center gap-1.5 sm:gap-3 lg:hidden">
+          <button onClick={() => setMenuAbierto(true)} aria-label="Abrir menú de navegación" className="p-1 hover:bg-slate-100 rounded-md shrink-0">
+            <span className="material-symbols-outlined text-[22px] sm:text-2xl text-[#1c355e]">menu</span>
           </button>
-          <img src={logo} alt="Universidad Latino Logo" className="h-8 object-contain" />
+          <img src={logo} alt="Universidad Latino Logo" className="h-6 sm:h-8 object-contain shrink-0" />
         </div>
 
         {/* Ticker de Alertas y Estado Académico (Centro) */}
@@ -349,14 +349,14 @@ export default function Layout() {
         </div>
 
         {/* Información del Usuario (Derecha - Siempre visible) */}
-        <div className="flex items-center gap-3 ml-auto pl-4 lg:border-l lg:border-[#c5c6cf]/30">
+        <div className="flex items-center gap-1.5 sm:gap-3 ml-auto pl-2 sm:pl-4 lg:border-l lg:border-[#c5c6cf]/30 shrink-0">
           
           {/* Iconos de Acción */}
-          <div className="flex items-center gap-1 sm:gap-2 mr-1 sm:mr-3 border-r border-[#c5c6cf]/30 pr-3 sm:pr-5">
+          <div className="flex items-center gap-0.5 sm:gap-2 mr-1 sm:mr-3 border-r border-[#c5c6cf]/30 pr-2 sm:pr-5">
             <div className="relative" ref={alertasRef}>
               <button 
                 onClick={() => setMostrarAlertas(!mostrarAlertas)}
-                className="relative p-2 rounded-[12px] text-[#c5c6cf] hover:text-amber-500 hover:bg-amber-50 transition-colors group" 
+                className="relative p-1.5 sm:p-2 rounded-[12px] text-[#c5c6cf] hover:text-amber-500 hover:bg-amber-50 transition-colors group" 
                 title="Alertas del Sistema">
                 <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">warning</span>
                 {/* Indicador de alerta activa */}
@@ -403,7 +403,7 @@ export default function Layout() {
             <div className="relative" ref={notificacionesRef}>
               <button 
                 onClick={() => setMostrarNotificaciones(!mostrarNotificaciones)}
-                className="relative p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" 
+                className="relative p-1.5 sm:p-2 rounded-[12px] text-[#c5c6cf] hover:text-[#1c355e] hover:bg-slate-100 transition-colors group" 
                 title="Notificaciones">
                 <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">notifications</span>
                 {notificaciones.length > 0 && (
@@ -453,7 +453,7 @@ export default function Layout() {
               {usuario.turno}
             </p>
           </div>
-          <Link to="/configuracion-perfil" className="h-9 w-9 sm:h-10 sm:w-10 flex-shrink-0 rounded-full bg-[#0e2045] text-white flex items-center justify-center border border-[#c5c6cf]/30 font-bold text-base sm:text-lg uppercase shadow-sm hover:scale-105 hover:bg-[#1c355e] transition-all cursor-pointer" title="Configuración de Perfil">
+          <Link to="/configuracion-perfil" className="h-8 w-8 sm:h-10 sm:w-10 flex-shrink-0 rounded-full bg-[#0e2045] text-white flex items-center justify-center border border-[#c5c6cf]/30 font-bold text-sm sm:text-lg uppercase shadow-sm hover:scale-105 hover:bg-[#1c355e] transition-all cursor-pointer" title="Configuración de Perfil">
             {usuario.nombre.charAt(0)}
           </Link>
         </div>
