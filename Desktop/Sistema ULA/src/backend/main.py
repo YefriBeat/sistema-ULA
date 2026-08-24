@@ -5971,3 +5971,137 @@ def obtener_filtros_bitacora():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+# ---------------------------------------------------------
+# ENDPOINTS DE HISTORIAL (CIERRE DE PERIODO)
+# ---------------------------------------------------------
+class CierrePeriodo(BaseModel):
+    nombre_ciclo: str
+    modalidad: str
+
+@app.post("/api/horarios/cierre-periodo")
+def cierre_periodo(payload: CierrePeriodo):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            # Check if there are schedules to archive
+            cursor.execute("SELECT * FROM horarios")
+            horarios = cursor.fetchall()
+            
+            if not horarios:
+                return {"message": "No hay horarios actuales para archivar."}
+                
+            # Insert into historial_periodos_cerrados
+            for h in horarios:
+                cursor.execute("""
+                    INSERT INTO historial_periodos_cerrados
+                    (nombre_ciclo, tipo_periodo, dia, horario, asignatura, docente, aula_asignada, carrera, semestre, cuatrimestre, grupo)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    payload.nombre_ciclo,
+                    payload.modalidad,
+                    h.get('dia', ''),
+                    h.get('horario', ''),
+                    h.get('asignatura', ''),
+                    h.get('docente', ''),
+                    h.get('aula_asignada', ''),
+                    h.get('carrera', ''),
+                    h.get('semestre', ''),
+                    h.get('cuatrimestre', ''),
+                    h.get('grupo', '')
+                ))
+            
+            connection.commit()
+            return {"message": f"Periodo '{payload.nombre_ciclo}' cerrado y archivado correctamente."}
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.get("/api/historial-periodos")
+def obtener_historial_periodos():
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    nombre_ciclo, 
+                    tipo_periodo, 
+                    DATE_FORMAT(MAX(fecha_archivado), '%Y-%m-%d') as fecha_archivado,
+                    COUNT(*) as total_registros
+                FROM historial_periodos_cerrados
+                GROUP BY nombre_ciclo, tipo_periodo
+                ORDER BY MAX(fecha_archivado) DESC
+            """)
+            historial = cursor.fetchall()
+            return historial
+    finally:
+        connection.close()
+
+
+from fastapi.responses import StreamingResponse
+import io
+import pandas as pd
+
+@app.get("/api/historial-periodos/exportar")
+def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha: str = None):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            query = "SELECT dia, horario, asignatura, docente, aula_asignada, carrera, semestre, cuatrimestre, grupo, nombre_ciclo as ciclo, tipo_periodo as modalidad, DATE_FORMAT(fecha_archivado, '%Y-%m-%d') as fecha_archivado FROM historial_periodos_cerrados WHERE 1=1"
+            params = []
+            
+            if ciclo and ciclo != 'undefined' and ciclo != 'null':
+                query += " AND nombre_ciclo = %s"
+                params.append(ciclo)
+            if modalidad and modalidad != 'undefined' and modalidad != 'null':
+                query += " AND tipo_periodo = %s"
+                params.append(modalidad)
+            
+            query += " ORDER BY fecha_archivado DESC, carrera, semestre, cuatrimestre"
+            
+            cursor.execute(query, params)
+            registros = cursor.fetchall()
+            
+            if not registros:
+                raise HTTPException(status_code=404, detail="No se encontraron registros.")
+                
+            df = pd.DataFrame(registros)
+            
+            # Renombrar columnas para exportar
+            df.rename(columns={
+                'dia': 'Día',
+                'horario': 'Horario',
+                'asignatura': 'Asignatura',
+                'docente': 'Docente',
+                'aula_asignada': 'Aula Asignada',
+                'carrera': 'Carrera',
+                'semestre': 'Semestre',
+                'cuatrimestre': 'Cuatrimestre',
+                'grupo': 'Grupo',
+                'ciclo': 'Ciclo',
+                'modalidad': 'Modalidad',
+                'fecha_archivado': 'Fecha Archivado'
+            }, inplace=True)
+            
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Historial')
+            
+            output.seek(0)
+            
+            safe_ciclo = ciclo if (ciclo and ciclo != 'undefined' and ciclo != 'null') else "Completo"
+            headers = {
+                'Content-Disposition': f'attachment; filename="Historial_{safe_ciclo}.xlsx"'
+            }
+            
+            return StreamingResponse(
+                output, 
+                headers=headers, 
+                media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+    finally:
+        connection.close()
