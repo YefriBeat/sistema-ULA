@@ -10,4 +10,3 @@ pydantic==2.7.1
 openpyxl
 reportlab
 pillow
-pandas

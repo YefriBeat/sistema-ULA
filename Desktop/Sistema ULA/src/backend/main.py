@@ -6041,13 +6041,13 @@ def obtener_historial_periodos():
 
 from fastapi.responses import StreamingResponse
 import io
-import pandas as pd
+from openpyxl import Workbook
 
 @app.get("/api/historial-periodos/exportar")
 def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha: str = None):
     connection = get_db_connection()
     try:
-        with connection.cursor() as cursor:
+        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             query = "SELECT dia, horario, asignatura, docente, aula_asignada, carrera, semestre, cuatrimestre, grupo, nombre_ciclo as ciclo, tipo_periodo as modalidad, DATE_FORMAT(fecha_archivado, '%Y-%m-%d') as fecha_archivado FROM historial_periodos_cerrados WHERE 1=1"
             params = []
             
@@ -6066,32 +6066,37 @@ def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha:
             if not registros:
                 raise HTTPException(status_code=404, detail="No se encontraron registros.")
                 
-            df = pd.DataFrame(registros)
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Historial"
             
-            # Renombrar columnas para exportar
-            df.rename(columns={
-                'dia': 'Día',
-                'horario': 'Horario',
-                'asignatura': 'Asignatura',
-                'docente': 'Docente',
-                'aula_asignada': 'Aula Asignada',
-                'carrera': 'Carrera',
-                'semestre': 'Semestre',
-                'cuatrimestre': 'Cuatrimestre',
-                'grupo': 'Grupo',
-                'ciclo': 'Ciclo',
-                'modalidad': 'Modalidad',
-                'fecha_archivado': 'Fecha Archivado'
-            }, inplace=True)
+            # Escribir encabezados
+            headers = ['Día', 'Horario', 'Asignatura', 'Docente', 'Aula Asignada', 'Carrera', 'Semestre', 'Cuatrimestre', 'Grupo', 'Ciclo', 'Modalidad', 'Fecha Archivado']
+            ws.append(headers)
             
+            # Escribir datos
+            for row in registros:
+                ws.append([
+                    row.get('dia', ''),
+                    row.get('horario', ''),
+                    row.get('asignatura', ''),
+                    row.get('docente', ''),
+                    row.get('aula_asignada', ''),
+                    row.get('carrera', ''),
+                    row.get('semestre', ''),
+                    row.get('cuatrimestre', ''),
+                    row.get('grupo', ''),
+                    row.get('ciclo', ''),
+                    row.get('modalidad', ''),
+                    row.get('fecha_archivado', '')
+                ])
+                
             output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Historial')
-            
+            wb.save(output)
             output.seek(0)
             
             safe_ciclo = ciclo if (ciclo and ciclo != 'undefined' and ciclo != 'null') else "Completo"
-            headers = {
+            headers_dict = {
                 'Content-Disposition': f'attachment; filename="Historial_{safe_ciclo}.xlsx"'
             }
             
