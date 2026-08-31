@@ -379,7 +379,12 @@ export default function Layout() {
                       Documentos Pendientes
                     </div>
                     {calendariosPendientes.map((cal) => (
-                      <div key={cal.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 rounded-xl transition-colors">
+                      <Link 
+                        key={cal.id} 
+                        to="/calendarios"
+                        onClick={() => setMostrarAlertas(false)}
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer"
+                      >
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${cal.tipo.startsWith('general') ? 'bg-indigo-100 text-indigo-600' : 'bg-amber-100 text-amber-600'}`}>
                           <span className="material-symbols-outlined text-[16px]">{cal.tipo.startsWith('general') ? 'event' : 'calendar_month'}</span>
                         </div>
@@ -387,7 +392,7 @@ export default function Layout() {
                           <p className="text-sm font-bold text-slate-700 truncate">{cal.titulo}</p>
                           <p className="text-xs text-slate-500 truncate">{cal.subtitulo}</p>
                         </div>
-                      </div>
+                      </Link>
                     ))}
                     {calendariosPendientes.length === 0 && (
                       <div className="text-center py-4 text-slate-500 text-sm">
