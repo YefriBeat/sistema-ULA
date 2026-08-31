@@ -36,7 +36,7 @@ export default function SoporteTecnico() {
             <div>
               <p className="text-white font-black text-lg leading-tight">Yenri Efren Moo May</p>
               <p className="text-white/70 text-xs font-medium mt-0.5">Ingeniero en Sistemas Computacionales</p>
-              <p className="text-emerald-400 text-[10px] font-bold mt-1 uppercase tracking-wider">Agencia de Desarrollo: YFR Code</p>
+              <p className="text-emerald-400 text-[10px] font-bold mt-1 uppercase tracking-wider">YFR Code</p>
             </div>
           </div>
 

@@ -503,7 +503,7 @@ export default function ManualUsuario() {
           <Seccion id="soporte" icono="support_agent" titulo="Soporte técnico">
             <Tarjeta titulo="Canales Oficiales de Atención" icono="contact_support">
               <p className="text-xs text-[#44464e] leading-relaxed mb-4">
-                Si experimentas fallas en el sistema, problemas de acceso o requieres asistencia técnica especializada, puedes comunicarte a través de los datos oficiales de la agencia de desarrollo <strong>YFR Code</strong> (Yenri Efren Moo May):
+                Si experimentas fallas en el sistema, problemas de acceso o requieres asistencia técnica especializada, puedes comunicarte a través de los datos oficiales de <strong>YFR Code</strong> (Yenri Efren Moo May):
               </p>
 
               <div className="grid sm:grid-cols-2 gap-4">
