@@ -1402,9 +1402,16 @@ export default function GestionHorarios() {
                         <td className="px-6 py-4 text-sm font-semibold text-[#44464e]">{horario.docente}</td>
                         <td className="px-6 py-4 text-xs font-bold">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
-                              {horario.licenciatura}
-                            </span>
+                            {horario.licenciatura && horario.licenciatura.trim() !== '' && (
+                              <span className="bg-[#1c355e]/10 text-[#1c355e] px-2.5 py-1 rounded-lg uppercase tracking-wide">
+                                {horario.licenciatura}
+                              </span>
+                            )}
+                            {(!horario.licenciatura || horario.licenciatura.trim() === '') && (
+                              <span className="bg-gray-100 text-gray-500 px-2.5 py-1 rounded-lg uppercase tracking-wide text-[10px]">
+                                No definida
+                              </span>
+                            )}
                             {horario.semestre && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px]">Sem: {horario.semestre}</span>}
                             {horario.cuatrimestre && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px]">Cuat: {horario.cuatrimestre}</span>}
                             {horario.grupo && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[9px]">Gpo: {horario.grupo}</span>}
