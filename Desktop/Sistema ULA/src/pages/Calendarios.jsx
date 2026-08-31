@@ -1,10 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useTime } from '../components/TimeContext';
 import Swal from 'sweetalert2';
 
 export default function Calendarios() {
+  const location = useLocation();
   const ahora = useTime();
-  const [tabActual, setTabActual] = useState('generales');
+  const [tabActual, setTabActual] = useState(location.state?.tab || 'generales');
+  
+  useEffect(() => {
+    if (location.state?.tab) {
+      setTabActual(location.state.tab);
+    }
+  }, [location.state?.tab]);
+
   const [calendarios, setCalendarios] = useState([]);
   const [cargando, setCargando] = useState(true);
   const fileInputRef = useRef(null);
