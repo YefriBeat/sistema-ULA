@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useToast, ToastContainer } from '../components/useToast';
+import Swal from 'sweetalert2';
 
 export default function GestionHorarios() {
   const { toast, toasts } = useToast();
@@ -10,6 +11,7 @@ export default function GestionHorarios() {
   const [datosExtraidos, setDatosExtraidos] = useState(null);
   const [aulas, setAulas] = useState([]);
   const [cargando, setCargando] = useState(false);
+  const [publicando, setPublicando] = useState(false);
   const [modalCierre, setModalCierre] = useState(false);
   const [nombreCicloCierre, setNombreCicloCierre] = useState('');
   const [modalidadCierre, setModalidadCierre] = useState('ambos');
@@ -28,6 +30,52 @@ export default function GestionHorarios() {
   const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : 'https://sistema-ula-backend.onrender.com';
 
   
+  const handleRenombrarHistorial = (arch) => {
+    const nuevoNombre = window.prompt("Ingrese el nuevo nombre para este historial:", arch.nombre_ciclo);
+    if (!nuevoNombre || nuevoNombre === arch.nombre_ciclo) return;
+    
+    fetch(`${API_URL}/api/historial-periodos/renombrar`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nombre_ciclo_antiguo: arch.nombre_ciclo,
+        tipo_periodo: arch.tipo_periodo,
+        nuevo_nombre_ciclo: nuevoNombre
+      })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error("Error al renombrar");
+      return res.json();
+    })
+    .then(data => {
+      toast("Historial renombrado exitosamente", "exito");
+      abrirHistorial(); // recargar
+    })
+    .catch(err => toast("Error al renombrar", "error"));
+  };
+
+  const handleEliminarHistorial = (arch) => {
+    setConfirmacion({
+      mensaje: `¿Está seguro de que desea eliminar permanentemente el historial "${arch.nombre_ciclo}" y todos sus registros?`,
+      onConfirmar: async () => {
+        try {
+          const res = await fetch(`${API_URL}/api/historial-periodos?nombre_ciclo=${encodeURIComponent(arch.nombre_ciclo)}&tipo_periodo=${encodeURIComponent(arch.tipo_periodo)}`, {
+            method: 'DELETE'
+          });
+          if (res.ok) {
+            toast("Historial eliminado exitosamente", "exito");
+            setArchivoExpandido(null);
+            abrirHistorial();
+          } else {
+            toast("Error al eliminar historial", "error");
+          }
+        } catch (err) {
+          toast("Error de red", "error");
+        }
+      }
+    });
+  };
+
   const abrirHistorial = async () => {
     setModalHistorial(true);
     setCargandoHistorial(true);
@@ -52,7 +100,7 @@ export default function GestionHorarios() {
     }
     setCargandoCierre(true);
     try {
-      const res = await fetch('/api/horarios/cierre-periodo', {
+      const res = await fetch(`${API_URL}/api/horarios/cierre-periodo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -192,12 +240,12 @@ export default function GestionHorarios() {
   };
 
   useEffect(() => {
-    fetch('/api/aulas')
+    fetch(`${API_URL}/api/aulas`)
       .then(res => res.ok ? res.json() : [])
       .then(data => setAulas(data))
       .catch(err => console.error("Error al precargar aulas:", err));
 
-    fetch('/api/aulas/ocupacion')
+    fetch(`${API_URL}/api/aulas/ocupacion`)
       .then(res => res.ok ? res.json() : {})
       .then(data => setOcupacion(data))
       .catch(() => {});
@@ -209,7 +257,7 @@ export default function GestionHorarios() {
   const cargarArchivosGuardados = async () => {
     setCargandoArchivos(true);
     try {
-      const response = await fetch('/api/archivos');
+      const response = await fetch(`${API_URL}/api/archivos`);
       if (response.ok) {
         const data = await response.json();
         setArchivosGuardados(data);
@@ -223,7 +271,7 @@ export default function GestionHorarios() {
 
   const verDetallesArchivo = async (nombreArchivo) => {
     try {
-      const response = await fetch(`/api/archivos/${encodeURIComponent(nombreArchivo)}/horarios`);
+      const response = await fetch(`${API_URL}/api/archivos/${encodeURIComponent(nombreArchivo)}/horarios`);
       if (response.ok) {
         const horarios = await response.json();
         setDetallesArchivo(horarios);
@@ -239,7 +287,7 @@ export default function GestionHorarios() {
       mensaje: `¿Está seguro de que desea eliminar "${nombreArchivo}" y todos sus horarios?`,
       onConfirmar: async () => {
         try {
-          const response = await fetch(`/api/archivos/${encodeURIComponent(nombreArchivo)}`, {
+          const response = await fetch(`${API_URL}/api/archivos/${encodeURIComponent(nombreArchivo)}`, {
             method: 'DELETE'
           });
           if (response.ok) {
@@ -283,7 +331,7 @@ export default function GestionHorarios() {
       onConfirmar: async () => {
         try {
           const promesas = archivosSeleccionados.map(nombre => 
-            fetch(`/api/archivos/${encodeURIComponent(nombre)}`, { method: 'DELETE' })
+            fetch(`${API_URL}/api/archivos/${encodeURIComponent(nombre)}`, { method: 'DELETE' })
           );
           await Promise.all(promesas);
           
@@ -311,7 +359,7 @@ export default function GestionHorarios() {
     if (!horarioAEditar) return;
     setGuardandoEdicion(true);
     try {
-      const response = await fetch(`/api/horarios/${horarioAEditar.id}`, {
+      const response = await fetch(`${API_URL}/api/horarios/${horarioAEditar.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -351,7 +399,7 @@ export default function GestionHorarios() {
     formData.append("archivo", archivo);
 
     try {
-      const response = await fetch('/upload-pdf', {
+      const response = await fetch(`${API_URL}/upload-pdf`, {
         method: 'POST',
         body: formData,
       });
@@ -447,21 +495,31 @@ export default function GestionHorarios() {
 
   const handleGuardarHorarios = async () => {
     if (!datosExtraidos?.lista_horarios) return;
+    setPublicando(true);
 
-    const payload = datosExtraidos.lista_horarios.map((item, index) => ({
-      docente: item.docente,
-      licenciatura: item.licenciatura,
-      asignatura: item.asignatura,
-      horario: item.horario_resumen,
-      aulaAsignada: asignaciones[index] || "Por asignar",
-      archivo: archivo.name,
-      semestre: item.semestre || "",
-      cuatrimestre: item.cuatrimestre || "",
-      grupo: item.grupo || ""
-    }));
+    const payload = datosExtraidos.lista_horarios.map((item, index) => {
+      let nombreArchivo = archivo.name;
+      if (tipoSubida === 'lote' && (item.semestre || item.cuatrimestre)) {
+        const extension = archivo.name.split('.').pop();
+        const baseName = archivo.name.substring(0, archivo.name.lastIndexOf('.'));
+        nombreArchivo = `${baseName} - ${item.semestre || item.cuatrimestre}.${extension}`;
+      }
+
+      return {
+        docente: item.docente,
+        licenciatura: item.licenciatura,
+        asignatura: item.asignatura,
+        horario: item.horario_resumen,
+        aulaAsignada: asignaciones[index] || "Por asignar",
+        archivo: nombreArchivo,
+        semestre: item.semestre || "",
+        cuatrimestre: item.cuatrimestre || "",
+        grupo: item.grupo || ""
+      };
+    });
 
     try {
-      const response = await fetch('/api/guardar-horarios', {
+      const response = await fetch(`${API_URL}/api/guardar-horarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -480,6 +538,8 @@ export default function GestionHorarios() {
       }
     } catch (error) {
       toast("Error de red al publicar.", "error");
+    } finally {
+      setPublicando(false);
     }
   };
 
@@ -1169,10 +1229,24 @@ export default function GestionHorarios() {
             </div>
             <button
               onClick={handleGuardarHorarios}
-              className="w-full sm:w-auto bg-[#1c355e] text-white px-7 py-3.5 rounded-xl font-bold shadow-md hover:bg-[#152a4a] transition-all active:scale-[0.97] flex items-center justify-center gap-2 text-sm"
+              disabled={publicando}
+              className={`w-full sm:w-auto px-7 py-3.5 rounded-xl font-bold shadow-md transition-all active:scale-[0.97] flex items-center justify-center gap-2 text-sm ${
+                publicando 
+                  ? 'bg-[#152a4a] text-white/70 cursor-not-allowed' 
+                  : 'bg-[#1c355e] text-white hover:bg-[#152a4a]'
+              }`}
             >
-              <span className="material-symbols-outlined text-base">cloud_done</span>
-              Publicar Asignaciones Globales
+              {publicando ? (
+                <>
+                  <span className="material-symbols-outlined text-base animate-spin">sync</span>
+                  Publicando...
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-base">cloud_done</span>
+                  Publicar Asignaciones Globales
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -1622,9 +1696,27 @@ export default function GestionHorarios() {
                         <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
                           <span className="material-symbols-outlined text-[24px]">folder_zip</span>
                         </div>
-                        <span className="bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-lg">
-                          {arch.tipo_periodo}
-                        </span>
+                        <div className="flex flex-col items-end gap-2">
+                           <div className="flex gap-1">
+                             <button
+                               onClick={(e) => { e.stopPropagation(); handleRenombrarHistorial(arch); }}
+                               className="text-slate-400 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 p-1.5 rounded-md transition-colors shadow-sm"
+                               title="Renombrar"
+                             >
+                               <span className="material-symbols-outlined text-[16px]">edit</span>
+                             </button>
+                             <button
+                               onClick={(e) => { e.stopPropagation(); handleEliminarHistorial(arch); }}
+                               className="text-slate-400 hover:text-red-600 bg-slate-50 hover:bg-red-50 p-1.5 rounded-md transition-colors shadow-sm"
+                               title="Eliminar"
+                             >
+                               <span className="material-symbols-outlined text-[16px]">delete</span>
+                             </button>
+                           </div>
+                           <span className="bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-lg">
+                             {arch.tipo_periodo}
+                           </span>
+                        </div>
                       </div>
                       <h3 className="text-lg font-black text-[#1c355e] mb-1">{arch.nombre_ciclo}</h3>
                       <p className="text-sm text-slate-500 mb-4 flex items-center gap-1">

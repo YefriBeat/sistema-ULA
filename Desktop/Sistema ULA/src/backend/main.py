@@ -2132,7 +2132,7 @@ def actualizar_usuario(usuario_id: int, datos: ActualizarUsuario):
 
 
 @app.get("/api/usuarios/{usuario_id}")
-def obtener_usuario(usuario_id: int):
+def obtener_usuario_por_id(usuario_id: int):
     """Devuelve los datos públicos de un usuario por ID (sin contraseña)."""
     connection = get_db_connection()
     try:
@@ -2762,14 +2762,41 @@ def guardar_horarios(horarios: list[dict], request: Request):
     usuario = obtener_usuario(request)
     try:
         with connection.cursor() as cursor:
-            # Verificar conflictos antes de insertar
+            # Verificar conflictos en bloque para mayor velocidad
+            aulas_involucradas = list(set(h.get("aulaAsignada", h.get("aula_asignada", "Por asignar")) for h in horarios))
+            aulas_filtradas = [a for a in aulas_involucradas if a not in ("Por asignar", "")]
+            
+            existentes_por_aula = {}
+            if aulas_filtradas:
+                format_strings = ','.join(['%s'] * len(aulas_filtradas))
+                query = f"SELECT aula_asignada, horario, asignatura, docente FROM horarios WHERE aula_asignada IN ({format_strings}) AND TRIM(aula_asignada) != '' AND TRIM(aula_asignada) != 'Por asignar'"
+                cursor.execute(query, tuple(aulas_filtradas))
+                for row in cursor.fetchall():
+                    aula = row['aula_asignada']
+                    if aula not in existentes_por_aula:
+                        existentes_por_aula[aula] = []
+                    existentes_por_aula[aula].append(row)
+
             conflictos = []
             for h in horarios:
                 aula = h.get("aulaAsignada", h.get("aula_asignada", "Por asignar"))
+                if aula in ("Por asignar", ""):
+                    continue
                 horario_str = h.get("horario", h.get("horario_resumen", ""))
-                msg = _verificar_conflicto_aula(cursor, aula, horario_str)
-                if msg and msg not in conflictos:
-                    conflictos.append(msg)
+                dia_idx, inicio, fin = _parse_horario_minutos(horario_str)
+                if dia_idx is None or inicio is None or fin is None:
+                    continue
+                
+                for ex in existentes_por_aula.get(aula, []):
+                    e_dia, e_inicio, e_fin = _parse_horario_minutos(ex.get('horario', ''))
+                    if e_dia != dia_idx or e_inicio is None or e_fin is None:
+                        continue
+                    if not (e_fin <= inicio or e_inicio >= fin):
+                        msg = (f"El aula '{aula}' ya está ocupada en ese horario: "
+                               f"{ex['asignatura']} con {ex['docente']} ({ex['horario']})")
+                        if msg not in conflictos:
+                            conflictos.append(msg)
+                            
             if conflictos:
                 raise HTTPException(status_code=409, detail=conflictos[0])
 
@@ -2806,6 +2833,117 @@ def guardar_horarios(horarios: list[dict], request: Request):
         raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al guardar horarios: {str(e)}")
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------
+# ENDPOINTS PARA ARCHIVOS (agrupados por nombre de archivo)
+# ---------------------------------------------------------
+@app.get("/api/archivos")
+def listar_archivos():
+    """Devuelve la lista de archivos cargados con su conteo de horarios y metadatos."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    archivo,
+                    COUNT(*) AS total_horarios,
+                    SUM(CASE WHEN aula_asignada IS NOT NULL AND TRIM(aula_asignada) != '' AND TRIM(aula_asignada) != 'Por asignar' THEN 1 ELSE 0 END) AS aulas_asignadas,
+                    MAX(licenciatura) AS licenciatura,
+                    MAX(semestre) AS semestre,
+                    MAX(cuatrimestre) AS cuatrimestre,
+                    MAX(grupo) AS grupo,
+                    MAX(fecha_creacion) AS fecha_carga,
+                    CASE
+                        WHEN MAX(semestre) IS NOT NULL AND MAX(semestre) != '' THEN 'Semestral'
+                        WHEN MAX(cuatrimestre) IS NOT NULL AND MAX(cuatrimestre) != '' THEN 'Cuatrimestral'
+                        ELSE 'No definido'
+                    END AS plan,
+                    GROUP_CONCAT(DISTINCT CASE WHEN aula_asignada IS NOT NULL AND TRIM(aula_asignada) != '' AND TRIM(aula_asignada) != 'Por asignar' THEN aula_asignada END ORDER BY aula_asignada SEPARATOR ', ') AS aulas_ocupadas,
+                    MIN(SUBSTRING_INDEX(SUBSTRING_INDEX(horario, ' ', -1), '-', 1)) AS rango_inicio,
+                    MAX(SUBSTRING_INDEX(horario, '-', -1)) AS rango_fin
+                FROM horarios
+                WHERE archivo IS NOT NULL AND TRIM(archivo) != ''
+                GROUP BY archivo
+                ORDER BY MAX(fecha_creacion) DESC
+            """)
+            archivos = cursor.fetchall()
+            # Construir rango horario y turno
+            for a in (archivos or []):
+                inicio = a.pop('rango_inicio', '')
+                fin = a.pop('rango_fin', '')
+                if inicio and fin:
+                    a['rango_horario'] = f"{inicio} - {fin}"
+                    try:
+                        hora = int(inicio.split(':')[0])
+                        if hora < 14:
+                            a['turno'] = 'Matutino'
+                        else:
+                            a['turno'] = 'Vespertino'
+                    except:
+                        a['turno'] = None
+                else:
+                    a['rango_horario'] = None
+                    a['turno'] = None
+            return archivos or []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.get("/api/archivos/{nombre_archivo}/horarios")
+def obtener_horarios_por_archivo(nombre_archivo: str):
+    """Devuelve los horarios pertenecientes a un archivo específico."""
+    from urllib.parse import unquote
+    nombre_archivo = unquote(nombre_archivo)
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, docente, licenciatura, asignatura, horario, 
+                       aula_asignada, archivo, semestre, cuatrimestre, grupo,
+                       fecha_creacion
+                FROM horarios
+                WHERE archivo = %s
+                ORDER BY docente, horario
+            """, (nombre_archivo,))
+            horarios = cursor.fetchall()
+            return horarios or []
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@app.delete("/api/archivos/{nombre_archivo}")
+def eliminar_archivo(nombre_archivo: str, request: Request):
+    """Elimina todos los horarios asociados a un archivo."""
+    from urllib.parse import unquote
+    nombre_archivo = unquote(nombre_archivo)
+    connection = get_db_connection()
+    usuario = obtener_usuario(request)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) as total FROM horarios WHERE archivo = %s", (nombre_archivo,))
+            count = cursor.fetchone()
+            if not count or count['total'] == 0:
+                raise HTTPException(status_code=404, detail="Archivo no encontrado")
+            
+            registrar_bitacora(
+                cursor, usuario, 'eliminar_archivo', 'horarios',
+                motivo=f"Eliminacion de archivo: {nombre_archivo} ({count['total']} horarios)"
+            )
+            
+            cursor.execute("DELETE FROM horarios WHERE archivo = %s", (nombre_archivo,))
+            connection.commit()
+            return {"message": f"Archivo '{nombre_archivo}' eliminado con {count['total']} horarios."}
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
 
@@ -5985,35 +6123,33 @@ def cierre_periodo(payload: CierrePeriodo):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            # Check if there are schedules to archive
-            cursor.execute("SELECT * FROM horarios")
-            horarios = cursor.fetchall()
-            
-            if not horarios:
-                return {"message": "No hay horarios actuales para archivar."}
+            # Construir filtro de modalidad
+            where_clause = "1=1"
+            if payload.modalidad == "semestral":
+                where_clause = "semestre IS NOT NULL AND semestre != ''"
+            elif payload.modalidad == "cuatrimestral":
+                where_clause = "cuatrimestre IS NOT NULL AND cuatrimestre != ''"
+
+            # Verificar si hay horarios para archivar con esa modalidad
+            cursor.execute(f"SELECT COUNT(*) as total FROM horarios WHERE {where_clause}")
+            count = cursor.fetchone()
+            if not count or count['total'] == 0:
+                return {"message": "No hay horarios actuales para archivar en esta modalidad."}
                 
-            # Insert into historial_periodos_cerrados
-            for h in horarios:
-                cursor.execute("""
-                    INSERT INTO historial_periodos_cerrados
-                    (nombre_ciclo, tipo_periodo, dia, horario, asignatura, docente, aula_asignada, carrera, semestre, cuatrimestre, grupo)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    payload.nombre_ciclo,
-                    payload.modalidad,
-                    h.get('dia', ''),
-                    h.get('horario', ''),
-                    h.get('asignatura', ''),
-                    h.get('docente', ''),
-                    h.get('aula_asignada', ''),
-                    h.get('carrera', ''),
-                    h.get('semestre', ''),
-                    h.get('cuatrimestre', ''),
-                    h.get('grupo', '')
-                ))
+            # Insertar en bloque
+            cursor.execute(f"""
+                INSERT INTO historial_periodos_cerrados
+                (nombre_ciclo, tipo_periodo, dia, horario, asignatura, docente, aula_asignada, carrera, semestre, cuatrimestre, grupo)
+                SELECT %s, %s, '', horario, asignatura, docente, aula_asignada, licenciatura, semestre, cuatrimestre, grupo
+                FROM horarios
+                WHERE {where_clause}
+            """, (payload.nombre_ciclo, payload.modalidad))
+            
+            # Limpiar los horarios archivados de la vista principal
+            cursor.execute(f"DELETE FROM horarios WHERE {where_clause}")
             
             connection.commit()
-            return {"message": f"Periodo '{payload.nombre_ciclo}' cerrado y archivado correctamente."}
+            return {"message": f"Periodo '{payload.nombre_ciclo}' cerrado y archivado correctamente en lote."}
     except Exception as e:
         connection.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -6035,6 +6171,50 @@ def obtener_historial_periodos():
             """)
             historial = cursor.fetchall()
             return historial
+    finally:
+        connection.close()
+
+class RenombrarHistorialRequest(BaseModel):
+    nombre_ciclo_antiguo: str
+    tipo_periodo: str
+    nuevo_nombre_ciclo: str
+
+@app.delete("/api/historial-periodos")
+def eliminar_historial_periodo(nombre_ciclo: str, tipo_periodo: str):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                DELETE FROM historial_periodos_cerrados
+                WHERE nombre_ciclo = %s AND tipo_periodo = %s
+            """, (nombre_ciclo, tipo_periodo))
+            connection.commit()
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="No se encontraron registros para eliminar.")
+            return {"message": "Historial eliminado correctamente"}
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@app.put("/api/historial-periodos/renombrar")
+def renombrar_historial_periodo(req: RenombrarHistorialRequest):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                UPDATE historial_periodos_cerrados
+                SET nombre_ciclo = %s
+                WHERE nombre_ciclo = %s AND tipo_periodo = %s
+            """, (req.nuevo_nombre_ciclo, req.nombre_ciclo_antiguo, req.tipo_periodo))
+            connection.commit()
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="No se encontraron registros para renombrar.")
+            return {"message": "Historial renombrado correctamente"}
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
 
