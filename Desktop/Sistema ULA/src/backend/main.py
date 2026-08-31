@@ -6044,11 +6044,11 @@ import io
 from openpyxl import Workbook
 
 @app.get("/api/historial-periodos/exportar")
-def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha: str = None):
+def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha: str = None, semestre: str = None, cuatrimestre: str = None, carrera: str = None):
     connection = get_db_connection()
     try:
         with connection.cursor(pymysql.cursors.DictCursor) as cursor:
-            query = "SELECT dia, horario, asignatura, docente, aula_asignada, carrera, semestre, cuatrimestre, grupo, nombre_ciclo as ciclo, tipo_periodo as modalidad, DATE_FORMAT(fecha_archivado, '%Y-%m-%d') as fecha_archivado FROM historial_periodos_cerrados WHERE 1=1"
+            query = "SELECT dia, horario, asignatura, docente, aula_asignada, carrera, semestre, cuatrimestre, grupo, nombre_ciclo as ciclo, tipo_periodo as modalidad, DATE_FORMAT(fecha_archivado, '%%Y-%%m-%%d') as fecha_archivado FROM historial_periodos_cerrados WHERE 1=1"
             params = []
             
             if ciclo and ciclo != 'undefined' and ciclo != 'null':
@@ -6057,6 +6057,18 @@ def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha:
             if modalidad and modalidad != 'undefined' and modalidad != 'null':
                 query += " AND tipo_periodo = %s"
                 params.append(modalidad)
+            if fecha and fecha != 'undefined' and fecha != 'null':
+                query += " AND DATE(fecha_archivado) = %s"
+                params.append(fecha)
+            if semestre and semestre != 'undefined' and semestre != 'null':
+                query += " AND semestre = %s"
+                params.append(semestre)
+            if cuatrimestre and cuatrimestre != 'undefined' and cuatrimestre != 'null':
+                query += " AND cuatrimestre = %s"
+                params.append(cuatrimestre)
+            if carrera and carrera != 'undefined' and carrera != 'null':
+                query += " AND carrera = %s"
+                params.append(carrera)
             
             query += " ORDER BY fecha_archivado DESC, carrera, semestre, cuatrimestre"
             
@@ -6102,7 +6114,7 @@ def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha:
             
             return StreamingResponse(
                 output, 
-                headers=headers, 
+                headers=headers_dict, 
                 media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
     finally:

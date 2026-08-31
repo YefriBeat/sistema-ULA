@@ -134,7 +134,7 @@ export default function GestionHorarios() {
     const hasFiltros = filtroH_semestre || filtroH_cuatri || filtroH_carrera;
     
     const { nombre_ciclo, tipo_periodo, fecha_archivado } = grupoData[0];
-    const fecha = fecha_archivado ? fecha_archivado.split(' ')[0] : '';
+    const fecha = fecha_archivado ? (fecha_archivado.includes('T') ? fecha_archivado.split('T')[0] : fecha_archivado.split(' ')[0]) : '';
     
     if (hasFiltros) {
       Swal.fire({
