@@ -382,6 +382,7 @@ export default function Layout() {
                       <Link 
                         key={cal.id} 
                         to="/calendarios"
+                        state={{ tab: cal.tipo.startsWith('general') ? 'generales' : 'examenes' }}
                         onClick={() => setMostrarAlertas(false)}
                         className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer"
                       >
