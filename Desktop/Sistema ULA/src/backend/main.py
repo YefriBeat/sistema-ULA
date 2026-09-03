@@ -1110,16 +1110,16 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
             text
         )
         if periodo_match:
-            mes_inicio_nombre = periodo_match.group(2).lower()
-            mes_inicio_num = MESES.get(mes_inicio_nombre, 0)
-            if mes_inicio_num == 0:
+            mes_fin_nombre = periodo_match.group(5).lower()
+            mes_fin_num = MESES.get(mes_fin_nombre, 0)
+            if mes_fin_num == 0:
                 return 1
             if plan == 'semestral':
-                return 2 if 2 <= mes_inicio_num <= 7 else 1
+                return 1 if mes_fin_num <= 2 or mes_fin_num >= 11 else 2
             elif plan == 'cuatrimestral':
-                if 1 <= mes_inicio_num <= 4:
+                if mes_fin_num <= 4:
                     return 1
-                elif 5 <= mes_inicio_num <= 8:
+                elif mes_fin_num <= 8:
                     return 2
                 else:
                     return 3
@@ -1191,6 +1191,97 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
             continue
         
         if not tabla_actividades:
+            idx = text.lower().find("clave de colores empleados:")
+            if idx != -1:
+                lineas = text[idx:].split('\n')[1:]
+                for linea in lineas:
+                    linea = linea.strip()
+                    if not linea or ':' not in linea: continue
+                    partes = linea.split(':', 1)
+                    actividad_base = partes[0].strip()
+                    fechas_str = partes[1].strip()
+                    
+                    for sub_ev in fechas_str.split('/'):
+                        sub_ev = sub_ev.strip()
+                        if not sub_ev: continue
+                        
+                        actividad = actividad_base
+                        if '1ro.' in sub_ev: actividad = "Primer " + actividad.lower()
+                        elif '2do.' in sub_ev: actividad = "Segundo " + actividad.lower()
+                        
+                        mes_num = None
+                        tipo_ev, susp = clasificar_evento(actividad)
+                        periodo = detectar_periodo(text, plan, MESES)
+                        
+                        if tipo_ev == 'inhabil':
+                            sub_eventos = re.split(r',|\by\b', sub_ev)
+                            
+                            meses_por_se = []
+                            for se in sub_eventos:
+                                se = se.strip()
+                                m = MESES.get(se.split()[-1].lower()) if len(se.split()) > 1 else None
+                                meses_por_se.append(m)
+                                
+                            for i, se in enumerate(sub_eventos):
+                                se = se.strip()
+                                if not se: continue
+                                
+                                m = meses_por_se[i]
+                                if not m:
+                                    for j in range(i+1, len(sub_eventos)):
+                                        if meses_por_se[j]:
+                                            m = meses_por_se[j]
+                                            break
+                                if m: 
+                                    mes_num = m
+                                elif not mes_num:
+                                    continue
+                                
+                                numeros_se = [int(n) for n in re.findall(r'\b\d{1,2}\b', se) if 1 <= int(n) <= 31]
+                                if not numeros_se: continue
+                                
+                                if ' al ' in se.lower() or ' a ' in se.lower() or '-' in se or '–' in se:
+                                    dia_inicio = numeros_se[0]
+                                    dia_fin = numeros_se[-1]
+                                    anio_inicio = calcular_anio_mes(plan, periodo, mes_num, anio_base, anio_siguiente)
+                                    anio_fin = calcular_anio_mes(plan, periodo, mes_num, anio_base, anio_siguiente)
+                                    fi = f"{anio_inicio}-{mes_num:02d}-{dia_inicio:02d}"
+                                    ff = f"{anio_fin}-{mes_num:02d}-{dia_fin:02d}"
+                                    eventos_crudos.append((plan, ciclo, periodo, tipo_ev, limpiar_descripcion(actividad), fi, ff, 1 if susp else 0))
+                                else:
+                                    for dia in numeros_se:
+                                        anio_m = calcular_anio_mes(plan, periodo, mes_num, anio_base, anio_siguiente)
+                                        fi = f"{anio_m}-{mes_num:02d}-{dia:02d}"
+                                        eventos_crudos.append((plan, ciclo, periodo, tipo_ev, limpiar_descripcion(actividad), fi, fi, 1 if susp else 0))
+                        else:
+                            for m in MESES:
+                                if m in sub_ev.lower():
+                                    mes_num = MESES[m]
+                                    break
+                            if not mes_num: continue
+                            
+                            numeros = [int(n) for n in re.findall(r'\b\d{1,2}\b', sub_ev) if 1 <= int(n) <= 31]
+                            if not numeros: continue
+                            
+                            if ' al ' in sub_ev.lower() or ' a ' in sub_ev.lower() or '-' in sub_ev or '–' in sub_ev:
+                                if len(numeros) >= 2:
+                                    mes_ini = mes_fin = mes_num
+                                    meses_found = [m for m in MESES if m in sub_ev.lower()]
+                                    if len(meses_found) >= 2:
+                                        mes_ini = MESES[meses_found[0]]
+                                        mes_fin = MESES[meses_found[-1]]
+                                    
+                                    anio_ini = calcular_anio_mes(plan, periodo, mes_ini, anio_base, anio_siguiente)
+                                    anio_fin = calcular_anio_mes(plan, periodo, mes_fin, anio_base, anio_siguiente)
+                                    
+                                    fi = f"{anio_ini}-{mes_ini:02d}-{numeros[0]:02d}"
+                                    ff = f"{anio_fin}-{mes_fin:02d}-{numeros[-1]:02d}"
+                                    eventos_crudos.append((plan, ciclo, periodo, tipo_ev, limpiar_descripcion(actividad), fi, ff, 1 if susp else 0))
+                            else:
+                                for dia in numeros:
+                                    anio_m = calcular_anio_mes(plan, periodo, mes_num, anio_base, anio_siguiente)
+                                    fi = f"{anio_m}-{mes_num:02d}-{dia:02d}"
+                                    eventos_crudos.append((plan, ciclo, periodo, tipo_ev, limpiar_descripcion(actividad), fi, fi, 1 if susp else 0))
             continue
         
         periodo = detectar_periodo(text, plan, MESES)
@@ -1249,11 +1340,14 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
             
             if (plan_i == plan_j and ciclo_i == ciclo_j and per_i == per_j and 
                 tipo_i == tipo_j and desc_base.lower() == desc_base_j.lower()):
-                # Fusionar: tomar fecha_inicio más temprana y fecha_fin más tardía
-                fi_i = min(fi_i, fi_j)
-                ff_i = max(ff_i, ff_j)
-                desc_i = desc_base  # Usar nombre limpio sin "(Inician)"/"(Culminan)"
-                fusionados.add(j)
+                
+                # Solo fusionar si uno de los eventos tiene "(Inician)", "(Culminan)", etc.
+                if re.search(r'\((?:inicia[n]?|culmina[n]?|inicio|fin)\)', desc_i + desc_j, flags=re.IGNORECASE):
+                    # Fusionar: tomar fecha_inicio más temprana y fecha_fin más tardía
+                    fi_i = min(fi_i, fi_j)
+                    ff_i = max(ff_i, ff_j)
+                    desc_i = desc_base  # Usar nombre limpio sin "(Inician)"/"(Culminan)"
+                    fusionados.add(j)
         
         eventos_finales.append((plan_i, ciclo_i, per_i, tipo_i, desc_i if desc_i == desc_base else desc_i, fi_i, ff_i, susp_i))
     
@@ -2252,21 +2346,42 @@ def login_usuario(datos: LoginUsuario):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # 1. Intentar coincidencia exacta
             cursor.execute(
                 "SELECT id, nombre, correo, turno, password, is_verified, created_at FROM usuarios WHERE correo = %s",
                 (correo_limpio,)
             )
             usuario = cursor.fetchone()
+            password_valida = False
 
-            if not usuario:
-                raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
+            if usuario:
+                password_valida = bcrypt.checkpw(
+                    datos.password.encode('utf-8'),
+                    usuario['password'].encode('utf-8')
+                )
 
-            password_valida = bcrypt.checkpw(
-                datos.password.encode('utf-8'),
-                usuario['password'].encode('utf-8')
-            )
-
+            # 2. Si no hay coincidencia o la password es incorrecta, intentar autocompletado de dominio
             if not password_valida:
+                patron = None
+                if '@' not in correo_limpio:
+                    patron = f"{correo_limpio}@%.universidadlatino.edu.mx"
+                elif not correo_limpio.endswith('.universidadlatino.edu.mx'):
+                    patron = f"{correo_limpio}%.universidadlatino.edu.mx"
+
+                if patron:
+                    cursor.execute(
+                        "SELECT id, nombre, correo, turno, password, is_verified, created_at FROM usuarios WHERE correo LIKE %s",
+                        (patron,)
+                    )
+                    posibles_usuarios = cursor.fetchall()
+                    
+                    for u in posibles_usuarios:
+                        if bcrypt.checkpw(datos.password.encode('utf-8'), u['password'].encode('utf-8')):
+                            usuario = u
+                            password_valida = True
+                            break
+
+            if not usuario or not password_valida:
                 raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
 
             return {
@@ -2302,8 +2417,8 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
         
         # Validar tipo de archivo
         tipo_archivo = archivo.content_type
-        if tipo_archivo not in ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg']:
-            raise ValueError("Formato no soportado. Usa PDF o imágenes (PNG, JPG).")
+        if tipo_archivo != 'application/pdf':
+            raise ValueError("Formato no soportado. Únicamente se permiten archivos PDF.")
         
         licenciatura_extraida = "Licenciatura no identificada"
         semestre_extraido = ""
@@ -3723,6 +3838,47 @@ def actualizar_horario(horario_id: int, datos: dict, request: Request):
         raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al actualizar horario: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.put("/api/archivos/{nombre_archivo}/renombrar")
+def renombrar_archivo(nombre_archivo: str, datos: dict, request: Request):
+    """
+    Renombra un archivo de horarios y todos sus registros asociados
+    """
+    nuevo_nombre = datos.get("nuevo_nombre")
+    if not nuevo_nombre:
+        raise HTTPException(status_code=400, detail="El nuevo nombre es requerido")
+    
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            # Check if name already exists
+            cursor.execute("SELECT 1 FROM horarios WHERE archivo = %s LIMIT 1", (nuevo_nombre,))
+            if cursor.fetchone():
+                raise HTTPException(status_code=409, detail="Ya existe un archivo con ese nombre")
+            
+            usuario = obtener_usuario(request)
+            
+            # Verificar si existe el archivo antiguo
+            cursor.execute("SELECT 1 FROM horarios WHERE archivo = %s LIMIT 1", (nombre_archivo,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Archivo no encontrado")
+            
+            cursor.execute("UPDATE horarios SET archivo = %s WHERE archivo = %s", (nuevo_nombre, nombre_archivo))
+            
+            registrar_bitacora(
+                cursor, usuario, 'renombrar_archivo_horarios', 'horarios',
+                datos_anteriores={"archivo": nombre_archivo},
+                datos_nuevos={"archivo": nuevo_nombre}
+            )
+        connection.commit()
+        return {"message": "Archivo renombrado exitosamente"}
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al renombrar archivo: {str(e)}")
     finally:
         connection.close()
 

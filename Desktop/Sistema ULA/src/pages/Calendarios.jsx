@@ -275,19 +275,17 @@ export default function Calendarios() {
 
       if (res.ok) {
         if (data.total) {
-          Swal.fire({
+          await Swal.fire({
             icon: 'success',
             title: '¡Datos extraídos!',
             html: `Se extrajeron <b>${data.total}</b> exámenes del PDF y se guardaron en la base de datos.`,
             confirmButtonColor: '#1c355e'
           });
-          // Recargar los datos de exámenes para esta carrera
-          fetchExamenesCarrera(uploadTarget.carrera);
-          setCarreraExpandida(uploadTarget.carrera);
+          window.location.reload();
         } else {
-          Swal.fire('¡Éxito!', data.message, 'success');
+          await Swal.fire('¡Éxito!', data.message, 'success');
+          fetchCalendarios();
         }
-        fetchCalendarios();
       } else {
         Swal.fire('Error', data.detail || 'Ocurrió un error al subir', 'error');
       }
@@ -540,8 +538,8 @@ export default function Calendarios() {
                       const res = await fetch(`${API_URL}/api/calendario-institucional/sincronizar/${cicloSeleccionado}`, { method: 'POST' });
                       const data = await res.json();
                       if (res.ok) {
-                        Swal.fire('¡Listo!', data.message, 'success');
-                        fetchCalendarios(); // Recargar los eventos
+                        await Swal.fire('¡Listo!', data.message, 'success');
+                        window.location.reload();
                       } else {
                         Swal.fire('Error', data.detail || 'Error al sincronizar', 'error');
                       }

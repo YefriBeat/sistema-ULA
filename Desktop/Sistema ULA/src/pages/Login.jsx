@@ -27,10 +27,21 @@ export default function Login() {
     e.preventDefault();
     setCargandoLogin(true);
     try {
+      let finalEmail = email.trim().toLowerCase();
+      
+      // Autocompletado de dominio institucional
+      if (finalEmail.endsWith('@alumno')) {
+        finalEmail += '.universidadlatino.edu.mx';
+      } else if (finalEmail.endsWith('@docente')) {
+        finalEmail += '.universidadlatino.edu.mx';
+      } else if (finalEmail.endsWith('@')) {
+        finalEmail += 'universidadlatino.edu.mx';
+      }
+
       const response = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ correo: email, password })
+        body: JSON.stringify({ correo: finalEmail, password })
       });
       const data = await response.json();
       if (response.ok) {

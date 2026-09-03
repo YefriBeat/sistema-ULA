@@ -5,6 +5,9 @@ import Swal from 'sweetalert2';
 export default function GestionHorarios() {
   const { toast, toasts } = useToast();
   const [confirmacion, setConfirmacion] = useState(null);
+  const [modalRenombrar, setModalRenombrar] = useState(false);
+  const [archivoARenombrar, setArchivoARenombrar] = useState('');
+  const [nuevoNombreArchivo, setNuevoNombreArchivo] = useState('');
 
   const [tipoSubida, setTipoSubida] = useState('individual'); // 'individual' o 'lote'
   const [archivo, setArchivo] = useState(null);
@@ -282,6 +285,38 @@ export default function GestionHorarios() {
     }
   };
 
+  const abrirModalRenombrar = (nombreArchivo) => {
+    setArchivoARenombrar(nombreArchivo);
+    setNuevoNombreArchivo(nombreArchivo);
+    setModalRenombrar(true);
+  };
+
+  const ejecutarRenombrarArchivo = () => {
+    if (!nuevoNombreArchivo || nuevoNombreArchivo === archivoARenombrar) {
+      setModalRenombrar(false);
+      return;
+    }
+    
+    fetch(`${API_URL}/api/archivos/${encodeURIComponent(archivoARenombrar)}/renombrar`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nuevo_nombre: nuevoNombreArchivo })
+    })
+    .then(async res => {
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Error al renombrar");
+      }
+      return res.json();
+    })
+    .then(data => {
+      toast("Archivo renombrado exitosamente", "exito");
+      setModalRenombrar(false);
+      cargarArchivosGuardados();
+    })
+    .catch(err => toast(err.message, "error"));
+  };
+
   const eliminarArchivo = (nombreArchivo) => {
     setConfirmacion({
       mensaje: `¿Está seguro de que desea eliminar "${nombreArchivo}" y todos sus horarios?`,
@@ -388,7 +423,7 @@ export default function GestionHorarios() {
 
   const handleProcesarYAsignar = async () => {
     if (!archivo) {
-      toast("Por favor, arrastra o selecciona un archivo (PDF o imagen).", "advertencia");
+      toast("Por favor, arrastra o selecciona un archivo (solo formato PDF).", "advertencia");
       return;
     }
 
@@ -543,6 +578,38 @@ export default function GestionHorarios() {
     }
   };
 
+  const handleEliminarGrupoLote = (indicesAEliminar) => {
+    setConfirmacion({
+      mensaje: `¿Está seguro de que desea eliminar esta hoja de horarios del lote? No se guardará en la base de datos.`,
+      onConfirmar: () => {
+        if (!datosExtraidos || !datosExtraidos.lista_horarios) return;
+        
+        const nuevaLista = [];
+        const nuevasAsignaciones = {};
+        let nuevoIndice = 0;
+        
+        for (let i = 0; i < datosExtraidos.lista_horarios.length; i++) {
+          if (!indicesAEliminar.includes(i)) {
+            nuevaLista.push(datosExtraidos.lista_horarios[i]);
+            if (asignaciones[i]) {
+              nuevasAsignaciones[nuevoIndice] = asignaciones[i];
+            }
+            nuevoIndice++;
+          }
+        }
+        
+        setAsignaciones(nuevasAsignaciones);
+        
+        if (nuevaLista.length === 0) {
+          setDatosExtraidos(null);
+          setArchivo(null);
+        } else {
+          setDatosExtraidos(prev => ({ ...prev, lista_horarios: nuevaLista }));
+        }
+      }
+    });
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 font-manrope">
       
@@ -590,7 +657,7 @@ export default function GestionHorarios() {
               >
                 <span className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px]">upload_file</span>
-                  Cargar Nuevo
+                  Subir Nuevo
                 </span>
               </button>
             </div>
@@ -719,14 +786,14 @@ export default function GestionHorarios() {
               <div className="p-4 bg-[#f4f3f6] rounded-2xl inline-block text-[#1c355e] mb-4">
                 <span className="material-symbols-outlined text-4xl">folder_open</span>
               </div>
-              <h3 className="text-xl font-bold text-[#1b1c1e] mb-2">No hay archivos cargados</h3>
-              <p className="text-sm text-[#44464e] mb-6">Carga tu primer archivo de horarios para comenzar.</p>
+              <h3 className="text-xl font-bold text-[#1b1c1e] mb-2">No hay archivos subidos</h3>
+              <p className="text-sm text-[#44464e] mb-6">Sube tu primer archivo de horarios para comenzar.</p>
               <button 
                 onClick={() => setVistaActual('cargar')}
                 className="inline-flex items-center gap-2 px-6 py-3 bg-[#1c355e] text-white font-bold rounded-xl hover:bg-[#152a4a] transition-all"
               >
                 <span className="material-symbols-outlined text-base">upload_file</span>
-                Cargar archivo
+                Subir archivo
               </button>
             </div>
           ) : (
@@ -777,6 +844,16 @@ export default function GestionHorarios() {
                         >
                           <span className="material-symbols-outlined text-[18px]">visibility</span>
                           Ver detalles
+                        </button>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            abrirModalRenombrar(archivoGuardado.archivo);
+                          }}
+                          className="w-full text-left px-4 py-2 text-sm text-[#1c355e] font-semibold hover:bg-[#f4f3f6] transition-all flex items-center gap-2 border-t border-[#c5c6cf]/30"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">edit</span>
+                          Renombrar
                         </button>
                         <button 
                           onClick={(e) => {
@@ -852,7 +929,7 @@ export default function GestionHorarios() {
                     <div className="flex justify-between pt-2 border-t border-[#c5c6cf]/30">
                       <span className="flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        Cargado
+                        Subido
                       </span>
                       <span className="font-mono text-xs">
                         {new Date(archivoGuardado.fecha_carga).toLocaleDateString('es-MX')}
@@ -941,7 +1018,7 @@ export default function GestionHorarios() {
                 <div>
                   {archivo ? (
                     <>
-                      <h3 className="text-xl font-bold text-emerald-600">¡Documento Cargado Exitosamente!</h3>
+                      <h3 className="text-xl font-bold text-emerald-600">¡Documento Subido Exitosamente!</h3>
                       <p className="text-sm font-mono text-[#1c355e] mt-1 font-bold bg-[#f4f3f6] px-3 py-1 rounded-lg inline-block">
                         {archivo.name}
                       </p>
@@ -950,7 +1027,7 @@ export default function GestionHorarios() {
                     <>
                       <h3 className="text-xl font-bold text-[#1b1c1e]">Subir Horario Maestro</h3>
                       <p className="text-sm text-[#44464e] mt-1 max-w-sm mx-auto">
-                        Arrastra y suelta tu archivo (PDF o imagen) aquí o haz clic para seleccionarlo.
+                        Arrastra y suelta tu archivo (solo formato PDF) aquí o haz clic para seleccionarlo.
                       </p>
                     </>
                   )}
@@ -959,10 +1036,10 @@ export default function GestionHorarios() {
                 <div className="flex justify-center gap-3">
                   <label className="bg-[#f4f3f6] text-[#1b1c1e] px-5 py-2.5 rounded-xl text-sm font-bold border border-[#c5c6cf]/40 hover:bg-[#eaeaee] transition-all cursor-pointer active:scale-95">
                     {archivo ? "Cambiar Archivo" : "Examinar Archivos"}
-                    <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={handleFileSelect} className="hidden" />
+                    <input type="file" accept=".pdf" onChange={handleFileSelect} className="hidden" />
                   </label>
                 </div>
-                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">Formatos: PDF, PNG, JPG (Máx. 10MB)</span>
+                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">Formatos: Únicamente PDF (Máx. 10MB)</span>
               </div>
             )}
           </div>
@@ -1020,7 +1097,7 @@ export default function GestionHorarios() {
               onClick={() => { setDatosExtraidos(null); setArchivo(null); }}
               className="text-xs bg-red-50 text-red-600 px-4 py-2 rounded-xl font-bold hover:bg-red-100 transition-colors"
             >
-              Cargar otro documento
+              Subir otro documento
             </button>
           </div>
 
@@ -1095,22 +1172,29 @@ export default function GestionHorarios() {
                 {grupos.map((grupo, gIndex) => (
                   <div key={gIndex} className="border-b border-[#c5c6cf]/30 last:border-0">
                     {tipoSubida === 'lote' && (
-                      <div className="bg-[#eaeaee] px-5 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-[#c5c6cf]/30 gap-3">
-                        <h4 className="text-sm font-bold text-[#1c355e]">{grupo.titulo}</h4>
-                        <div className="flex gap-2 items-center w-full sm:w-auto">
-                          <select
-                            onChange={(e) => {
-                              const aula = e.target.value;
-                              if (!aula) return;
-                              const nuevasAsignaciones = { ...asignaciones };
-                              grupo.items.forEach(({ originalIndex }) => {
-                                nuevasAsignaciones[originalIndex] = aula;
-                              });
-                              setAsignaciones(nuevasAsignaciones);
-                              e.target.value = '';
-                            }}
-                            className="px-3 py-1.5 bg-white border border-[#c5c6cf]/60 rounded-lg text-xs font-semibold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 cursor-pointer w-full sm:w-auto"
-                          >
+                      <div className="px-5 py-4 border-b border-[#c5c6cf]/30 bg-[#faf9fc]">
+                        <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="w-7 h-7 rounded-lg bg-[#1c355e]/10 flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[16px] text-[#1c355e]">layers</span>
+                            </div>
+                            <span className="text-xs font-bold text-[#44464e] uppercase tracking-wider whitespace-nowrap">{grupo.titulo}</span>
+                          </div>
+                          
+                          <div className="flex flex-1 gap-2">
+                            <select
+                              onChange={(e) => {
+                                const aula = e.target.value;
+                                if (!aula) return;
+                                const nuevasAsignaciones = { ...asignaciones };
+                                grupo.items.forEach(({ originalIndex }) => {
+                                  nuevasAsignaciones[originalIndex] = aula;
+                                });
+                                setAsignaciones(nuevasAsignaciones);
+                                e.target.value = '';
+                              }}
+                              className="flex-1 px-3.5 py-2.5 bg-white border border-[#c5c6cf]/60 rounded-xl text-sm font-semibold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e] cursor-pointer transition-all"
+                            >
                             <option value="">Asignar aula al grupo...</option>
                             {aulas.map((aula) => {
                               const bloqueada = esBloqueada(aula.nombre);
@@ -1121,8 +1205,19 @@ export default function GestionHorarios() {
                               );
                             })}
                           </select>
+                          <button
+                            onClick={() => {
+                              const indices = grupo.items.map(i => i.originalIndex);
+                              handleEliminarGrupoLote(indices);
+                            }}
+                            className="px-5 py-2.5 rounded-xl font-bold text-sm bg-red-50 text-red-600 hover:bg-red-100 transition-all whitespace-nowrap flex items-center justify-center gap-1.5"
+                            title="Eliminar hoja de horario"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">delete</span>
+                          </button>
                         </div>
                       </div>
+                    </div>
                     )}
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
@@ -1467,6 +1562,40 @@ export default function GestionHorarios() {
                 className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition-all"
               >
                 Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MODAL RENOMBRAR ARCHIVO */}
+      {modalRenombrar && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100]">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-sm shadow-lg">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="material-symbols-outlined text-[#1c355e] text-[28px]">edit_document</span>
+              <h3 className="text-base font-bold text-[#1b1c1e]">Renombrar archivo</h3>
+            </div>
+            <p className="text-sm text-[#44464e] mb-4">Ingrese el nuevo nombre para este archivo:</p>
+            <input 
+              type="text" 
+              className="w-full p-2.5 mb-6 border border-[#c5c6cf] rounded-xl focus:outline-none focus:border-[#1c355e]"
+              value={nuevoNombreArchivo}
+              onChange={(e) => setNuevoNombreArchivo(e.target.value)}
+              autoFocus
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => setModalRenombrar(false)}
+                className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={ejecutarRenombrarArchivo}
+                className="flex-1 py-2.5 rounded-xl bg-[#1c355e] text-white text-sm font-bold hover:bg-[#152a4a] transition-all"
+                disabled={!nuevoNombreArchivo.trim() || nuevoNombreArchivo === archivoARenombrar}
+              >
+                Guardar
               </button>
             </div>
           </div>
