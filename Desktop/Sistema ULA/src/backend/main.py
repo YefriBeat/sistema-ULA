@@ -773,10 +773,45 @@ def _timedelta_to_str(td):
         return f"{total // 3600:02d}:{(total % 3600) // 60:02d}"
     return str(td)[:5] if td else ""
 
+def clean_cid(s):
+    if not s: return ''
+    return re.sub(r'\(cid:\d+\)', ' ', str(s))
+
+def _formatear_asignatura(texto: str) -> str:
+    """Formatea el nombre de la asignatura manteniendo números romanos y conectores en minúsculas."""
+    if not texto:
+        return ""
+    texto = clean_cid(texto)
+    palabras = texto.strip().split()
+    romanos = {'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'}
+    conectores = {'de', 'del', 'en', 'el', 'la', 'los', 'las', 'y', 'e', 'para', 'por', 'a'}
+    
+    resultado = []
+    for idx, p in enumerate(palabras):
+        p_lower = p.lower()
+        if p_lower in romanos:
+            resultado.append(p_lower.upper())
+        elif idx > 0 and p_lower in conectores:
+            resultado.append(p_lower)
+        else:
+            resultado.append(p.capitalize())
+    return ' '.join(resultado)
+
+def _normalizar_para_comparacion(texto: str) -> str:
+    """Normaliza un texto quitando acentos y signos para comparaciones seguras."""
+    import unicodedata
+    if not texto:
+        return ""
+    texto = clean_cid(texto)
+    texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('utf-8')
+    texto = re.sub(r'[^a-zA-Z0-9\s]', ' ', texto)
+    return ' '.join(texto.lower().split())
+
 def _normalizar_licenciatura(texto: str) -> str:
     """Elimina duplicación de palabras en el nombre de licenciatura extraído del PDF."""
     if not texto:
         return texto
+    texto = clean_cid(texto)
     # Palabras pegadas repetidas: "LICENCIATURALICENCIATURA" → "LICENCIATURA"
     texto = re.sub(r'([A-Za-záéíóúÁÉÍÓÚñÑ]{5,})\1', r'\1', texto)
     # Palabras separadas repetidas: "Licenciatura Licenciatura" → "Licenciatura"
@@ -785,7 +820,7 @@ def _normalizar_licenciatura(texto: str) -> str:
     
     # Extraer siglas si están entre paréntesis, por ejemplo: "(ISC Plan 2020)" o "(Der Plan 2024)" -> "ISC", "DER"
     match = re.search(r'\(\s*([A-Za-z]{2,6})\b', texto)
-    if match:
+    if match and match.group(1).upper() not in ['CID', 'PLAN', 'FED']:
         return match.group(1).upper()
         
     return texto
@@ -920,7 +955,9 @@ def parsear_pdf_examenes(file_bytes: bytes) -> list:
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
-            tables = page.extract_tables()
+            text = clean_cid(text)
+            tables_raw = page.extract_tables()
+            tables = [[[clean_cid(c) if c is not None else '' for c in row] for row in table] for table in tables_raw if table]
 
             # Identificar periodos en orden de aparición en el texto
             periodos = []
@@ -1163,7 +1200,9 @@ def _parsear_calendario_institucional_pdf(contenido_pdf: bytes):
     
     for page in pdf.pages:
         text = page.extract_text() or ''
-        tables = page.extract_tables()
+        text = clean_cid(text)
+        tables_raw = page.extract_tables()
+        tables = [[[clean_cid(c) if c is not None else '' for c in row] for row in table] for table in tables_raw if table]
         tabla_actividades = None
         for table in tables:
             if table and len(table) > 1 and table[0]:
@@ -2432,8 +2471,9 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
             pdf_file = BytesIO(contenido)
             
             with pdfplumber.open(pdf_file) as pdf:
+                mapa_docentes_global = {}
                 for page_num, page in enumerate(pdf.pages):
-                    texto_pagina = page.extract_text() or ""
+                    texto_pagina = clean_cid(page.extract_text() or "")
                     for linea in texto_pagina.split('\n'):
                         linea_upper = linea.upper()
                         if "LICENCIATURA EN" in linea_upper or "LICENCIATURA" in linea_upper:
@@ -2445,9 +2485,14 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                         match_grupo = re.search(r'GRUPO:\s*([^\s]+)', linea_upper)
                         if match_grupo: grupo_extraido = match_grupo.group(1)
                     
-                    tables = page.extract_tables()
-                    if not tables:
+                    tables_raw = page.extract_tables()
+                    if not tables_raw:
                         continue
+                    
+                    tables = []
+                    for table in tables_raw:
+                        if not table: continue
+                        tables.append([[clean_cid(c) if c is not None else '' for c in row] for row in table])
                     
                     tabla_matriz = None
                     tabla_directorio = None
@@ -2469,17 +2514,21 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                     if not tabla_matriz or not tabla_directorio:
                         continue
                     
-                    # Construir mapa de docentes
+                    # Construir mapa de docentes por página
+                    mapa_docentes_pagina = {}
                     for row in tabla_directorio:
                         if not row or len(row) < 3: continue
                         asignatura_raw = str(row[0] or "").replace('\n', ' ').strip()
                         docente_raw = str(row[2] or "").replace('\n', ' ').strip()
                         
-                        asignatura_raw = " ".join(asignatura_raw.split()).lower()
-                        docente_raw = " ".join(docente_raw.split())
+                        asignatura_clean = _formatear_asignatura(asignatura_raw)
+                        docente_clean = " ".join(clean_cid(docente_raw).split())
                         
-                        if asignatura_raw and docente_raw and "asignatura" not in asignatura_raw:
-                            mapa_docentes[asignatura_raw] = docente_raw
+                        if asignatura_clean and docente_clean and "asignatura" not in asignatura_clean.lower():
+                            kn = _normalizar_para_comparacion(asignatura_clean)
+                            if kn:
+                                mapa_docentes_pagina[kn] = docente_clean
+                                mapa_docentes_global[kn] = docente_clean
                     
                     # Procesar matriz de horarios
                     dias_indices = {}
@@ -2506,24 +2555,35 @@ async def procesar_pdf(archivo: UploadFile = File(...)):
                         
                         for dia_nombre, idx_col in dias_indices.items():
                             if idx_col < len(row):
-                                asignatura_celda = str(row[idx_col] or "").replace('\n', ' ').strip()
-                                asignatura_celda = " ".join(asignatura_celda.split())
+                                asignatura_celda_raw = str(row[idx_col] or "").replace('\n', ' ').strip()
+                                asignatura_celda = " ".join(asignatura_celda_raw.split())
                                 
                                 if asignatura_celda and asignatura_celda.lower() not in ["", "sin especificar", "horario"]:
-                                    key_busqueda = asignatura_celda.lower()
-                                    docente_encontrado = mapa_docentes.get(key_busqueda, "Sin especificar")
+                                    kn = _normalizar_para_comparacion(asignatura_celda)
+                                    docente_encontrado = mapa_docentes_pagina.get(kn)
                                     
-                                    if docente_encontrado == "Sin especificar":
-                                        for key_mapa, doc in mapa_docentes.items():
-                                            if key_mapa in key_busqueda or key_busqueda in key_mapa:
+                                    if not docente_encontrado:
+                                        for k_mapa, doc in mapa_docentes_pagina.items():
+                                            if k_mapa in kn or kn in k_mapa:
                                                 docente_encontrado = doc
                                                 break
+                                    
+                                    if not docente_encontrado:
+                                        docente_encontrado = mapa_docentes_global.get(kn)
+                                        if not docente_encontrado:
+                                            for k_mapa, doc in mapa_docentes_global.items():
+                                                if k_mapa in kn or kn in k_mapa:
+                                                    docente_encontrado = doc
+                                                    break
+                                                    
+                                    if not docente_encontrado:
+                                        docente_encontrado = "Sin especificar"
                                     
                                     horarios_compilados.append({
                                         "id": f"{page_num}_{row_num}_{idx_col}",
                                         "docente": docente_encontrado,
                                         "licenciatura": licenciatura_extraida,
-                                        "asignatura": asignatura_celda.title(),
+                                        "asignatura": _formatear_asignatura(asignatura_celda),
                                         "horario_resumen": f"{dia_nombre} {horario_slot}",
                                         "aula_asignada": "",
                                         "semestre": semestre_extraido,
