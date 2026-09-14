@@ -1081,7 +1081,7 @@ export default function GestionAulas() {
         </div>
 
         {/* ── ESTADÍSTICAS (COSTADO DERECHO INTERACTIVO) ─────────────────────── */}
-        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-3 self-start pr-1 pb-4">
+        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-3 xl:sticky xl:top-24 self-start xl:max-h-[calc(100vh-8rem)] overflow-y-auto pr-1 pb-4">
           {/* Total de Aulas */}
           <div
             onClick={() => { setFiltroTipo(filtroTipo === 'aulas' ? 'todos' : 'aulas'); setFiltroEstado('todos'); }}

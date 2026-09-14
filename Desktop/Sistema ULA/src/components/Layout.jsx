@@ -559,7 +559,7 @@ export default function Layout() {
         </aside>
 
         {/* CONTENIDO PRINCIPAL - RESPONSIVO MÓVIL / TABLET / COMPUTADORA */}
-        <main className="flex-1 lg:ml-64 p-3 sm:p-6 lg:p-8 w-full max-w-full min-w-0 transition-all duration-300 overflow-x-hidden">
+        <main className="flex-1 lg:ml-64 p-3 sm:p-6 lg:p-8 w-full max-w-full min-w-0 transition-all duration-300">
           <Outlet />
         </main>
       </div>
