@@ -6,6 +6,7 @@
 /* ── Estilos base globales y Ajuste Automático Responsivo ──────────────────── */
 @layer base {
   html, body, #root {
+    font-size: 90%;
     font-family: 'Manrope', sans-serif;
     background-color: #faf9fc;
     color: #1b1c1e;
