@@ -775,7 +775,6 @@ def _timedelta_to_str(td):
 
 def clean_cid(s):
     if not s: return ''
-    import re
     return re.sub(r'\(cid:\d+\)', ' ', str(s), flags=re.IGNORECASE)
 
 def _formatear_asignatura(texto: str) -> str:
@@ -800,7 +799,6 @@ def _formatear_asignatura(texto: str) -> str:
 
 def _normalizar_para_comparacion(texto: str) -> str:
     """Normaliza un texto quitando acentos y signos para comparaciones seguras."""
-    import unicodedata
     if not texto:
         return ""
     texto = clean_cid(texto)

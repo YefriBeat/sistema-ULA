@@ -108,7 +108,7 @@ export default function App() {
             </Routes>
           </BrowserRouter>
         </UserProvider>
-        <TimeTravelDebugger />
+        {import.meta.env.DEV && <TimeTravelDebugger />}
       </TimeProvider>
     </ErrorBoundary>
   );

@@ -30,7 +30,7 @@ export default function GestionHorarios() {
   const [filtroH_cuatri, setFiltroH_cuatri] = useState('');
   const [filtroH_carrera, setFiltroH_carrera] = useState('');
   
-  const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : 'https://sistema-ula-backend.onrender.com';
+  const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
 
   
   const handleRenombrarHistorial = (arch) => {

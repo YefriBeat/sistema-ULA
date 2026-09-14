@@ -197,7 +197,7 @@ export default function Layout() {
     };
 
     cargarExamenesHoy();
-  }, [usuario]);
+  }, [usuario.id]);
 
   useEffect(() => {
     const handleClickFuera = (event) => {
