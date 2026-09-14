@@ -498,8 +498,8 @@ export default function Layout() {
 
         {/* SIDEBAR (MENÚ LATERAL) */}
         <aside
-          className={`bg-[#0e2045] min-h-screen w-64 shadow-2xl fixed left-0 top-0 flex flex-col z-50 transform transition-transform duration-300 ease-in-out ${menuAbierto ? 'translate-x-0' : '-translate-x-full'
-            } lg:translate-x-0 border-r border-[#1c355e]`}
+          className={`bg-[#1c355e] min-h-screen w-64 shadow-2xl fixed left-0 top-0 flex flex-col z-50 transform transition-transform duration-300 ease-in-out ${menuAbierto ? 'translate-x-0' : '-translate-x-full'
+            } lg:translate-x-0 border-r border-[#264478]`}
         >
           {/* Botón de cerrar (Solo móvil) */}
           <button
