@@ -1712,7 +1712,7 @@ export default function GestionDocentes() {
         </div>
 
         {/* ── ESTADÍSTICAS (COSTADO DERECHO) ─────────────────────────────────── */}
-        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 xl:sticky xl:top-24 self-start xl:max-h-[calc(100vh-7rem)] overflow-y-auto pr-1">
+        <div className="w-full xl:w-72 flex-shrink-0 flex flex-col gap-4 self-start pr-1">
           <button
             onClick={() => setFiltro('todos')}
             className={`text-left w-full transition-all cursor-pointer rounded-2xl ${
