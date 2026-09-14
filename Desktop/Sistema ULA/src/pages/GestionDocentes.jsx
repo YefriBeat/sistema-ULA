@@ -1408,7 +1408,7 @@ export default function GestionDocentes() {
         
         {/* ── CARDS DE DOCENTES ──────────────────────────────────────────────── */}
         <div className="flex-1 w-full">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
             {cargando ? (
               <div className="col-span-full flex flex-col items-center py-16 text-[#75777f]">
                 <span className="material-symbols-outlined animate-spin text-3xl mb-2">sync</span>

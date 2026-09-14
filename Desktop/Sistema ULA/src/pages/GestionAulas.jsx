@@ -786,7 +786,7 @@ export default function GestionAulas() {
         
         {/* ── LISTA DE AULAS ──────────────────────────────────────────────── */}
         <div className="flex-1 w-full">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
             {cargando ? (
           <p className="col-span-full text-center">Cargando datos...</p>
         ) : aulasFiltradas.length === 0 ? (
