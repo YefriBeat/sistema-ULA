@@ -1574,8 +1574,8 @@ def _es_fecha_pasada(fecha_str: str) -> bool:
         
     try:
         fecha_exam = datetime(year, mes_num, dia)
-        # Se considera "pasado" si ya pasaron más de 5 días desde la fecha del examen
-        return (today - fecha_exam).days > 5
+        # Se considera "pasado" si ya pasaron más de 60 días desde la fecha del examen (aumentado para evitar purga inmediata)
+        return (today - fecha_exam).days > 60
     except ValueError:
         return False
 
