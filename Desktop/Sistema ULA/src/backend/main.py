@@ -775,7 +775,8 @@ def _timedelta_to_str(td):
 
 def clean_cid(s):
     if not s: return ''
-    return re.sub(r'\(cid:\d+\)', ' ', str(s))
+    import re
+    return re.sub(r'\(cid:\d+\)', ' ', str(s), flags=re.IGNORECASE)
 
 def _formatear_asignatura(texto: str) -> str:
     """Formatea el nombre de la asignatura manteniendo números romanos y conectores en minúsculas."""
