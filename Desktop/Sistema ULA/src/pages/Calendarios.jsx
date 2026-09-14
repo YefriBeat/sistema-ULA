@@ -281,7 +281,10 @@ export default function Calendarios() {
             html: `Se extrajeron <b>${data.total}</b> exámenes del PDF y se guardaron en la base de datos.`,
             confirmButtonColor: '#1c355e'
           });
-          window.location.reload();
+          fetchCalendarios();
+          if (uploadTarget.carrera) {
+            fetchExamenesCarrera(uploadTarget.carrera);
+          }
         } else {
           await Swal.fire('¡Éxito!', data.message, 'success');
           fetchCalendarios();
