@@ -221,7 +221,7 @@ export default function Calendarios() {
 
   const fetchExamenesCarrera = async (carrera) => {
     try {
-      const res = await fetch(`${API_URL}/api/examenes-calendario/${carrera}`);
+      const res = await fetch(`${API_URL}/api/examenes-calendario/${carrera}?ciclo_escolar=${cicloSeleccionado}`);
       const data = await res.json();
       setExamenesData(prev => ({ ...prev, [carrera]: Array.isArray(data) ? data : [] }));
     } catch (error) {

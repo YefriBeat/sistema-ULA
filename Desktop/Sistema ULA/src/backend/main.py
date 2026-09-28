@@ -53,6 +53,7 @@ def migrar_columnas_verificacion():
                 "ALTER TABLE horarios ADD COLUMN fecha_reposicion DATE NULL",
                 "ALTER TABLE horarios ADD COLUMN es_reposicion BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE examenes_calendario ADD COLUMN archivo_origen VARCHAR(255) NULL",
+                "ALTER TABLE examenes_calendario ADD COLUMN ciclo_escolar VARCHAR(20) DEFAULT '2025-2026'",
                 """CREATE TABLE IF NOT EXISTS docentes (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     nombre VARCHAR(200) NOT NULL,
@@ -103,6 +104,7 @@ def migrar_columnas_verificacion():
                     dia VARCHAR(30) DEFAULT '',
                     fecha VARCHAR(100) DEFAULT '',
                     materia VARCHAR(250) NOT NULL,
+                    ciclo_escolar VARCHAR(20) DEFAULT '2025-2026',
                     created_at DATETIME DEFAULT NOW()
                 )""",
                 """CREATE TABLE IF NOT EXISTS calendario_institucional (
@@ -921,7 +923,7 @@ def eliminar_ciclo_escolar(ciclo_escolar: str):
             cursor.execute("SELECT archivo_nombre FROM calendarios WHERE ciclo_escolar = %s AND tipo = 'examenes'", (ciclo_escolar,))
             archivos_examenes = cursor.fetchall()
             for arc in archivos_examenes:
-                cursor.execute("DELETE FROM examenes_calendario WHERE archivo_origen = %s", (arc['archivo_nombre'],))
+                cursor.execute("DELETE FROM examenes_calendario WHERE archivo_origen = %s AND ciclo_escolar = %s", (arc['archivo_nombre'], ciclo_escolar))
                 
             # Eliminar eventos institucionales sincronizados
             cursor.execute("DELETE FROM calendario_institucional WHERE ciclo = %s", (ciclo_escolar,))
@@ -1504,13 +1506,13 @@ async def subir_calendario(
                     raise HTTPException(status_code=400, detail="No se encontraron datos de exámenes en el PDF. Verifica que el formato sea correcto.")
 
                 # Borrar SOLO los datos si se está resubiendo el MISMO archivo (para permitir correcciones)
-                cursor.execute("DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s", (carrera, archivo.filename))
+                cursor.execute("DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s AND ciclo_escolar = %s", (carrera, archivo.filename, ciclo_escolar))
 
                 # Insertar cada examen extraído
                 for d in datos:
                     cursor.execute(
-                        "INSERT INTO examenes_calendario (carrera, periodo, semestre, dia, fecha, materia, archivo_origen) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                        (carrera, d['periodo'], d['semestre'], d['dia'], d['fecha'], d['materia'], archivo.filename)
+                        "INSERT INTO examenes_calendario (carrera, periodo, semestre, dia, fecha, materia, archivo_origen, ciclo_escolar) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (carrera, d['periodo'], d['semestre'], d['dia'], d['fecha'], d['materia'], archivo.filename, ciclo_escolar)
                     )
 
                 # Registrar en la tabla de calendarios (como historial)
@@ -1579,14 +1581,14 @@ def _es_fecha_pasada(fecha_str: str) -> bool:
 
 
 @app.get("/api/examenes-calendario/{carrera}")
-def obtener_examenes_calendario(carrera: str):
+def obtener_examenes_calendario(carrera: str, ciclo_escolar: str = "2025-2026"):
     """Retorna los exámenes extraídos para la carrera y elimina automáticamente los calendarios finalizados."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id, periodo, semestre, dia, fecha, materia, archivo_origen FROM examenes_calendario WHERE carrera = %s ORDER BY id",
-                (carrera,)
+                "SELECT id, periodo, semestre, dia, fecha, materia, archivo_origen FROM examenes_calendario WHERE carrera = %s AND ciclo_escolar = %s ORDER BY id",
+                (carrera, ciclo_escolar)
             )
             datos = cursor.fetchall()
             
@@ -1617,8 +1619,8 @@ def obtener_examenes_calendario(carrera: str):
                     
             # Borrar de la DB los que ya pasaron
             for clave in archivos_a_borrar:
-                cursor.execute("DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s", (carrera, clave))
-                cursor.execute("DELETE FROM calendarios WHERE carrera = %s AND archivo_nombre = %s", (carrera, clave))
+                cursor.execute("DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s AND ciclo_escolar = %s", (carrera, clave, ciclo_escolar))
+                cursor.execute("DELETE FROM calendarios WHERE carrera = %s AND archivo_nombre = %s AND ciclo_escolar = %s", (carrera, clave, ciclo_escolar))
             if archivos_a_borrar:
                 connection.commit()
                 
