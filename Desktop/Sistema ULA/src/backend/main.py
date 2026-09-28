@@ -1633,13 +1633,16 @@ def obtener_examenes_calendario(carrera: str, ciclo_escolar: str = "2025-2026"):
 
 
 @app.get("/api/examenes-hoy")
-def examenes_hoy():
-    """Retorna todos los exámenes programados"""
+def examenes_hoy(ciclo_escolar: str = None):
+    """Retorna todos los exámenes programados del ciclo especificado o del actual."""
+    if not ciclo_escolar:
+        ciclo_escolar = ciclos_disponibles()["ciclo_actual"]
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT DISTINCT carrera, materia, periodo, semestre, dia, fecha FROM examenes_calendario ORDER BY carrera, semestre"
+                "SELECT DISTINCT carrera, materia, periodo, semestre, dia, fecha FROM examenes_calendario WHERE ciclo_escolar = %s ORDER BY carrera, semestre",
+                (ciclo_escolar,)
             )
             datos = cursor.fetchall()
         return datos
@@ -3318,14 +3321,16 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
                 date_str_texto = f"{date_obj.day:02d} de {meses_nombres[date_obj.month]}"
                 date_str_iso = date_obj.strftime("%Y-%m-%d")
                 date_str_ddmmyyyy = date_obj.strftime("%d/%m/%Y")
+                ciclo_actual_estado = ciclos_disponibles(date_str_iso)["ciclo_actual"]
                 
                 cursor.execute("""
                     SELECT materia FROM examenes_calendario 
-                    WHERE LOWER(fecha) = LOWER(%s)
+                    WHERE ciclo_escolar = %s
+                      AND (LOWER(fecha) = LOWER(%s)
                        OR LOWER(fecha) = LOWER(%s)
                        OR LOWER(fecha) = LOWER(%s)
-                       OR (TRIM(fecha) = '' AND LOWER(dia) = LOWER(%s))
-                """, (date_str_texto, date_str_iso, date_str_ddmmyyyy, dia_str))
+                       OR (TRIM(fecha) = '' AND LOWER(dia) = LOWER(%s)))
+                """, (ciclo_actual_estado, date_str_texto, date_str_iso, date_str_ddmmyyyy, dia_str))
                 examenes_hoy_materias = {normalize_subject(row['materia']) for row in cursor.fetchall()}
             else:
                 examenes_hoy_materias = set()
