@@ -97,6 +97,32 @@ export function UserProvider({ children }) {
     };
   }, [usuario.id]);
 
+  // ── Heartbeat de presencia en tiempo real ──────────────────────────────────
+  useEffect(() => {
+    if (!usuario.id && !usuario.correo) return;
+
+    const enviarPing = () => {
+      try {
+        fetch('/api/usuarios/ping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usuario_id: usuario.id, correo: usuario.correo }),
+          keepalive: true
+        }).catch(() => {});
+      } catch {}
+    };
+
+    // Ping inmediato al montar o loguearse
+    enviarPing();
+
+    // Ping periódico cada 45 segundos mientras la sesión esté activa
+    const intervaloPing = setInterval(enviarPing, 45000);
+
+    return () => {
+      clearInterval(intervaloPing);
+    };
+  }, [usuario.id, usuario.correo]);
+
   return (
     <UserContext.Provider value={{ usuario, actualizarUsuario }}>
       {children}

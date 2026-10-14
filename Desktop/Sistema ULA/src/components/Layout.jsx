@@ -248,6 +248,16 @@ export default function Layout() {
   const alertaActual = calendariosPendientes.length > 0 ? calendariosPendientes[alertaActualIndex] : null;
 
   const cerrarSesion = () => {
+    try {
+      if (usuario.id || usuario.correo) {
+        fetch('/api/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usuario_id: usuario.id, correo: usuario.correo }),
+          keepalive: true
+        }).catch(() => {});
+      }
+    } catch {}
     localStorage.removeItem('usuarioLogueado');
     localStorage.removeItem('sesionFecha');
     sessionStorage.clear();

@@ -62,12 +62,18 @@ export default function ConfiguracionPerfil() {
     setUltimaActualizacion(localStorage.getItem('perfil_actualizado_en') || null);
   }, []);
 
-  // ── Fetch lista de usuarios ────────────────────────────────────────────────
+  // ── Fetch lista de usuarios (actualización periódica) ────────────────────
   useEffect(() => {
-    fetch('/api/usuarios')
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setUsuarios(Array.isArray(data) ? data : []))
-      .catch(() => { });
+    const cargarUsuarios = () => {
+      fetch('/api/usuarios')
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setUsuarios(Array.isArray(data) ? data : []))
+        .catch(() => { });
+    };
+
+    cargarUsuarios();
+    const intervalUsuarios = setInterval(cargarUsuarios, 15000);
+    return () => clearInterval(intervalUsuarios);
   }, []);
 
 
@@ -400,7 +406,8 @@ export default function ConfiguracionPerfil() {
                 </div>
               ) : (
                 usuarios.map(u => {
-                  const esMismo = u.id === usuario.id;
+                  const esMismo = String(u.id) === String(usuario.id) || u.correo === usuario.correo;
+                  const estaConectado = Boolean(u.en_linea) || esMismo;
                   const turnoU = TURNO_LABEL[u.turno?.toLowerCase()] || u.turno || '—';
                   return (
                     <div key={u.id}
@@ -411,7 +418,7 @@ export default function ConfiguracionPerfil() {
                           }`}>
                           {(u.nombre || 'U').charAt(0).toUpperCase()}
                         </div>
-                        <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${esMismo ? 'bg-green-400' : 'bg-[#c5c6cf]'}`} />
+                        <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${estaConectado ? 'bg-green-400' : 'bg-[#c5c6cf]'}`} />
                       </div>
 
                       {/* Info */}
@@ -428,10 +435,10 @@ export default function ConfiguracionPerfil() {
                       {/* Estado / Acciones */}
                       <div className="flex-shrink-0 flex items-center gap-3">
                         <div className="text-right space-y-1">
-                          <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-2 py-0.5 rounded-full ${esMismo ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-[#f4f3f6] text-[#75777f] border border-[#c5c6cf]/30'
+                          <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-2 py-0.5 rounded-full ${estaConectado ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-[#f4f3f6] text-[#75777f] border border-[#c5c6cf]/30'
                             }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${esMismo ? 'bg-green-400 animate-pulse' : 'bg-[#c5c6cf]'}`} />
-                            {esMismo ? 'En línea' : 'Desconectado'}
+                            <span className={`w-1.5 h-1.5 rounded-full ${estaConectado ? 'bg-green-400 animate-pulse' : 'bg-[#c5c6cf]'}`} />
+                            {estaConectado ? 'En línea' : 'Desconectado'}
                           </span>
                           {u.turno && <p className="text-[9px] text-[#75777f] font-medium">{turnoU}</p>}
                         </div>
@@ -456,10 +463,15 @@ export default function ConfiguracionPerfil() {
               <p className="text-xs text-[#75777f] font-bold">
                 {usuarios.length} usuario{usuarios.length !== 1 ? 's' : ''} registrado{usuarios.length !== 1 ? 's' : ''}
               </p>
-              <span className="flex items-center gap-1.5 text-xs font-bold text-green-600 bg-green-50 px-2.5 py-1 rounded-lg">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                1 en línea
-              </span>
+              {(() => {
+                const totalEnLinea = usuarios.filter(u => Boolean(u.en_linea) || (String(u.id) === String(usuario.id) || u.correo === usuario.correo)).length;
+                return (
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-green-600 bg-green-50 px-2.5 py-1 rounded-lg">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                    {totalEnLinea} en línea
+                  </span>
+                );
+              })()}
             </div>
           </div>
 

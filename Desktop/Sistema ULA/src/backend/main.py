@@ -38,6 +38,7 @@ def migrar_columnas_verificacion():
         with connection.cursor() as cursor:
             for sentencia in [
                 "ALTER TABLE usuarios ADD COLUMN is_verified BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE usuarios ADD COLUMN ultima_conexion DATETIME NULL",
                 "ALTER TABLE usuarios ADD COLUMN verification_code VARCHAR(6) NULL",
                 "ALTER TABLE usuarios ADD COLUMN reset_code VARCHAR(6) NULL",
                 "ALTER TABLE aulas ADD COLUMN en_mantenimiento BOOLEAN NOT NULL DEFAULT FALSE",
@@ -675,6 +676,10 @@ class VerificacionCorreo(BaseModel):
 
 class ReenviarCodigo(BaseModel):
     correo: str
+
+class UsuarioPing(BaseModel):
+    usuario_id: Optional[int] = None
+    correo: Optional[str] = None
 
 class RecuperarContrasena(BaseModel):
     correo: str
@@ -2372,28 +2377,73 @@ def obtener_usuario_por_id(usuario_id: int):
 
 @app.get("/api/usuarios")
 def listar_usuarios():
-    """Lista todos los usuarios registrados (sin datos sensibles)."""
+    """Lista todos los usuarios registrados calculando en tiempo real si están en línea."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT id, nombre, correo, turno, is_verified, created_at
+                SELECT id, nombre, correo, turno, is_verified, created_at, ultima_conexion,
+                       CASE 
+                           WHEN ultima_conexion IS NOT NULL AND ultima_conexion >= NOW() - INTERVAL 4 MINUTE THEN 1 
+                           ELSE 0 
+                       END as en_linea
                 FROM usuarios ORDER BY nombre
             """)
             usuarios = cursor.fetchall()
         result = []
         for u in (usuarios or []):
             result.append({
-                'id':          u['id'],
-                'nombre':      u['nombre'],
-                'correo':      u['correo'],
-                'turno':       u['turno'] or '',
-                'is_verified': bool(u.get('is_verified', False)),
-                'created_at':  u['created_at'].isoformat() if u.get('created_at') else None,
+                'id':              u['id'],
+                'nombre':          u['nombre'],
+                'correo':          u['correo'],
+                'turno':           u['turno'] or '',
+                'is_verified':     bool(u.get('is_verified', False)),
+                'en_linea':        bool(u.get('en_linea', 0)),
+                'ultima_conexion': u['ultima_conexion'].isoformat() if u.get('ultima_conexion') else None,
+                'created_at':      u['created_at'].isoformat() if u.get('created_at') else None,
             })
         return result
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener usuarios: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/usuarios/ping")
+def ping_usuario(datos: UsuarioPing):
+    """Actualiza la marca de tiempo de última conexión del usuario para presencia en tiempo real."""
+    if not datos.usuario_id and not datos.correo:
+        return {"success": False, "message": "Identificador no proporcionado"}
+        
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            if datos.usuario_id:
+                cursor.execute("UPDATE usuarios SET ultima_conexion = NOW() WHERE id = %s", (datos.usuario_id,))
+            elif datos.correo:
+                cursor.execute("UPDATE usuarios SET ultima_conexion = NOW() WHERE correo = %s", (datos.correo.strip().lower(),))
+        connection.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        connection.close()
+
+
+@app.post("/api/logout")
+def logout_usuario(datos: UsuarioPing):
+    """Marca la última conexión del usuario como inactiva al cerrar sesión."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            if datos.usuario_id:
+                cursor.execute("UPDATE usuarios SET ultima_conexion = NULL WHERE id = %s", (datos.usuario_id,))
+            elif datos.correo:
+                cursor.execute("UPDATE usuarios SET ultima_conexion = NULL WHERE correo = %s", (datos.correo.strip().lower(),))
+        connection.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
     finally:
         connection.close()
 
@@ -2536,6 +2586,9 @@ def login_usuario(datos: LoginUsuario):
                     status_code=403, 
                     detail="Tu cuenta no ha sido verificada. Debes ingresar el código enviado a tu correo institucional."
                 )
+
+            cursor.execute("UPDATE usuarios SET ultima_conexion = NOW() WHERE id = %s", (usuario['id'],))
+            connection.commit()
 
             return {
                 "message": "Login exitoso",
