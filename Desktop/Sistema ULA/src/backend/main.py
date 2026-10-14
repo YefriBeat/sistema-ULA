@@ -20,7 +20,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -672,6 +672,9 @@ class CambiarPassword(BaseModel):
 class VerificacionCorreo(BaseModel):
     correo: str
     codigo: str
+
+class ReenviarCodigo(BaseModel):
+    correo: str
 
 class RecuperarContrasena(BaseModel):
     correo: str
@@ -2242,31 +2245,54 @@ def obtener_eventos_deduplicados(plan: str = "semestral", ciclo: str = ""):
 
 
 @app.post("/api/registro")
-def registrar_usuario(datos: RegistroUsuario):
+def registrar_usuario(datos: RegistroUsuario, background_tasks: BackgroundTasks):
     correo_limpio = datos.correo.strip().lower()
     if not correo_limpio.endswith("universidadlatino.edu.mx"):
         raise HTTPException(status_code=400, detail="El correo debe pertenecer a la Universidad Latino.")
 
     password_hasheada = bcrypt.hashpw(datos.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    codigo_otp = f"{secrets.randbelow(900000) + 100000}"
+    expira_otp = datetime.now() + timedelta(minutes=15)
 
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM usuarios WHERE correo = %s", (correo_limpio,))
-            if cursor.fetchone():
-                raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
+            cursor.execute("SELECT id, is_verified FROM usuarios WHERE correo = %s", (correo_limpio,))
+            usuario_existente = cursor.fetchone()
+            
+            if usuario_existente:
+                if usuario_existente.get('is_verified'):
+                    raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado y verificado. Inicia sesión.")
+                else:
+                    # Actualizar datos y generar nuevo código para cuenta aún no verificada
+                    cursor.execute("""
+                        UPDATE usuarios 
+                        SET nombre = %s, turno = %s, password = %s, verification_code = %s, verification_code_expira = %s 
+                        WHERE id = %s
+                    """, (datos.nombre.strip(), datos.turno, password_hasheada, codigo_otp, expira_otp, usuario_existente['id']))
+            else:
+                cursor.execute("""
+                    INSERT INTO usuarios (nombre, correo, turno, password, is_verified, verification_code, verification_code_expira)
+                    VALUES (%s, %s, %s, %s, FALSE, %s, %s)
+                """, (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada, codigo_otp, expira_otp))
 
-            cursor.execute(
-                "INSERT INTO usuarios (nombre, correo, turno, password, is_verified) VALUES (%s, %s, %s, %s, TRUE)",
-                (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada)
-            )
         connection.commit()
+    except HTTPException:
+        raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error en la base de datos: {str(e)}")
     finally:
         connection.close()
 
-    return {"message": "Usuario registrado correctamente. Ya puedes iniciar sesión."}
+    # Enviar correo en segundo plano para que la respuesta sea instantánea y rápida
+    background_tasks.add_task(enviar_correo_otp, correo_limpio, codigo_otp, datos.nombre.strip())
+
+    return {
+        "success": True,
+        "requiere_verificacion": True,
+        "correo": correo_limpio,
+        "message": f"Hemos enviado un código de 6 dígitos a {correo_limpio}. Ingrésalo para verificar tu cuenta."
+    }
 
 
 @app.delete("/api/usuarios/{usuario_id}")
@@ -2423,9 +2449,39 @@ def verificar_correo(datos: VerificacionCorreo):
                 (usuario['id'],)
             )
         connection.commit()
-        return {"message": "Correo verificado correctamente. Ya puedes iniciar sesión."}
+        return {"success": True, "message": "Correo verificado correctamente. Ya puedes iniciar sesión."}
+    except HTTPException:
+        raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error en la base de datos: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/reenviar-codigo")
+def reenviar_codigo_verificacion(datos: ReenviarCodigo, background_tasks: BackgroundTasks):
+    correo_limpio = datos.correo.strip().lower()
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, nombre, is_verified FROM usuarios WHERE correo = %s", (correo_limpio,))
+            usuario = cursor.fetchone()
+            if not usuario:
+                raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+            if usuario.get('is_verified'):
+                return {"success": True, "message": "Tu cuenta ya está verificada. Puedes iniciar sesión."}
+
+            nuevo_codigo = f"{secrets.randbelow(900000) + 100000}"
+            expira = datetime.now() + timedelta(minutes=15)
+
+            cursor.execute(
+                "UPDATE usuarios SET verification_code = %s, verification_code_expira = %s WHERE id = %s",
+                (nuevo_codigo, expira, usuario['id'])
+            )
+            connection.commit()
+
+        background_tasks.add_task(enviar_correo_otp, correo_limpio, nuevo_codigo, usuario['nombre'])
+        return {"success": True, "message": "Nuevo código enviado a tu correo institucional."}
     finally:
         connection.close()
 
@@ -2474,6 +2530,12 @@ def login_usuario(datos: LoginUsuario):
 
             if not usuario or not password_valida:
                 raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
+
+            if not bool(usuario.get('is_verified', True)):
+                raise HTTPException(
+                    status_code=403, 
+                    detail="Tu cuenta no ha sido verificada. Debes ingresar el código enviado a tu correo institucional."
+                )
 
             return {
                 "message": "Login exitoso",
