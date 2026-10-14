@@ -146,51 +146,74 @@ export default function Layout() {
         };
 
         const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
-        const res = await fetch(`${API_URL}/api/examenes-hoy`);
-        const data = await res.json();
-        
-        if (Array.isArray(data) && data.length > 0) {
-          const examenesDeHoy = data.filter(ex => isExamToday(ex));
-          
-          if (examenesDeHoy.length > 0) {
-            let nuevasNotis = examenesDeHoy.map((ex, i) => ({
+        const [resEx, resEv] = await Promise.all([
+          fetch(`${API_URL}/api/examenes-hoy`),
+          fetch(`${API_URL}/api/eventos/notificaciones-activas`)
+        ]);
+
+        const dataEx = await resEx.json().catch(() => []);
+        const dataEv = await resEv.json().catch(() => ({}));
+
+        let nuevasNotis = [];
+
+        // 1. Exámenes de hoy
+        if (Array.isArray(dataEx)) {
+          const examenesDeHoy = dataEx.filter(ex => isExamToday(ex));
+          examenesDeHoy.forEach((ex, i) => {
+            nuevasNotis.push({
               id: `exam-${i}`,
               titulo: `Examen: ${ex.materia}`,
               subtitulo: `${ex.carrera} - ${ex.semestre}`,
               tipo: 'examen',
-              fecha: fechaActualStr
-            }));
-
-            // Deduplicar notificaciones por título y subtítulo
-            const notisUnicas = [];
-            const seen = new Set();
-            for (const noti of nuevasNotis) {
-              const hash = `${noti.titulo}|${noti.subtitulo}`;
-              if (!seen.has(hash)) {
-                seen.add(hash);
-                notisUnicas.push(noti);
-              }
-            }
-            
-            setNotificaciones(notisUnicas);
-
-            setTimeout(() => {
-              Swal.fire({
-                toast: true,
-                position: 'top-end',
-                showConfirmButton: false,
-                timer: 5000,
-                timerProgressBar: true,
-                icon: 'info',
-                title: `Hoy hay ${notisUnicas.length} exámenes programados`,
-              });
-            }, 1500);
-          } else {
-            setNotificaciones([]);
-          }
-        } else {
-          setNotificaciones([]);
+              fecha: fechaActualStr,
+              link: '/calendarios',
+              state: { tab: 'examenes' }
+            });
+          });
         }
+
+        // 2. Eventos de aulas hoy
+        if (Array.isArray(dataEv.eventos_hoy)) {
+          dataEv.eventos_hoy.forEach(ev => {
+            nuevasNotis.push({
+              id: `evento-${ev.id}`,
+              titulo: `Evento: ${ev.nombre_evento}`,
+              subtitulo: `Aula ${ev.aula_nombre} (${String(ev.hora_inicio).slice(0, 5)} - ${String(ev.hora_fin).slice(0, 5)}) · ${ev.responsable}`,
+              tipo: 'evento',
+              fecha: fechaActualStr,
+              link: '/calendarios',
+              state: { tab: 'agenda' }
+            });
+          });
+        }
+
+        // 3. Avisos y recordatorios internos SIPREF
+        if (Array.isArray(dataEv.recordatorios_recientes)) {
+          dataEv.recordatorios_recientes.forEach(rec => {
+            nuevasNotis.push({
+              id: `rec-${rec.id}`,
+              titulo: `Recordatorio: ${rec.nombre_evento}`,
+              subtitulo: `Aula ${rec.aula_nombre} (${String(rec.hora_inicio).slice(0, 5)}) · ${rec.antencion_valor} ${rec.antencion_unidad} antes`,
+              tipo: 'recordatorio',
+              fecha: fechaActualStr,
+              link: '/calendarios',
+              state: { tab: 'agenda' }
+            });
+          });
+        }
+
+        // Deduplicar notificaciones por título y subtítulo
+        const notisUnicas = [];
+        const seen = new Set();
+        for (const noti of nuevasNotis) {
+          const hash = `${noti.titulo}|${noti.subtitulo}`;
+          if (!seen.has(hash)) {
+            seen.add(hash);
+            notisUnicas.push(noti);
+          }
+        }
+        
+        setNotificaciones(notisUnicas);
       } catch (error) {
         console.error("Error cargando notificaciones:", error);
       }
@@ -427,17 +450,37 @@ export default function Layout() {
                     </span>
                   </div>
                   <div className="p-2 max-h-80 overflow-y-auto">
-                    {notificaciones.map((noti) => (
-                      <div key={noti.id} className="flex items-start gap-3 px-3 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50 rounded-xl transition-colors">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <span className="material-symbols-outlined text-[16px]">school</span>
+                    {notificaciones.map((noti) => {
+                      const iconName = noti.tipo === 'evento' ? 'event_available' : noti.tipo === 'recordatorio' ? 'campaign' : 'school';
+                      const badgeClass = noti.tipo === 'evento' ? 'bg-purple-100 text-purple-700' : noti.tipo === 'recordatorio' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-600';
+                      
+                      const ItemContent = (
+                        <div className="flex items-start gap-3 px-3 py-2.5 border-b border-slate-100 last:border-0 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${badgeClass}`}>
+                            <span className="material-symbols-outlined text-[16px]">{iconName}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-700 leading-tight">{noti.titulo}</p>
+                            <p className="text-xs text-slate-500 mt-1">{noti.subtitulo}</p>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-slate-700 leading-tight">{noti.titulo}</p>
-                          <p className="text-xs text-slate-500 mt-1">{noti.subtitulo}</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+
+                      if (noti.link) {
+                        return (
+                          <Link
+                            key={noti.id}
+                            to={noti.link}
+                            state={noti.state}
+                            onClick={() => setMostrarNotificaciones(false)}
+                            className="block"
+                          >
+                            {ItemContent}
+                          </Link>
+                        );
+                      }
+                      return <div key={noti.id}>{ItemContent}</div>;
+                    })}
                     {notificaciones.length === 0 && (
                       <div className="text-center py-6 text-slate-500 text-sm">
                         <span className="material-symbols-outlined text-3xl mb-2 opacity-50 block">notifications_paused</span>

@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useToast, ToastContainer } from '../components/useToast';
 import { useTime } from '../components/TimeContext';
 import { convertir12hA24h } from '../utils/timeUtils';
+import AgendarEventoModal from '../components/AgendarEventoModal';
 
 const obtenerColorLicenciatura = (licenciatura) => {
   const lic = (licenciatura || '').toLowerCase();
@@ -26,6 +28,8 @@ export default function GestionAulas() {
   // clases: clases que están en sesión AHORA MISMO
   const [clases, setClases] = useState([]);
   const [examenesHoy, setExamenesHoy] = useState([]);
+  const [eventosHoy, setEventosHoy] = useState([]);
+  const [mostrarAgendarEvento, setMostrarAgendarEvento] = useState(false);
   const [cargando, setCargando] = useState(true);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState('todos');
@@ -152,6 +156,37 @@ export default function GestionAulas() {
     } catch (e) { console.error("Error al cargar liberaciones:", e); }
   };
 
+  const fetchEventosHoy = async () => {
+    try {
+      const r = await fetch('/api/eventos-hoy');
+      if (r.ok) setEventosHoy(await r.json());
+    } catch (e) { console.error("Error al cargar eventos de hoy:", e); }
+  };
+
+  /** Evento activo en este momento para un aula específica (puede ser null). */
+  const obtenerEventoEnCurso = (nombreAula) => {
+    const minsAhora = ahora.getHours() * 60 + ahora.getMinutes();
+    return eventosHoy.find(ev => {
+      if (ev.aula_nombre !== nombreAula) return false;
+      const [h1, m1] = (ev.hora_inicio || '00:00').split(':').map(Number);
+      const [h2, m2] = (ev.hora_fin || '00:00').split(':').map(Number);
+      const startMins = h1 * 60 + m1;
+      const endMins = h2 * 60 + m2;
+      return minsAhora >= startMins && minsAhora < endMins;
+    }) || null;
+  };
+
+  /** Próximo evento de hoy programado para más tarde (después de la hora actual). */
+  const obtenerProximoEventoHoy = (nombreAula) => {
+    const minsAhora = ahora.getHours() * 60 + ahora.getMinutes();
+    return eventosHoy.find(ev => {
+      if (ev.aula_nombre !== nombreAula) return false;
+      const [h1, m1] = (ev.hora_inicio || '00:00').split(':').map(Number);
+      const startMins = h1 * 60 + m1;
+      return startMins > minsAhora;
+    }) || null;
+  };
+
   const handleConfirmarLiberacion = async () => {
     if (!modalLiberarAula) return;
     setGuardandoLiberacion(true);
@@ -173,6 +208,7 @@ export default function GestionAulas() {
         fetchClasesAhora(ahora);
         fetchLiberaciones();
         fetchOcupacion();
+        fetchEventosHoy();
         toast(`Aula ${modalLiberarAula.aulaNombre} liberada manualmente con éxito`, "exito");
       } else {
         const err = await res.json().catch(() => ({}));
@@ -192,6 +228,7 @@ export default function GestionAulas() {
         fetchClasesAhora(ahora);
         fetchLiberaciones();
         fetchOcupacion();
+        fetchEventosHoy();
         toast(`Aula ${aulaNombre} reactivada en clase`, "exito");
       } else {
         toast("Error al reactivar el aula", "error");
@@ -207,17 +244,22 @@ export default function GestionAulas() {
     fetchOcupacion();
     fetchClasesAhora(ahora);
     fetchLiberaciones();
+    fetchEventosHoy();
     const intervalo = setInterval(() => {
       fetchAulas();
       fetchOcupacion();
       fetchClasesAhora(ahora);
       fetchLiberaciones();
+      fetchEventosHoy();
     }, 30000);
     return () => clearInterval(intervalo);
   }, [hoyStr]);
 
-  // Re-evalúa clases en tiempo real cuando el reloj del contexto avanza (cada 60 s)
-  useEffect(() => { fetchClasesAhora(ahora); }, [ahora]);
+  // Re-evalúa clases y eventos en tiempo real cuando el reloj del contexto avanza (cada 60 s)
+  useEffect(() => { 
+    fetchClasesAhora(ahora); 
+    fetchEventosHoy();
+  }, [ahora]);
 
   /** Clase activa en este momento para un aula específica (puede ser null). */
   const obtenerClaseEnCurso = (nombreAula) =>
@@ -492,158 +534,249 @@ export default function GestionAulas() {
           <div className="h-8 w-px bg-[#c5c6cf]/30 hidden sm:block"></div>
           <button
             onClick={() => setMostrarFormulario(!mostrarFormulario)}
-            className="w-full sm:w-auto bg-[#1c355e] text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-[#152a4a] transition-all flex items-center justify-center gap-1.5 shadow-sm flex-shrink-0"
+            className="w-full sm:w-auto bg-[#1c355e] text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-[#152a4a] transition-all flex items-center justify-center gap-1.5 shadow-sm flex-shrink-0 cursor-pointer"
           >
             <span className="material-symbols-outlined text-[18px]">add_circle</span> Nueva Aula
           </button>
+
+          <button
+            onClick={() => setMostrarAgendarEvento(true)}
+            className="w-full sm:w-auto bg-gradient-to-r from-[#fdbb11] to-[#e8a906] text-[#0e2045] px-4 py-2 rounded-xl text-sm font-black hover:brightness-105 transition-all flex items-center justify-center gap-1.5 shadow-sm flex-shrink-0 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">event_available</span> + Agendar evento
+          </button>
+
+          <Link
+            to="/calendarios"
+            state={{ tab: 'agenda' }}
+            className="w-full sm:w-auto bg-[#f4f3f6] text-[#1c355e] border border-slate-200 hover:bg-slate-100 px-3.5 py-2 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs flex-shrink-0"
+            title="Ir a la Agenda de Eventos de SIPREF"
+          >
+            <span className="material-symbols-outlined text-[18px]">calendar_month</span> Ver Agenda
+          </Link>
         </div>
       </div>
 
-
+      {/* MODAL AGENDAR EVENTO */}
+      <AgendarEventoModal
+        isOpen={mostrarAgendarEvento}
+        onClose={() => setMostrarAgendarEvento(false)}
+        onSuccess={() => {
+          fetchEventosHoy();
+          fetchClasesAhora(ahora);
+          fetchOcupacion();
+          toast("Evento agendado exitosamente con comprobación de disponibilidad", "exito");
+        }}
+        aulasList={aulas}
+      />
 
       {/* MODAL NUEVA AULA */}
       {mostrarFormulario && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-[#1c355e]">Nueva Aula / Espacio</h3>
-              <button onClick={() => setMostrarFormulario(false)} className="text-[#44464e] hover:text-[#1c355e]">
-                <span className="material-symbols-outlined">close</span>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-0 w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-[#1c355e] to-[#2a4a7f] px-6 py-4 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-white text-[20px]">meeting_room</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Nueva Aula / Espacio</h3>
+                  <p className="text-xs text-white/70">Registrar nuevo espacio académico</p>
+                </div>
+              </div>
+              <button onClick={() => setMostrarFormulario(false)} className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition-all">
+                <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
+            <div className="p-6">
             <form className="space-y-5" onSubmit={handleSubmit}>
               <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Nombre del Aula</label>
-                <input required value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm" placeholder="Ej. A101" type="text" />
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Nombre del Aula</label>
+                <div className="relative">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[18px]">meeting_room</span>
+                  <input required value={formData.nombre} onChange={e => setFormData(prev => ({...prev, nombre: e.target.value}))} className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-[#1c355e]/40 focus:ring-2 focus:ring-[#1c355e]/10 transition-all" placeholder="Ej. A101" type="text" />
+                </div>
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
-                <select value={formData.edificio} onChange={e => setFormData({...formData, edificio: e.target.value})} className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm">
-                  <option value="">Sin planta asignada</option>
-                  <option>Planta A</option>
-                  <option>Planta B</option>
-                  <option>Planta C</option>
-                </select>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
+                <div className="relative">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[18px]">layers</span>
+                  <select value={formData.edificio} onChange={e => setFormData(prev => ({...prev, edificio: e.target.value}))} className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-[#1c355e]/40 focus:ring-2 focus:ring-[#1c355e]/10 transition-all appearance-none cursor-pointer">
+                    <option value="">Sin planta asignada</option>
+                    <option>Planta A</option>
+                    <option>Planta B</option>
+                    <option>Planta C</option>
+                  </select>
+                </div>
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Equipamiento</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {['Proyector', 'Aire Acond.', 'PCs', 'Smart Board'].map((item) => (
-                    <label key={item} className="flex items-center gap-3 p-3 border border-[#c5c6cf]/30 rounded-xl cursor-pointer hover:bg-[#f4f3f6]">
-                      <input type="checkbox" checked={formData.equipos.includes(item)} onChange={() => handleCheckboxChange(item)} className="rounded text-[#1c355e]" />
-                      <span className="text-sm font-medium">{item}</span>
+                <label className="block text-xs font-bold text-[#44464e] uppercase mb-3 tracking-wide">Equipamiento</label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {[
+                    { id: 'Proyector', icon: 'tv' },
+                    { id: 'Aire Acond.', icon: 'ac_unit' },
+                    { id: 'PCs', icon: 'computer' },
+                    { id: 'Smart Board', icon: 'smart_display' },
+                  ].map(({ id: item, icon }) => (
+                    <label key={item} className={`flex items-center gap-2.5 p-3 border rounded-xl cursor-pointer transition-all ${
+                      formData.equipos.includes(item)
+                        ? 'border-[#1c355e]/40 bg-[#1c355e]/5 text-[#1c355e]'
+                        : 'border-[#c5c6cf]/40 bg-[#f4f3f6] hover:border-[#1c355e]/20 hover:bg-white text-[#44464e]'
+                    }`}>
+                      <input type="checkbox" checked={formData.equipos.includes(item)} onChange={() => handleCheckboxChange(item)} className="sr-only" />
+                      <span className={`material-symbols-outlined text-[18px] ${formData.equipos.includes(item) ? 'text-[#1c355e]' : 'text-[#75777f]'}`}>{icon}</span>
+                      <span className="text-xs font-bold">{item}</span>
+                      {formData.equipos.includes(item) && <span className="material-symbols-outlined text-[14px] text-[#1c355e] ml-auto">check_circle</span>}
                     </label>
                   ))}
                 </div>
               </div>
-              <button type="submit" className="w-full bg-[#1c355e] text-white py-3 rounded-xl font-bold hover:bg-[#152a4a] transition-all">Registrar Espacio</button>
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setMostrarFormulario(false)} className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all">Cancelar</button>
+                <button type="submit" className="flex-1 bg-[#1c355e] text-white py-2.5 rounded-xl font-bold hover:bg-[#152a4a] transition-all flex items-center justify-center gap-1.5">
+                  <span className="material-symbols-outlined text-[18px]">add_circle</span>
+                  Registrar
+                </button>
+              </div>
             </form>
+            </div>
           </div>
         </div>
       )}
 
       {/* MODAL EDITAR AULA */}
       {aulaAEditar && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-[#1c355e]">Editar Aula</h3>
-              <button onClick={() => setAulaAEditar(null)} className="text-[#44464e] hover:text-[#1c355e]">
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-            <form className="space-y-5" onSubmit={handleGuardarEdicion}>
-              <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Nombre del Aula</label>
-                <input
-                  required
-                  type="text"
-                  value={formEditar.nombre}
-                  onChange={e => setFormEditar({ ...formEditar, nombre: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
-                  placeholder="Ej. A101"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
-                <select
-                  value={formEditar.edificio}
-                  onChange={e => setFormEditar({ ...formEditar, edificio: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
-                >
-                  <option value="">Sin planta asignada</option>
-                  <option>Planta A</option>
-                  <option>Planta B</option>
-                  <option>Planta C</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Capacidad</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={formEditar.capacidad}
-                  onChange={e => setFormEditar({ ...formEditar, capacidad: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
-                  placeholder="Ej. 30"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Equipamiento</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {['Proyector', 'Aire Acond.', 'PCs', 'Smart Board'].map((item) => (
-                    <label key={item} className="flex items-center gap-3 p-3 border border-[#c5c6cf]/30 rounded-xl cursor-pointer hover:bg-[#f4f3f6]">
-                      <input
-                        type="checkbox"
-                        checked={formEditar.equipos.includes(item)}
-                        onChange={() => handleCheckboxEditarChange(item)}
-                        className="rounded text-[#1c355e]"
-                      />
-                      <span className="text-sm font-medium">{item}</span>
-                    </label>
-                  ))}
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-[#1c355e] to-[#2a4a7f] px-6 py-4 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-white text-[20px]">edit_square</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Editar Aula</h3>
+                  <p className="text-xs text-white/70">Modificando: <span className="font-bold">{aulaAEditar.nombre}</span></p>
                 </div>
               </div>
-              <div className="flex gap-3 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setAulaAEditar(null)}
-                  className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={guardandoEdicion}
-                  className="flex-1 py-2.5 rounded-xl bg-[#1c355e] text-white text-sm font-bold hover:bg-[#152a4a] transition-all disabled:opacity-50"
-                >
-                  {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
-                </button>
-              </div>
-            </form>
+              <button onClick={() => setAulaAEditar(null)} className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition-all">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            <div className="p-6">
+              <form className="space-y-5" onSubmit={handleGuardarEdicion}>
+                <div>
+                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Nombre del Aula</label>
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[18px]">meeting_room</span>
+                    <input
+                      required
+                      type="text"
+                      value={formEditar.nombre}
+                      onChange={e => setFormEditar(prev => ({ ...prev, nombre: e.target.value }))}
+                      className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-[#1c355e]/40 focus:ring-2 focus:ring-[#1c355e]/10 transition-all"
+                      placeholder="Ej. A101"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Planta <span className="text-[#c5c6cf] font-normal normal-case">(opcional)</span></label>
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[18px]">layers</span>
+                    <select
+                      value={formEditar.edificio}
+                      onChange={e => setFormEditar(prev => ({ ...prev, edificio: e.target.value }))}
+                      className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-[#1c355e]/40 focus:ring-2 focus:ring-[#1c355e]/10 transition-all appearance-none cursor-pointer"
+                    >
+                      <option value="">Sin planta asignada</option>
+                      <option>Planta A</option>
+                      <option>Planta B</option>
+                      <option>Planta C</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Capacidad</label>
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#75777f] text-[18px]">group</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formEditar.capacidad}
+                      onChange={e => setFormEditar(prev => ({ ...prev, capacidad: e.target.value }))}
+                      className="w-full pl-10 pr-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-[#1c355e]/40 focus:ring-2 focus:ring-[#1c355e]/10 transition-all"
+                      placeholder="Ej. 30"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#44464e] uppercase mb-3 tracking-wide">Equipamiento</label>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {[
+                      { id: 'Proyector', icon: 'tv' },
+                      { id: 'Aire Acond.', icon: 'ac_unit' },
+                      { id: 'PCs', icon: 'computer' },
+                      { id: 'Smart Board', icon: 'smart_display' },
+                    ].map(({ id: item, icon }) => (
+                      <label key={item} className={`flex items-center gap-2.5 p-3 border rounded-xl cursor-pointer transition-all ${
+                        formEditar.equipos.includes(item)
+                          ? 'border-[#1c355e]/40 bg-[#1c355e]/5 text-[#1c355e]'
+                          : 'border-[#c5c6cf]/40 bg-[#f4f3f6] hover:border-[#1c355e]/20 hover:bg-white text-[#44464e]'
+                      }`}>
+                        <input type="checkbox" checked={formEditar.equipos.includes(item)} onChange={() => handleCheckboxEditarChange(item)} className="sr-only" />
+                        <span className={`material-symbols-outlined text-[18px] ${formEditar.equipos.includes(item) ? 'text-[#1c355e]' : 'text-[#75777f]'}`}>{icon}</span>
+                        <span className="text-xs font-bold">{item}</span>
+                        {formEditar.equipos.includes(item) && <span className="material-symbols-outlined text-[14px] text-[#1c355e] ml-auto">check_circle</span>}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setAulaAEditar(null)}
+                    className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={guardandoEdicion}
+                    className="flex-1 py-2.5 rounded-xl bg-[#1c355e] text-white text-sm font-bold hover:bg-[#152a4a] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">{guardandoEdicion ? 'hourglass_empty' : 'save'}</span>
+                    {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}
 
       {/* MODAL MANTENIMIENTO */}
       {modalMantAula && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-lg font-bold text-[#1c355e]">Modo Mantenimiento</h3>
-                <p className="text-sm text-[#75777f] mt-0.5">Aula: <span className="font-bold text-[#44464e]">{modalMantAula.nombre}</span></p>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-6 py-4 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-white text-[20px]">construction</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Modo Mantenimiento</h3>
+                  <p className="text-xs text-white/80">Aula: <span className="font-bold">{modalMantAula.nombre}</span></p>
+                </div>
               </div>
-              <button onClick={() => setModalMantAula(null)} className="text-[#44464e] hover:text-[#1c355e]">
-                <span className="material-symbols-outlined">close</span>
+              <button onClick={() => setModalMantAula(null)} className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition-all">
+                <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
 
-            <div className="space-y-5">
+            <div className="p-6 space-y-5">
               {/* Toggle mantenimiento */}
-              <label className="flex items-center justify-between p-4 bg-orange-50 border border-orange-200 rounded-xl cursor-pointer">
+              <label className={`flex items-center justify-between p-4 border rounded-xl cursor-pointer transition-all ${formMant.en_mantenimiento ? 'bg-orange-50 border-orange-300' : 'bg-slate-50 border-slate-200 hover:border-orange-200'}`}>
                 <div className="flex items-center gap-3">
-                  <span className="material-symbols-outlined text-orange-500">construction</span>
+                  <span className={`material-symbols-outlined ${formMant.en_mantenimiento ? 'text-orange-500' : 'text-slate-400'}`}>construction</span>
                   <div>
                     <p className="text-sm font-bold text-[#1b1c1e]">Activar Mantenimiento</p>
                     <p className="text-xs text-[#75777f]">Las clases se redirigirán al aula temporal</p>
@@ -680,31 +813,31 @@ export default function GestionAulas() {
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Fecha y Hora de Inicio</label>
+                      <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Fecha y Hora de Inicio</label>
                       <input
                         type="datetime-local"
                         value={formMant.inicio_mantenimiento}
                         onChange={e => setFormMant(prev => ({ ...prev, inicio_mantenimiento: e.target.value }))}
-                        className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                        className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-orange-400/60 focus:ring-2 focus:ring-orange-200 transition-all"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Fecha y Hora de Fin</label>
+                      <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Fecha y Hora de Fin</label>
                       <input
                         type="datetime-local"
                         value={formMant.fin_mantenimiento}
                         onChange={e => setFormMant(prev => ({ ...prev, fin_mantenimiento: e.target.value }))}
-                        className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm"
+                        className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-orange-400/60 focus:ring-2 focus:ring-orange-200 transition-all"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-[#44464e] uppercase mb-2">Aula Temporal / Alterna</label>
+                    <label className="block text-xs font-bold text-[#44464e] uppercase mb-2 tracking-wide">Aula Temporal / Alterna</label>
                     <select
                       value={formMant.aula_temporal}
                       onChange={e => setFormMant(prev => ({ ...prev, aula_temporal: e.target.value }))}
                       disabled={cargandoAulasMant || !formMant.inicio_mantenimiento || !formMant.fin_mantenimiento || aulasDisponiblesMant.length === 0}
-                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:bg-white focus:border-orange-400/60 focus:ring-2 focus:ring-orange-200 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       {cargandoAulasMant ? (
                         <option value="">Cargando aulas disponibles...</option>
@@ -725,11 +858,12 @@ export default function GestionAulas() {
                 </>
               )}
 
-              <div className="flex gap-3 pt-2">
+              <div className="flex gap-3 pt-1">
                 <button onClick={() => setModalMantAula(null)} className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 text-sm font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all">
                   Cancelar
                 </button>
-                <button onClick={handleGuardarMant} disabled={guardandoMant} className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition-all disabled:opacity-50">
+                <button onClick={handleGuardarMant} disabled={guardandoMant} className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px]">{guardandoMant ? 'hourglass_empty' : 'save'}</span>
                   {guardandoMant ? 'Guardando...' : 'Guardar'}
                 </button>
               </div>
@@ -795,7 +929,9 @@ export default function GestionAulas() {
           aulasFiltradas.map((aula) => {
             const enMant        = estaEnMantenimiento(aula);
             const mantProg      = tieneMantProgramado(aula);
-            const claseActiva   = !enMant ? obtenerClaseEnCurso(aula.nombre) : null;
+            const eventoActivo  = !enMant ? obtenerEventoEnCurso(aula.nombre) : null;
+            const proximoEvento = !enMant && !eventoActivo ? obtenerProximoEventoHoy(aula.nombre) : null;
+            const claseActiva   = !enMant && !eventoActivo ? obtenerClaseEnCurso(aula.nombre) : null;
             const liberacionManual = liberaciones.find(l => l.aula_nombre === aula.nombre);
             const estadoHorario = enMant ? 'mantenimiento' : obtenerEstadoAula(aula.nombre);
             const carrerasAula  = (ocupacion[aula.nombre]?.carreras || []);
@@ -811,17 +947,18 @@ export default function GestionAulas() {
             const carrerasKeys = Object.keys(carrerasAgrupadas);
             const tieneCarreras = carrerasKeys.length > 0;
 
-            // Prioridad visual: mantenimiento > mant_programado > en_clase > estado por horario
+            // Prioridad visual: mantenimiento > mant_programado > evento > en_clase > estado por horario
             const BADGE = {
               mantenimiento:   { cls: 'bg-orange-100 text-orange-600',  icon: 'construction',    label: 'Mantenimiento' },
               mant_programado: { cls: 'bg-yellow-100 text-yellow-700',  icon: 'event_upcoming',  label: 'Mant. Programado' },
+              evento:          { cls: 'bg-purple-100 text-purple-800 border border-purple-200 font-extrabold', icon: 'event_available', label: 'RESERVADA PARA EVENTO' },
               en_clase:        { cls: 'bg-blue-100 text-blue-700',      icon: 'play_circle',     label: 'En Curso'      },
               disponible:      { cls: 'bg-[#1c9c72]/10 text-[#1c9c72]', icon: 'check_circle',   label: 'Disponible'    },
               matutino:        { cls: 'bg-amber-100 text-amber-700',    icon: 'wb_sunny',        label: 'Ocupado: Matutino'  },
               vespertino:      { cls: 'bg-indigo-100 text-indigo-700',  icon: 'nights_stay',     label: 'Ocupado: Vespertino' },
               bloqueada:       { cls: 'bg-purple-100 text-purple-700',  icon: 'domain',          label: 'Ocupado: Ambos'     },
             };
-            const badgeKey = enMant ? 'mantenimiento' : mantProg ? 'mant_programado' : claseActiva ? 'en_clase' : 'disponible';
+            const badgeKey = enMant ? 'mantenimiento' : mantProg ? 'mant_programado' : eventoActivo ? 'evento' : claseActiva ? 'en_clase' : 'disponible';
             const badge    = BADGE[badgeKey] || BADGE.disponible;
 
             const borderClass = enMant        ? 'border-orange-200'
@@ -897,6 +1034,53 @@ export default function GestionAulas() {
                 </div>
 
                 <div className="space-y-3">
+                  {/* Tarjeta de Evento Reservado Activo */}
+                  {eventoActivo && (
+                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 space-y-1.5 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-purple-700 tracking-wider flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs">event_available</span>
+                          RESERVADO — {eventoActivo.tipo_evento}
+                        </span>
+                        <span className="text-[10px] font-bold bg-purple-200 text-purple-900 px-2 py-0.5 rounded-full">
+                          {String(eventoActivo.hora_inicio).slice(0, 5)} - {String(eventoActivo.hora_fin).slice(0, 5)}
+                        </span>
+                      </div>
+                      <p className="text-sm font-black text-purple-950 leading-tight">
+                        {eventoActivo.nombre_evento}
+                      </p>
+                      <p className="text-xs text-purple-800 font-bold">
+                        👤 Responsable: <span className="font-semibold">{eventoActivo.responsable}</span>
+                      </p>
+                      {eventoActivo.descripcion && (
+                        <p className="text-[11px] text-purple-700 italic line-clamp-2">
+                          "{eventoActivo.descripcion}"
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Próximo evento programado hoy en esta aula */}
+                  {proximoEvento && (
+                    <div className="bg-purple-50/60 border border-purple-200/70 rounded-xl p-2.5 space-y-1 text-xs">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-purple-700 uppercase">
+                        <span className="flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs text-purple-600">event_upcoming</span>
+                          Evento Hoy ({proximoEvento.tipo_evento})
+                        </span>
+                        <span className="bg-purple-100 px-1.5 py-0.5 rounded text-purple-800">
+                          {String(proximoEvento.hora_inicio).slice(0, 5)} - {String(proximoEvento.hora_fin).slice(0, 5)}
+                        </span>
+                      </div>
+                      <p className="font-bold text-slate-800 text-xs truncate">
+                        {proximoEvento.nombre_evento}
+                      </p>
+                      <p className="text-[10px] text-slate-500 truncate">
+                        Resp: {proximoEvento.responsable}
+                      </p>
+                    </div>
+                  )}
+
                   {/* Tarjetas de exámenes si hay exámenes hoy en esta aula */}
                   {examenesEnAula.length > 0 && (
                     <div className="space-y-1 mb-3">

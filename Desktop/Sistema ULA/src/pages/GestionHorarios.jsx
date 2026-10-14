@@ -143,6 +143,7 @@ export default function GestionHorarios() {
   const [archivosSeleccionados, setArchivosSeleccionados] = useState([]);
   const [orden, setOrden] = useState('original');
   const [busquedaArchivos, setBusquedaArchivos] = useState('');
+  const [filtroTurno, setFiltroTurno] = useState('todos');
   const [filtroModal, setFiltroModal] = useState('');
   const [filtroMaestroModal, setFiltroMaestroModal] = useState('');
   const [filtroHoraModal, setFiltroHoraModal] = useState('');
@@ -712,17 +713,44 @@ export default function GestionHorarios() {
               {/* Separador */}
               <div className="hidden sm:block w-px h-8 bg-[#c5c6cf]/30 flex-shrink-0"></div>
 
+              {/* Filtro de turno */}
+              <div className="flex bg-[#f4f3f6] p-0.5 rounded-lg border border-[#c5c6cf]/20">
+                {[
+                  { id: 'todos', label: 'Todos', icon: 'apps' },
+                  { id: 'Matutino', label: 'Matutino', icon: 'wb_sunny' },
+                  { id: 'Vespertino', label: 'Vespertino', icon: 'nights_stay' },
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setFiltroTurno(t.id)}
+                    className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all flex items-center gap-1 ${
+                      filtroTurno === t.id
+                        ? 'bg-white text-[#1c355e] shadow-sm'
+                        : 'text-[#75777f] hover:text-[#1c355e]'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[14px]">{t.icon}</span>
+                    <span className="hidden sm:inline">{t.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Separador */}
+              <div className="hidden sm:block w-px h-8 bg-[#c5c6cf]/30 flex-shrink-0"></div>
+
               {/* Contador + Acciones en línea */}
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                 {/* Contador */}
                 <div className="text-xs text-[#44464e] font-medium whitespace-nowrap px-2">
                   <span className="font-bold text-[#1c355e] text-sm">
-                    {[...archivosGuardados].filter(a =>
-                      !busquedaArchivos ||
-                      a.archivo.toLowerCase().includes(busquedaArchivos.toLowerCase().trim()) ||
-                      (a.turno && a.turno.toLowerCase().includes(busquedaArchivos.toLowerCase().trim())) ||
-                      (a.plan && a.plan.toLowerCase().includes(busquedaArchivos.toLowerCase().trim()))
-                    ).length}
+                    {[...archivosGuardados].filter(a => {
+                      if (filtroTurno !== 'todos' && (!a.turno || a.turno !== filtroTurno)) return false;
+                      if (!busquedaArchivos || !busquedaArchivos.trim()) return true;
+                      const q = busquedaArchivos.toLowerCase().trim();
+                      return a.archivo.toLowerCase().includes(q) ||
+                        (a.turno && a.turno.toLowerCase().includes(q)) ||
+                        (a.plan && a.plan.toLowerCase().includes(q));
+                    }).length}
                   </span>
                   <span className="text-[#75777f]"> / {archivosGuardados.length}</span>
                 </div>
@@ -800,6 +828,11 @@ export default function GestionHorarios() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[...archivosGuardados]
                 .filter(a => {
+                  // Filtro de turno
+                  if (filtroTurno !== 'todos') {
+                    if (!a.turno || a.turno !== filtroTurno) return false;
+                  }
+                  // Filtro de búsqueda
                   if (!busquedaArchivos || !busquedaArchivos.trim()) return true;
                   const q = busquedaArchivos.toLowerCase().trim();
                   return (

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useTime } from '../components/TimeContext';
 import Swal from 'sweetalert2';
+import AgendaEventos from '../components/AgendaEventos';
 
 export default function Calendarios() {
   const location = useLocation();
@@ -28,6 +29,15 @@ export default function Calendarios() {
   const [carreraExpandida, setCarreraExpandida] = useState(null);
   const [periodoFiltro, setPeriodoFiltro] = useState('todos');
   const [eventosSincronizados, setEventosSincronizados] = useState([]);
+
+  // ── Estado para modal de exportación ──
+  const [modalExportar, setModalExportar] = useState(false);
+  const [exportCarreras, setExportCarreras] = useState([]);
+  const [exportTipoFecha, setExportTipoFecha] = useState('todas'); // 'todas', 'actual', 'personalizada'
+  const [exportFechaCustom, setExportFechaCustom] = useState('');
+  const [exportCorreo, setExportCorreo] = useState('');
+  const [formatoCorreo, setFormatoCorreo] = useState('pdf');
+  const [enviandoCorreo, setEnviandoCorreo] = useState(false);
 
   // ── NUEVO: Estado para ciclos escolares ──
   const [ciclosDisponibles, setCiclosDisponibles] = useState([]);
@@ -480,6 +490,7 @@ export default function Calendarios() {
           {[
             { id: 'generales', label: 'Calendarios Generales', icon: 'event' },
             { id: 'examenes',  label: 'Calendarios de Exámenes', icon: 'assignment' },
+            { id: 'agenda',    label: 'Agenda de Eventos', icon: 'event_available' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -495,6 +506,16 @@ export default function Calendarios() {
             </button>
           ))}
         </div>
+        {/* Botón exportar (solo en tab exámenes) */}
+        {tabActual === 'examenes' && (
+          <button
+            onClick={() => setModalExportar(true)}
+            className="px-4 py-2 rounded-lg text-xs font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all flex items-center gap-1.5 shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[16px]">download</span>
+            Exportar / Enviar
+          </button>
+        )}
       </div>
 
       <div className="pt-2">
@@ -502,6 +523,8 @@ export default function Calendarios() {
           <div className="flex justify-center items-center py-20">
             <span className="material-symbols-outlined animate-spin text-4xl text-[#1c355e]">sync</span>
           </div>
+        ) : tabActual === 'agenda' ? (
+          <AgendaEventos />
         ) : tabActual === 'generales' ? (
           <div className="flex flex-col lg:flex-row gap-6">
             
@@ -823,7 +846,7 @@ export default function Calendarios() {
                                 }
 
                                 return (
-                                  <tr key={`${sIdx}-${eIdx}`} {...trProps} className={`border-t transition-all ${isHoy ? 'bg-amber-50 shadow-[inset_4px_0_0_0_#f59e0b]' : `hover:${colors.bg} ${colors.border} ${eIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}`}>
+                                  <tr key={`${sIdx}-${eIdx}`} {...trProps} className={`border-t transition-all ${isHoy ? 'bg-emerald-50 shadow-[inset_4px_0_0_0_#10b981]' : `hover:${colors.bg} ${colors.border} ${eIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}`}>
                                     {eIdx === 0 && (
                                       <td rowSpan={examenes.length} className={`px-4 py-2 font-bold text-xs ${colors.text} border-r ${colors.border} align-top`}>
                                         {semestre}
@@ -831,17 +854,17 @@ export default function Calendarios() {
                                     )}
                                     <td className="px-4 py-2">
                                       <div className="flex items-center gap-2">
-                                        <span className={`font-medium text-xs ${isHoy ? 'text-amber-800' : 'text-[#1b1c1e]'}`}>{ex.materia}</span>
+                                        <span className={`font-medium text-xs ${isHoy ? 'text-emerald-800' : 'text-[#1b1c1e]'}`}>{ex.materia}</span>
                                         {isHoy && (
-                                          <span className="bg-amber-100 text-amber-700 text-[9px] font-black uppercase px-1.5 py-0.5 rounded flex items-center gap-1">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                          <span className="bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase px-1.5 py-0.5 rounded flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                                             Hoy
                                           </span>
                                         )}
                                       </div>
                                     </td>
-                                    <td className={`px-4 py-2 text-xs capitalize ${isHoy ? 'text-amber-600/80 font-medium' : 'text-slate-500'}`}>{ex.dia}</td>
-                                    <td className={`px-4 py-2 text-xs ${isHoy ? 'text-amber-700 font-bold' : 'text-slate-500'}`}>{ex.fecha}</td>
+                                    <td className={`px-4 py-2 text-xs capitalize ${isHoy ? 'text-emerald-600/80 font-medium' : 'text-slate-500'}`}>{ex.dia}</td>
+                                    <td className={`px-4 py-2 text-xs ${isHoy ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}>{ex.fecha}</td>
                                   </tr>
                                 );
                               });
@@ -941,6 +964,251 @@ export default function Calendarios() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Exportar Exámenes ── */}
+      {modalExportar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-slate-100">
+            <div className="bg-emerald-600 px-6 py-4 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <span className="material-symbols-outlined">download</span>
+                Exportar Exámenes
+              </h2>
+              <button onClick={() => setModalExportar(false)} className="text-white/60 hover:text-white p-1.5 rounded-xl transition-colors hover:bg-white/10">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Seleccionar carreras */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Carreras</label>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 max-h-48 overflow-y-auto space-y-0.5">
+                  {/* Todas */}
+                  <button
+                    onClick={() => setExportCarreras([])}
+                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      exportCarreras.length === 0
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                      exportCarreras.length === 0 ? 'bg-emerald-600 border-emerald-600' : 'border-slate-300'
+                    }`}>
+                      {exportCarreras.length === 0 && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                    </div>
+                    Todas las carreras
+                  </button>
+                  {carreras.map(c => {
+                    const selected = exportCarreras.includes(c);
+                    return (
+                      <button
+                        key={c}
+                        onClick={() => {
+                          setExportCarreras(prev =>
+                            selected ? prev.filter(x => x !== c) : [...prev, c]
+                          );
+                        }}
+                        className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                          selected
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                          selected ? 'bg-emerald-600 border-emerald-600' : 'border-slate-300'
+                        }`}>
+                          {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                        </div>
+                        {c}
+                      </button>
+                    );
+                  })}
+                </div>
+                {exportCarreras.length > 0 && (
+                  <p className="text-xs text-emerald-600 mt-1.5 font-medium">
+                    {exportCarreras.length} carrera{exportCarreras.length > 1 ? 's' : ''} seleccionada{exportCarreras.length > 1 ? 's' : ''}
+                  </p>
+                )}
+              </div>
+
+              {/* Filtro de fecha */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Filtrar por fecha</label>
+                <div className="flex flex-col gap-2">
+                  {[
+                    { id: 'todas', label: 'Todas las fechas', icon: 'date_range' },
+                    { id: 'actual', label: 'Fecha actual', icon: 'today' },
+                    { id: 'personalizada', label: 'Fecha personalizada', icon: 'edit_calendar' },
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => {
+                        setExportTipoFecha(opt.id);
+                        if (opt.id === 'actual') {
+                          const d = ahora.getDate();
+                          const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+                          setExportFechaCustom(`${String(d).padStart(2,'0')} de ${meses[ahora.getMonth()]}`);
+                        } else if (opt.id === 'todas') {
+                          setExportFechaCustom('');
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                        exportTipoFecha === opt.id
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 ring-1 ring-emerald-200'
+                          : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">{opt.icon}</span>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {exportTipoFecha === 'personalizada' && (
+                  <input
+                    type="text"
+                    placeholder="Ej: septiembre, 28 de septiembre, octubre..."
+                    value={exportFechaCustom}
+                    onChange={(e) => setExportFechaCustom(e.target.value)}
+                    className="w-full mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500 text-sm font-medium"
+                  />
+                )}
+                {exportTipoFecha === 'actual' && (
+                  <p className="text-xs text-emerald-600 mt-1.5 font-medium flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">info</span>
+                    Filtrará por: "{exportFechaCustom}"
+                  </p>
+                )}
+              </div>
+
+              {/* Separador */}
+              <div className="border-t border-slate-100"></div>
+
+              {/* Botones de Descarga */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    const params = new URLSearchParams();
+                    params.append('ciclo_escolar', cicloSeleccionado);
+                    if (exportCarreras.length > 0) params.append('carrera', exportCarreras.join(','));
+                    if (exportFechaCustom) params.append('fecha_filtro', exportFechaCustom);
+                    window.location.href = `${API_URL}/api/examenes-calendario/exportar/excel?${params.toString()}`;
+                  }}
+                  className="flex-1 py-3 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20"
+                >
+                  <span className="material-symbols-outlined text-[20px]">table_chart</span>
+                  Excel
+                </button>
+
+                <button
+                  onClick={() => {
+                    const params = new URLSearchParams();
+                    params.append('ciclo_escolar', cicloSeleccionado);
+                    if (exportCarreras.length > 0) params.append('carrera', exportCarreras.join(','));
+                    if (exportFechaCustom) params.append('fecha_filtro', exportFechaCustom);
+                    window.location.href = `${API_URL}/api/examenes-calendario/exportar/pdf?${params.toString()}`;
+                  }}
+                  className="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-red-600/20"
+                >
+                  <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
+                  PDF
+                </button>
+              </div>
+
+              {/* Enviar por correo */}
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Enviar por correo electrónico</p>
+                
+                {/* Selector de formato */}
+                <div className="mb-3">
+                  <p className="text-xs text-slate-400 mb-1.5">Formato del archivo adjunto:</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setFormatoCorreo('pdf')}
+                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 transition-all border ${
+                        formatoCorreo === 'pdf'
+                          ? 'bg-red-600 text-white border-red-600 shadow-md shadow-red-600/20'
+                          : 'bg-white text-slate-500 border-slate-200 hover:border-red-300 hover:text-red-600'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                      PDF
+                    </button>
+                    <button
+                      onClick={() => setFormatoCorreo('excel')}
+                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 transition-all border ${
+                        formatoCorreo === 'excel'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20'
+                          : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300 hover:text-emerald-600'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">table_chart</span>
+                      Excel
+                    </button>
+                  </div>
+                </div>
+
+                {/* Email + Enviar */}
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    placeholder="correo@ejemplo.com"
+                    value={exportCorreo}
+                    onChange={(e) => setExportCorreo(e.target.value)}
+                    className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm font-medium"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!exportCorreo || !exportCorreo.includes('@')) {
+                        Swal.fire('Error', 'Ingresa un correo válido', 'error');
+                        return;
+                      }
+                      setEnviandoCorreo(true);
+                      try {
+                        const res = await fetch(`${API_URL}/api/examenes-calendario/enviar-correo`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            correo: exportCorreo,
+                            carrera: exportCarreras.length > 0 ? exportCarreras.join(',') : '',
+                            ciclo_escolar: cicloSeleccionado,
+                            fecha_filtro: exportFechaCustom,
+                            formato: formatoCorreo
+                          })
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                          Swal.fire('¡Enviado!', data.message, 'success');
+                          setExportCorreo('');
+                        } else {
+                          Swal.fire('Error', data.detail || 'No se pudo enviar', 'error');
+                        }
+                      } catch (err) {
+                        Swal.fire('Error', 'Error de conexión', 'error');
+                      } finally {
+                        setEnviandoCorreo(false);
+                      }
+                    }}
+                    disabled={enviandoCorreo}
+                    className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    {enviandoCorreo ? (
+                      <span className="material-symbols-outlined animate-spin text-[18px]">sync</span>
+                    ) : (
+                      <span className="material-symbols-outlined text-[18px]">send</span>
+                    )}
+                    Enviar
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-2 text-center">
+                  Se enviará un archivo <strong>{formatoCorreo === 'pdf' ? 'PDF' : 'Excel (.xlsx)'}</strong> adjunto al correo
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}

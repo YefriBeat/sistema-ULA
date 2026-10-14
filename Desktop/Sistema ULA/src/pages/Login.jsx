@@ -36,6 +36,8 @@ export default function Login() {
         finalEmail += '.universidadlatino.edu.mx';
       } else if (finalEmail.endsWith('@')) {
         finalEmail += 'universidadlatino.edu.mx';
+      } else if (!finalEmail.includes('@')) {
+        finalEmail += '@universidadlatino.edu.mx';
       }
 
       const response = await fetch('/api/login', {
@@ -74,10 +76,14 @@ export default function Login() {
     e.preventDefault();
     setCargando(true);
     try {
+      let finalCorreoRec = correoRecuperacion.trim().toLowerCase();
+      if (!finalCorreoRec.includes('@')) finalCorreoRec += '@universidadlatino.edu.mx';
+      else if (finalCorreoRec.endsWith('@')) finalCorreoRec += 'universidadlatino.edu.mx';
+
       const response = await fetch('/api/recuperar-contrasena', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ correo: correoRecuperacion.trim().toLowerCase() })
+        body: JSON.stringify({ correo: finalCorreoRec })
       });
       const data = await response.json();
       if (response.ok) {
@@ -105,11 +111,15 @@ export default function Login() {
 
     setCargando(true);
     try {
+      let finalCorreoRec = correoRecuperacion.trim().toLowerCase();
+      if (!finalCorreoRec.includes('@')) finalCorreoRec += '@universidadlatino.edu.mx';
+      else if (finalCorreoRec.endsWith('@')) finalCorreoRec += 'universidadlatino.edu.mx';
+
       const response = await fetch('/api/restablecer-contrasena', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          correo: correoRecuperacion.trim().toLowerCase(),
+          correo: finalCorreoRec,
           codigo: otpRecuperacion,
           nueva_password: nuevaPassword
         })
@@ -150,7 +160,7 @@ export default function Login() {
                 </span>
                 <input
                   className="block w-full pl-10 pr-3 py-3 border border-[#c5c6cf] rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e] transition-all"
-                  type="email" placeholder="usuario@universidadlatino.edu.mx" required
+                  type="text" placeholder="usuario@universidadlatino.edu.mx" required
                   value={email} onChange={(e) => setEmail(e.target.value)}
                 />
               </div>

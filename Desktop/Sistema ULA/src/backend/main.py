@@ -2,6 +2,7 @@ import os
 import io
 import re
 import csv
+import asyncio
 import unicodedata
 import pymysql
 import bcrypt
@@ -17,6 +18,8 @@ from typing import Optional, List
 import uuid
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -188,6 +191,48 @@ def migrar_columnas_verificacion():
                     semana_anio VARCHAR(20),
                     INDEX idx_fecha_rep (fecha_reposicion),
                     INDEX idx_docente_rep (docente)
+                )""",
+                """CREATE TABLE IF NOT EXISTS eventos_aulas (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    tipo_evento VARCHAR(100) NOT NULL,
+                    nombre_evento VARCHAR(250) NOT NULL,
+                    aula_nombre VARCHAR(100) NOT NULL,
+                    fecha DATE NOT NULL,
+                    hora_inicio TIME NOT NULL,
+                    hora_fin TIME NOT NULL,
+                    responsable VARCHAR(200) NOT NULL,
+                    correo VARCHAR(200) NOT NULL,
+                    descripcion TEXT NULL,
+                    usuario_creador VARCHAR(200) DEFAULT '',
+                    estado VARCHAR(50) DEFAULT 'Programado',
+                    motivo_cancelacion TEXT NULL,
+                    fecha_cancelacion DATETIME NULL,
+                    created_at DATETIME DEFAULT NOW(),
+                    updated_at DATETIME DEFAULT NOW() ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_fecha_aula (fecha, aula_nombre),
+                    INDEX idx_estado (estado)
+                )""",
+                """CREATE TABLE IF NOT EXISTS eventos_recordatorios (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    evento_id INT NOT NULL,
+                    tipo VARCHAR(50) NOT NULL,
+                    antencion_valor INT NOT NULL,
+                    antencion_unidad VARCHAR(20) NOT NULL,
+                    fecha_programada DATETIME NOT NULL,
+                    estado VARCHAR(50) DEFAULT 'pendiente',
+                    fecha_envio DATETIME NULL,
+                    error_log TEXT NULL,
+                    created_at DATETIME DEFAULT NOW(),
+                    INDEX idx_estado_fecha (estado, fecha_programada)
+                )""",
+                """CREATE TABLE IF NOT EXISTS eventos_historial (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    evento_id INT NOT NULL,
+                    usuario VARCHAR(200) DEFAULT '',
+                    accion VARCHAR(100) NOT NULL,
+                    detalles TEXT NULL,
+                    fecha DATETIME DEFAULT NOW(),
+                    INDEX idx_evento (evento_id)
                 )""",
             ]:
                 try:
@@ -404,7 +449,10 @@ async def lifespan(_app: FastAPI):
         seed_calendario_institucional()
     except Exception as e:
         print(f"Advertencia en inicio de app (DB connection issue): {e}")
+    
+    task_rec = asyncio.create_task(worker_procesar_recordatorios())
     yield
+    task_rec.cancel()
 
 
 app = FastAPI(title="API SIPREF ULA", lifespan=lifespan)
@@ -2407,9 +2455,9 @@ def login_usuario(datos: LoginUsuario):
             if not password_valida:
                 patron = None
                 if '@' not in correo_limpio:
-                    patron = f"{correo_limpio}@%.universidadlatino.edu.mx"
-                elif not correo_limpio.endswith('.universidadlatino.edu.mx'):
-                    patron = f"{correo_limpio}%.universidadlatino.edu.mx"
+                    patron = f"{correo_limpio}@%universidadlatino.edu.mx"
+                elif not (correo_limpio.endswith('.universidadlatino.edu.mx') or correo_limpio.endswith('@universidadlatino.edu.mx')):
+                    patron = f"{correo_limpio}%universidadlatino.edu.mx"
 
                 if patron:
                     cursor.execute(
@@ -6521,3 +6569,1157 @@ def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha:
             )
     finally:
         connection.close()
+
+
+
+import difflib
+def _asignar_docentes_a_examenes(cursor, datos):
+    cursor.execute("SELECT asignatura, docente, licenciatura FROM horarios")
+    horarios_all = cursor.fetchall()
+    
+    horarios_por_carrera = {}
+    for h in horarios_all:
+        c = (h['licenciatura'] or '').strip()
+        if c not in horarios_por_carrera:
+            horarios_por_carrera[c] = []
+        horarios_por_carrera[c].append(h)
+
+    for d in datos:
+        d['docente'] = 'Sin asignar'
+        carrera = (d.get('carrera') or '').strip()
+        if carrera in horarios_por_carrera:
+            materia_limpia = (d.get('materia') or '').lower().strip()
+            asignaturas_nombres = list(set([h['asignatura'] for h in horarios_por_carrera[carrera] if h.get('asignatura')]))
+            matches = difflib.get_close_matches(materia_limpia, [a.lower().strip() for a in asignaturas_nombres], n=1, cutoff=0.7)
+            if matches:
+                match_str = matches[0]
+                for h in horarios_por_carrera[carrera]:
+                    if (h.get('asignatura') or '').lower().strip() == match_str:
+                        d['docente'] = h.get('docente') or 'Sin asignar'
+                        break
+    return datos
+
+
+# ── EXPORTAR EXÁMENES A EXCEL ──────────────────────────────────────────
+@app.get("/api/examenes-calendario/exportar/excel")
+def exportar_examenes_excel(
+    carrera: str = "",
+    ciclo_escolar: str = "2025-2026",
+    fecha_filtro: str = ""
+):
+    """Exporta los exámenes de una carrera a un archivo Excel con estilos profesionales."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            query = "SELECT carrera, periodo, semestre, dia, fecha, materia FROM examenes_calendario WHERE ciclo_escolar = %s"
+            params = [ciclo_escolar]
+
+            if carrera:
+                lista_carreras = [c.strip() for c in carrera.split(',') if c.strip()]
+                if lista_carreras:
+                    placeholders = ','.join(['%s'] * len(lista_carreras))
+                    query += f" AND carrera IN ({placeholders})"
+                    params.extend(lista_carreras)
+
+            if fecha_filtro:
+                query += " AND LOWER(fecha) LIKE %s"
+                params.append(f"%{fecha_filtro.lower()}%")
+
+            query += " ORDER BY carrera, periodo, semestre, id"
+            cursor.execute(query, params)
+            datos = cursor.fetchall()
+
+            if not datos:
+                raise HTTPException(status_code=404, detail="No se encontraron exámenes con esos filtros.")
+                
+            datos = _asignar_docentes_a_examenes(cursor, datos)
+
+            wb = Workbook()
+            ws = wb.active
+            titulo_carrera = carrera if carrera else "Todas las carreras"
+            ws.title = f"Exámenes {titulo_carrera}"
+
+            # Estilos
+            header_font = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+            header_fill = PatternFill(start_color='1C355E', end_color='1C355E', fill_type='solid')
+            header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            thin_border = Border(
+                left=Side(style='thin', color='D0D0D0'),
+                right=Side(style='thin', color='D0D0D0'),
+                top=Side(style='thin', color='D0D0D0'),
+                bottom=Side(style='thin', color='D0D0D0')
+            )
+            title_font = Font(name='Calibri', bold=True, size=14, color='1C355E')
+            subtitle_font = Font(name='Calibri', size=10, color='666666')
+
+            # Título
+            ws.merge_cells('A1:G1')
+            ws['A1'] = f"Calendario de Exámenes — {titulo_carrera}"
+            ws['A1'].font = title_font
+            ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+
+            ws.merge_cells('A2:G2')
+            ws['A2'] = f"Ciclo Escolar: {ciclo_escolar}" + (f"  |  Filtro de fecha: {fecha_filtro}" if fecha_filtro else "")
+            ws['A2'].font = subtitle_font
+            ws['A2'].alignment = Alignment(horizontal='center')
+
+            # Encabezados
+            headers = ['Carrera', 'Periodo', 'Semestre', 'Día', 'Fecha', 'Materia', 'Docente']
+            for col_idx, h in enumerate(headers, 1):
+                cell = ws.cell(row=4, column=col_idx, value=h)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = header_align
+                cell.border = thin_border
+
+            # Datos
+            alt_fill = PatternFill(start_color='F4F6FB', end_color='F4F6FB', fill_type='solid')
+            for i, row in enumerate(datos):
+                row_idx = i + 5
+                values = [
+                    row.get('carrera', ''),
+                    row.get('periodo', ''),
+                    row.get('semestre', ''),
+                    row.get('dia', ''),
+                    row.get('fecha', ''),
+                    row.get('materia', ''),
+                    row.get('docente', '')
+                ]
+                for col_idx, val in enumerate(values, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.font = Font(name='Calibri', size=10)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(vertical='center')
+                    if i % 2 == 1:
+                        cell.fill = alt_fill
+
+            # Ajustar ancho de columnas
+            col_widths = [12, 25, 15, 15, 22, 45, 30]
+            for i, w in enumerate(col_widths, 1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+
+            safe_name = carrera if carrera else "Todas"
+            filename = f"Examenes_{safe_name}_{ciclo_escolar}.xlsx"
+
+            return Response(content=output.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename={filename}"})
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al exportar a Excel: {str(e)}")
+    finally:
+        connection.close()
+
+@app.get("/api/examenes-calendario/exportar/pdf")
+def exportar_examenes_pdf(
+    carrera: str = "",
+    ciclo_escolar: str = "2025-2026",
+    fecha_filtro: str = ""
+):
+    """Exporta los exámenes de una carrera a un archivo PDF."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            query = "SELECT carrera, periodo, semestre, dia, fecha, materia FROM examenes_calendario WHERE ciclo_escolar = %s"
+            params = [ciclo_escolar]
+
+            if carrera:
+                lista_carreras = [c.strip() for c in carrera.split(',') if c.strip()]
+                if lista_carreras:
+                    placeholders = ','.join(['%s'] * len(lista_carreras))
+                    query += f" AND carrera IN ({placeholders})"
+                    params.extend(lista_carreras)
+
+            if fecha_filtro:
+                query += " AND LOWER(fecha) LIKE %s"
+                params.append(f"%{fecha_filtro.lower()}%")
+
+            query += " ORDER BY carrera, periodo, semestre, id"
+            cursor.execute(query, params)
+            datos = cursor.fetchall()
+
+            if not datos:
+                raise HTTPException(status_code=404, detail="No se encontraron exámenes con esos filtros.")
+                
+            datos = _asignar_docentes_a_examenes(cursor, datos)
+
+            titulo_carrera = carrera if carrera else "Todas las carreras"
+
+            output = io.BytesIO()
+            doc = SimpleDocTemplate(output, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+            elements = []
+            
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(name="CustomTitle", parent=styles['Heading1'], alignment=1, textColor=colors.HexColor("#1c355e"), fontSize=16)
+            subtitle_style = ParagraphStyle(name="CustomSubtitle", parent=styles['Normal'], alignment=1, textColor=colors.gray, fontSize=11, spaceAfter=20)
+            
+            elements.append(Paragraph(f"Calendario de Exámenes — {titulo_carrera}", title_style))
+            subtitle = f"Ciclo Escolar: {ciclo_escolar}"
+            if fecha_filtro:
+                subtitle += f"  |  Filtro de fecha: {fecha_filtro}"
+            elements.append(Paragraph(subtitle, subtitle_style))
+
+            table_data = [['Carrera', 'Periodo', 'Semestre', 'Fecha', 'Materia', 'Docente']]
+            
+            for row in datos:
+                # Use Paragraph for materia and docente to allow wrapping
+                p_materia = Paragraph(row.get('materia', ''), styles['Normal'])
+                p_docente = Paragraph(row.get('docente', ''), styles['Normal'])
+                
+                table_data.append([
+                    row.get('carrera', ''),
+                    row.get('periodo', ''),
+                    row.get('semestre', ''),
+                    f"{row.get('dia','')} {row.get('fecha','')}",
+                    p_materia,
+                    p_docente
+                ])
+
+            t = Table(table_data, colWidths=[60, 100, 70, 110, 210, 180])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1c355e")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#e5e7eb")),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            # Alternate row colors
+            for i in range(1, len(table_data)):
+                if i % 2 == 0:
+                    t.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor("#f9fafb"))]))
+            
+            elements.append(t)
+            doc.build(elements)
+            
+            output.seek(0)
+            safe_name = carrera if carrera else "Todas"
+            filename = f"Examenes_{safe_name}_{ciclo_escolar}.pdf"
+
+            return Response(content=output.getvalue(), media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al exportar a PDF: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/examenes-calendario/enviar-correo")
+async def enviar_examenes_por_correo(body: dict):
+    """Envía los exámenes filtrados por correo electrónico con archivo adjunto (PDF o Excel)."""
+    correo = body.get("correo", "").strip()
+    carrera = body.get("carrera", "")
+    ciclo_escolar = body.get("ciclo_escolar", "2025-2026")
+    fecha_filtro = body.get("fecha_filtro", "")
+    formato = body.get("formato", "pdf").lower()  # 'pdf' o 'excel'
+
+    if not correo or "@" not in correo:
+        raise HTTPException(status_code=400, detail="Correo electrónico inválido.")
+
+    if formato not in ("pdf", "excel"):
+        formato = "pdf"
+
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            query = "SELECT carrera, periodo, semestre, dia, fecha, materia FROM examenes_calendario WHERE ciclo_escolar = %s"
+            params = [ciclo_escolar]
+            if carrera:
+                lista_carreras = [c.strip() for c in carrera.split(',') if c.strip()]
+                if lista_carreras:
+                    placeholders = ','.join(['%s'] * len(lista_carreras))
+                    query += f" AND carrera IN ({placeholders})"
+                    params.extend(lista_carreras)
+            if fecha_filtro:
+                query += " AND LOWER(fecha) LIKE %s"
+                params.append(f"%{fecha_filtro.lower()}%")
+            query += " ORDER BY carrera, periodo, semestre, id"
+            cursor.execute(query, params)
+            datos = cursor.fetchall()
+            
+            if not datos:
+                raise HTTPException(status_code=404, detail="No se encontraron exámenes con esos filtros.")
+                
+            datos = _asignar_docentes_a_examenes(cursor, datos)
+
+        titulo_carrera = carrera if carrera else "Todas las carreras"
+        safe_name = carrera if carrera else "Todas"
+        asunto = f"Exámenes {titulo_carrera} — Ciclo {ciclo_escolar}"
+
+        # ── Generar el archivo adjunto ──
+        if formato == "excel":
+            wb = Workbook()
+            ws = wb.active
+            ws.title = f"Exámenes {titulo_carrera}"
+
+            header_font = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+            header_fill = PatternFill(start_color='1C355E', end_color='1C355E', fill_type='solid')
+            header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            thin_border = Border(
+                left=Side(style='thin', color='D0D0D0'),
+                right=Side(style='thin', color='D0D0D0'),
+                top=Side(style='thin', color='D0D0D0'),
+                bottom=Side(style='thin', color='D0D0D0')
+            )
+            title_font = Font(name='Calibri', bold=True, size=14, color='1C355E')
+            subtitle_font = Font(name='Calibri', size=10, color='666666')
+
+            ws.merge_cells('A1:G1')
+            ws['A1'] = f"Calendario de Exámenes — {titulo_carrera}"
+            ws['A1'].font = title_font
+            ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+
+            ws.merge_cells('A2:G2')
+            ws['A2'] = f"Ciclo Escolar: {ciclo_escolar}" + (f"  |  Filtro de fecha: {fecha_filtro}" if fecha_filtro else "")
+            ws['A2'].font = subtitle_font
+            ws['A2'].alignment = Alignment(horizontal='center')
+
+            headers = ['Carrera', 'Periodo', 'Semestre', 'Día', 'Fecha', 'Materia', 'Docente']
+            for col_idx, h in enumerate(headers, 1):
+                cell = ws.cell(row=4, column=col_idx, value=h)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = header_align
+                cell.border = thin_border
+
+            alt_fill = PatternFill(start_color='F4F6FB', end_color='F4F6FB', fill_type='solid')
+            for i, row in enumerate(datos):
+                row_idx = i + 5
+                values = [
+                    row.get('carrera', ''), row.get('periodo', ''), row.get('semestre', ''),
+                    row.get('dia', ''), row.get('fecha', ''), row.get('materia', ''), row.get('docente', '')
+                ]
+                for col_idx, val in enumerate(values, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.font = Font(name='Calibri', size=10)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(vertical='center')
+                    if i % 2 == 1:
+                        cell.fill = alt_fill
+
+            col_widths = [12, 25, 15, 15, 22, 45, 30]
+            for i, w in enumerate(col_widths, 1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+
+            file_buffer = io.BytesIO()
+            wb.save(file_buffer)
+            file_buffer.seek(0)
+            filename = f"Examenes_{safe_name}_{ciclo_escolar}.xlsx"
+            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime_subtype = "xlsx"
+
+        else:  # PDF
+            file_buffer = io.BytesIO()
+            doc = SimpleDocTemplate(file_buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+            elements = []
+            pdf_styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(name="CustomTitle", parent=pdf_styles['Heading1'], alignment=1, textColor=colors.HexColor("#1c355e"), fontSize=16)
+            subtitle_style = ParagraphStyle(name="CustomSubtitle", parent=pdf_styles['Normal'], alignment=1, textColor=colors.gray, fontSize=11, spaceAfter=20)
+            
+            elements.append(Paragraph(f"Calendario de Exámenes — {titulo_carrera}", title_style))
+            subtitle = f"Ciclo Escolar: {ciclo_escolar}"
+            if fecha_filtro:
+                subtitle += f"  |  Filtro de fecha: {fecha_filtro}"
+            elements.append(Paragraph(subtitle, subtitle_style))
+
+            table_data = [['Carrera', 'Periodo', 'Semestre', 'Fecha', 'Materia', 'Docente']]
+            for row in datos:
+                p_materia = Paragraph(row.get('materia', ''), pdf_styles['Normal'])
+                p_docente = Paragraph(row.get('docente', ''), pdf_styles['Normal'])
+                table_data.append([
+                    row.get('carrera', ''), row.get('periodo', ''), row.get('semestre', ''),
+                    f"{row.get('dia','')} {row.get('fecha','')}", p_materia, p_docente
+                ])
+
+            t = Table(table_data, colWidths=[60, 100, 70, 110, 210, 180])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1c355e")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#e5e7eb")),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            for i in range(1, len(table_data)):
+                if i % 2 == 0:
+                    t.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor("#f9fafb"))]))
+            elements.append(t)
+            doc.build(elements)
+            file_buffer.seek(0)
+            filename = f"Examenes_{safe_name}_{ciclo_escolar}.pdf"
+            mime_type = "application/pdf"
+            mime_subtype = "pdf"
+
+        # ── Enviar por SMTP con adjunto ──
+        sender_email = os.getenv("SMTP_USER", "")
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", 587))
+        smtp_pass = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
+
+        if not sender_email or not smtp_pass:
+            raise HTTPException(status_code=500, detail="No hay credenciales SMTP configuradas para enviar archivos adjuntos.")
+
+        # Construir el correo con adjunto
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = correo
+        msg['Subject'] = asunto
+
+        # Cuerpo HTML del correo
+        formato_label = "Excel (.xlsx)" if formato == "excel" else "PDF"
+        html_body = f"""
+        <html><body style="font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;background-color:#f3f4f6;padding:40px 20px;margin:0;">
+          <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);">
+            <div style="background:linear-gradient(135deg, #1c355e 0%, #2a4a7f 100%);padding:30px 40px;text-align:center;">
+              <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:600;">📋 Calendario de Exámenes</h1>
+              <p style="color:#bfdbfe;margin:8px 0 0;font-size:14px;">{titulo_carrera} — Ciclo {ciclo_escolar}</p>
+            </div>
+            <div style="padding:30px 40px;">
+              <div style="background:#f0fdf4;border-left:4px solid #10b981;padding:16px 20px;border-radius:0 8px 8px 0;margin-bottom:24px;">
+                <p style="color:#065f46;font-size:14px;margin:0;">✅ Se adjunta el archivo <strong>{formato_label}</strong> con <strong>{len(datos)}</strong> exámenes programados.</p>
+              </div>
+              <div style="background:#f8fafc;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
+                <table style="width:100%;border-collapse:collapse;">
+                  <tr>
+                    <td style="padding:6px 0;color:#64748b;font-size:13px;">📁 Archivo adjunto:</td>
+                    <td style="padding:6px 0;color:#1e293b;font-size:13px;font-weight:600;">{filename}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:6px 0;color:#64748b;font-size:13px;">🎓 Carrera(s):</td>
+                    <td style="padding:6px 0;color:#1e293b;font-size:13px;font-weight:600;">{titulo_carrera}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:6px 0;color:#64748b;font-size:13px;">📅 Ciclo escolar:</td>
+                    <td style="padding:6px 0;color:#1e293b;font-size:13px;font-weight:600;">{ciclo_escolar}</td>
+                  </tr>
+                  {'<tr><td style="padding:6px 0;color:#64748b;font-size:13px;">🔍 Filtro:</td><td style="padding:6px 0;color:#1e293b;font-size:13px;font-weight:600;">' + fecha_filtro + '</td></tr>' if fecha_filtro else ''}
+                </table>
+              </div>
+              <div style="text-align:center;padding-top:20px;border-top:1px solid #e5e7eb;">
+                <p style="color:#9ca3af;font-size:11px;margin:0;">Mensaje generado automáticamente por <strong>SIPREF</strong> — Universidad Latino</p>
+              </div>
+            </div>
+          </div>
+        </body></html>
+        """
+        msg.attach(MIMEText(html_body, 'html'))
+
+        # Adjuntar el archivo
+        adjunto = MIMEBase('application', 'octet-stream')
+        adjunto.set_payload(file_buffer.getvalue())
+        encoders.encode_base64(adjunto)
+        adjunto.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+        msg.attach(adjunto)
+
+        # Enviar
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            server.starttls()
+            server.login(sender_email, smtp_pass)
+            server.send_message(msg)
+
+        return {"message": f"Correo con archivo {formato_label} enviado exitosamente a {correo}"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
+    finally:
+        connection.close()
+
+
+# =========================================================================
+# MÓDULO AGENDA DE EVENTOS DE AULAS (SISTEMA ULA - SIPREF)
+# =========================================================================
+
+def enviar_correo_generico(correo_destino: str, asunto: str, html_content: str):
+    """Envía un correo usando la configuración SMTP definida en .env o fallback."""
+    sender_email = os.getenv("SMTP_USER", "") or os.getenv("SMTP_FROM", "")
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_pass = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
+
+    if sender_email and smtp_pass:
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = correo_destino
+            msg['Subject'] = asunto
+            msg.attach(MIMEText(html_content, 'html'))
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=8.0) as server:
+                server.starttls()
+                server.login(sender_email, smtp_pass)
+                server.sendmail(sender_email, [correo_destino], msg.as_string())
+            return True
+        except Exception as e:
+            print(f"SMTP no disponible o falló ({e}), intentando EmailJS fallback...")
+
+    # Fallback EmailJS
+    try:
+        _enviar_smtp(correo_destino, asunto, html_content)
+        return True
+    except Exception as e:
+        print(f"Error en envío de correo fallback: {e}")
+        return False
+
+
+async def worker_procesar_recordatorios():
+    """Worker asíncrono en segundo plano para procesar recordatorios programados en BD."""
+    while True:
+        try:
+            connection = get_db_connection()
+            with connection.cursor() as cursor:
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                cursor.execute("""
+                    SELECT r.*, e.nombre_evento, e.tipo_evento, e.aula_nombre, e.fecha, 
+                           e.hora_inicio, e.hora_fin, e.responsable, e.correo, e.descripcion, e.estado as estado_evento
+                    FROM eventos_recordatorios r
+                    JOIN eventos_aulas e ON r.evento_id = e.id
+                    WHERE r.estado = 'pendiente' 
+                      AND r.fecha_programada <= %s
+                      AND e.estado IN ('Programado', 'En curso')
+                    LIMIT 20
+                """, (now_str,))
+                pendientes = cursor.fetchall()
+
+                for r in pendientes:
+                    try:
+                        # Bloqueo atómico para evitar envíos duplicados concurrentes
+                        cursor.execute("""
+                            UPDATE eventos_recordatorios 
+                            SET estado = 'procesando' 
+                            WHERE id = %s AND estado = 'pendiente'
+                        """, (r["id"],))
+                        if cursor.rowcount == 0:
+                            continue
+                        connection.commit()
+
+                        if r["tipo"] in ("correo", "ambos") and r.get("correo"):
+                            fecha_str = str(r["fecha"])
+                            if isinstance(r["fecha"], (date, datetime)):
+                                fecha_str = r["fecha"].strftime("%d/%m/%Y")
+
+                            hora_ini = str(r["hora_inicio"])[:5]
+                            hora_f = str(r["hora_fin"])[:5]
+                            desc_html = f"<p style='margin:6px 0;color:#475569;'><b>Descripción:</b> {r['descripcion']}</p>" if r.get('descripcion') else ""
+
+                            html_correo = f"""
+                            <html><body style="font-family:'Segoe UI',Arial,sans-serif;background:#f4f6fb;padding:32px;margin:0;">
+                              <div style="max-width:520px;margin:auto;background:#fff;border-radius:20px;padding:36px;box-shadow:0 8px 30px rgba(0,0,0,.07);border:1px solid #e2e8f0;">
+                                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                                  <div style="background:#1c355e;color:#fdbb11;font-weight:900;font-size:18px;padding:8px 14px;border-radius:12px;display:inline-block;">ULA</div>
+                                  <span style="color:#1c355e;font-size:20px;font-weight:800;vertical-align:middle;margin-left:8px;">SIPREF</span>
+                                </div>
+                                <h2 style="color:#1c355e;margin:0 0 6px 0;font-size:20px;">Recordatorio de Reserva de Aula</h2>
+                                <p style="color:#64748b;font-size:13px;margin:0 0 24px 0;">Sistema de Gestión de Prefectura — Universidad Latino</p>
+
+                                <div style="background:#f8fafc;border-left:4px solid #fdbb11;padding:20px;border-radius:12px;margin-bottom:24px;border:1px solid #e2e8f0;border-left-width:4px;">
+                                  <p style="margin:4px 0 10px 0;font-size:16px;color:#0e2045;font-weight:bold;">{r['nombre_evento']} <span style="font-size:12px;background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:6px;font-weight:600;">{r['tipo_evento']}</span></p>
+                                  <p style="margin:6px 0;color:#334155;font-size:14px;">📍 <b>Aula Asignada:</b> <strong style="color:#1c355e;">{r['aula_nombre']}</strong></p>
+                                  <p style="margin:6px 0;color:#334155;font-size:14px;">📅 <b>Fecha:</b> {fecha_str}</p>
+                                  <p style="margin:6px 0;color:#334155;font-size:14px;">⏰ <b>Horario:</b> {hora_ini} - {hora_f} hrs</p>
+                                  <p style="margin:6px 0;color:#334155;font-size:14px;">👤 <b>Responsable:</b> {r['responsable']}</p>
+                                  {desc_html}
+                                </div>
+
+                                <p style="color:#64748b;font-size:12px;line-height:1.5;margin:0 0 16px 0;">
+                                  Este recordatorio se genera automáticamente según la anticipación configurada en SIPREF.
+                                </p>
+                                <div style="border-top:1px solid #f1f5f9;padding-top:16px;text-align:center;">
+                                  <p style="color:#94a3b8;font-size:11px;margin:0;">© 2026 Universidad Latino · SIPREF Prefectura</p>
+                                </div>
+                              </div>
+                            </body></html>
+                            """
+
+                            ok_envio = enviar_correo_generico(
+                                correo_destino=r["correo"],
+                                asunto=f"Recordatorio de evento: {r['nombre_evento']} — SIPREF",
+                                html_content=html_correo
+                            )
+
+                            if ok_envio:
+                                cursor.execute("UPDATE eventos_recordatorios SET estado = 'enviado', fecha_envio = NOW(), error_log = NULL WHERE id = %s", (r["id"],))
+                            else:
+                                cursor.execute("UPDATE eventos_recordatorios SET estado = 'error', error_log = 'No se pudo entregar correo por SMTP ni fallback' WHERE id = %s", (r["id"],))
+                        else:
+                            # Notificación interna en SIPREF
+                            cursor.execute("UPDATE eventos_recordatorios SET estado = 'enviado', fecha_envio = NOW(), error_log = NULL WHERE id = %s", (r["id"],))
+
+                        connection.commit()
+                    except Exception as e_rec:
+                        print(f"Error procesando recordatorio {r['id']}: {e_rec}")
+                        try:
+                            cursor.execute("UPDATE eventos_recordatorios SET estado = 'error', error_log = %s WHERE id = %s", (str(e_rec)[:250], r["id"]))
+                            connection.commit()
+                        except Exception:
+                            pass
+
+            connection.close()
+        except Exception as e:
+            pass
+
+        await asyncio.sleep(20)
+
+
+class RecordatorioSchema(BaseModel):
+    tipo: str = "correo"
+    antencion_valor: int = 30
+    antencion_unidad: str = "minutos"
+
+
+class EventoCreateSchema(BaseModel):
+    tipo_evento: str
+    nombre_evento: str
+    aula_nombre: str
+    fecha: str
+    hora_inicio: str
+    hora_fin: str
+    responsable: str
+    correo: str
+    descripcion: Optional[str] = ""
+    usuario_creador: Optional[str] = "Prefectura"
+    recordatorios: Optional[List[RecordatorioSchema]] = []
+
+
+class EventoUpdateSchema(BaseModel):
+    tipo_evento: Optional[str] = None
+    nombre_evento: Optional[str] = None
+    aula_nombre: Optional[str] = None
+    fecha: Optional[str] = None
+    hora_inicio: Optional[str] = None
+    hora_fin: Optional[str] = None
+    responsable: Optional[str] = None
+    correo: Optional[str] = None
+    descripcion: Optional[str] = None
+    usuario_modificador: Optional[str] = "Prefectura"
+    recordatorios: Optional[List[RecordatorioSchema]] = None
+
+
+class EventoCancelarSchema(BaseModel):
+    motivo_cancelacion: str
+    usuario: Optional[str] = "Prefectura"
+
+
+class DisponibilidadReqSchema(BaseModel):
+    aula_nombre: str
+    fecha: str
+    hora_inicio: str
+    hora_fin: str
+    evento_id: Optional[int] = None
+
+
+def _time_a_minutos(val) -> int:
+    if isinstance(val, timedelta):
+        return int(val.total_seconds() // 60)
+    if isinstance(val, (datetime, time)):
+        return val.hour * 60 + val.minute
+    s = str(val).strip()
+    parts = s.split(":")
+    if len(parts) >= 2:
+        try:
+            return int(parts[0]) * 60 + int(parts[1])
+        except Exception:
+            return 0
+    return 0
+
+
+def _formatear_hora_hhmm(val) -> str:
+    if isinstance(val, timedelta):
+        total_seconds = int(val.total_seconds())
+        h = (total_seconds // 3600) % 24
+        m = (total_seconds % 3600) // 60
+        return f"{h:02d}:{m:02d}"
+    if isinstance(val, (datetime, time)):
+        return val.strftime("%H:%M")
+    s = str(val).strip()
+    if not s:
+        return "00:00"
+    parts = s.split(":")
+    if len(parts) >= 2:
+        try:
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+        except Exception:
+            return s[:5]
+    return s[:5]
+
+
+def _calcular_fecha_programada(fecha_str: str, hora_inicio_str: str, valor: int, unidad: str) -> datetime:
+    try:
+        dt_inicio = datetime.strptime(f"{fecha_str} {hora_inicio_str[:5]}", "%Y-%m-%d %H:%M")
+        if unidad == "minutos":
+            return dt_inicio - timedelta(minutes=valor)
+        elif unidad == "horas":
+            return dt_inicio - timedelta(hours=valor)
+        elif unidad == "dias":
+            return dt_inicio - timedelta(days=valor)
+        return dt_inicio - timedelta(minutes=valor)
+    except Exception:
+        return datetime.now()
+
+
+def _verificar_disponibilidad_interna(cursor, aula_nombre: str, fecha_str: str, hora_inicio_str: str, hora_fin_str: str, evento_id: Optional[int] = None):
+    try:
+        dt_event_ini = datetime.strptime(f"{fecha_str} {hora_inicio_str[:5]}", "%Y-%m-%d %H:%M")
+        dt_event_fin = datetime.strptime(f"{fecha_str} {hora_fin_str[:5]}", "%Y-%m-%d %H:%M")
+    except Exception:
+        return False, "Formato de fecha u hora inválido."
+
+    if dt_event_fin <= dt_event_ini:
+        return False, "La hora de fin debe ser posterior a la hora de inicio."
+
+    ev_ini_min = dt_event_ini.hour * 60 + dt_event_ini.minute
+    ev_fin_min = dt_event_fin.hour * 60 + dt_event_fin.minute
+
+    # 1. Mantenimiento
+    cursor.execute("SELECT * FROM aulas WHERE nombre = %s", (aula_nombre,))
+    aula_db = cursor.fetchone()
+    if aula_db and aula_db.get("en_mantenimiento"):
+        ini_m = aula_db.get("inicio_mantenimiento")
+        fin_m = aula_db.get("fin_mantenimiento")
+        if ini_m and fin_m:
+            if isinstance(ini_m, str):
+                try: ini_m = datetime.fromisoformat(ini_m)
+                except Exception: pass
+            if isinstance(fin_m, str):
+                try: fin_m = datetime.fromisoformat(fin_m)
+                except Exception: pass
+            if isinstance(ini_m, datetime) and isinstance(fin_m, datetime):
+                if not (dt_event_fin <= ini_m or dt_event_ini >= fin_m):
+                    return False, f"El aula '{aula_nombre}' está en mantenimiento en ese rango de horario."
+        else:
+            return False, f"El aula '{aula_nombre}' está marcada en mantenimiento."
+
+    # 2. Clases Regulares (`horarios`)
+    try:
+        # Mapeo de día según _DIAS_MAP: domingo=0, lunes=1, martes=2, etc.
+        target_dia_idx = (dt_event_ini.weekday() + 1) % 7
+
+        cursor.execute("""
+            SELECT id, horario, asignatura, docente 
+            FROM horarios 
+            WHERE aula_asignada = %s AND TRIM(aula_asignada) != '' AND TRIM(aula_asignada) != 'Por asignar'
+        """, (aula_nombre,))
+        clases_aula = cursor.fetchall()
+
+        cursor.execute("SELECT * FROM aulas_liberadas WHERE aula_nombre = %s AND fecha = %s AND activa = TRUE", (aula_nombre, fecha_str))
+        liberadas = cursor.fetchall()
+        liberadas_set = set((l.get("docente"), l.get("asignatura")) for l in liberadas)
+
+        for cl in clases_aula:
+            if (cl.get("docente"), cl.get("asignatura")) in liberadas_set:
+                continue
+
+            h_raw = cl.get("horario") or ""
+            c_dia_idx, c_ini_min, c_fin_min = _parse_horario_minutos(h_raw)
+            if c_dia_idx == target_dia_idx and c_ini_min is not None and c_fin_min is not None:
+                if not (c_fin_min <= ev_ini_min or c_ini_min >= ev_fin_min):
+                    asig = cl.get("asignatura", "Clase Regular")
+                    doc = cl.get("docente", "")
+                    ini_str = f"{c_ini_min//60:02d}:{c_ini_min%60:02d}"
+                    fin_str = f"{c_fin_min//60:02d}:{c_fin_min%60:02d}"
+                    return False, f"Conflicto con la clase '{asig}' ({doc}) de {ini_str} a {fin_str}."
+    except Exception as e_cl:
+        print(f"Error al verificar clases: {e_cl}")
+
+    # 3. Otros Eventos (`eventos_aulas`)
+    query_ev = """
+        SELECT * FROM eventos_aulas 
+        WHERE aula_nombre = %s 
+          AND fecha = %s 
+          AND estado IN ('Programado', 'En curso')
+    """
+    params_ev = [aula_nombre, fecha_str]
+    if evento_id:
+        query_ev += " AND id != %s"
+        params_ev.append(evento_id)
+
+    cursor.execute(query_ev, params_ev)
+    otros_eventos = cursor.fetchall()
+
+    for ev in otros_eventos:
+        try:
+            o_ini_min = _time_a_minutos(ev['hora_inicio'])
+            o_fin_min = _time_a_minutos(ev['hora_fin'])
+            if not (ev_fin_min <= o_ini_min or ev_ini_min >= o_fin_min):
+                h_i_txt = _formatear_hora_hhmm(ev['hora_inicio'])
+                h_f_txt = _formatear_hora_hhmm(ev['hora_fin'])
+                return False, f"Conflicto con el evento '{ev['nombre_evento']}' ({ev['responsable']}) de {h_i_txt} a {h_f_txt}."
+        except Exception:
+            pass
+
+    return True, "Aula disponible."
+
+
+@app.post("/api/eventos/verificar-disponibilidad")
+def api_verificar_disponibilidad(req: DisponibilidadReqSchema):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            disp, motivo = _verificar_disponibilidad_interna(
+                cursor, req.aula_nombre, req.fecha, req.hora_inicio, req.hora_fin, req.evento_id
+            )
+            return {"disponible": disp, "motivo": motivo}
+    finally:
+        connection.close()
+
+
+@app.post("/api/eventos")
+def api_crear_evento(data: EventoCreateSchema):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            disp, motivo = _verificar_disponibilidad_interna(
+                cursor, data.aula_nombre, data.fecha, data.hora_inicio, data.hora_fin
+            )
+            if not disp:
+                raise HTTPException(status_code=400, detail=motivo)
+
+            cursor.execute("""
+                INSERT INTO eventos_aulas 
+                (tipo_evento, nombre_evento, aula_nombre, fecha, hora_inicio, hora_fin, responsable, correo, descripcion, usuario_creador, estado)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Programado')
+            """, (
+                data.tipo_evento, data.nombre_evento, data.aula_nombre, data.fecha,
+                data.hora_inicio, data.hora_fin, data.responsable, data.correo,
+                data.descripcion, data.usuario_creador
+            ))
+            evento_id = cursor.lastrowid
+
+            if data.recordatorios:
+                for rec in data.recordatorios:
+                    f_prog = _calcular_fecha_programada(data.fecha, data.hora_inicio, rec.antencion_valor, rec.antencion_unidad)
+                    cursor.execute("""
+                        INSERT INTO eventos_recordatorios (evento_id, tipo, antencion_valor, antencion_unidad, fecha_programada, estado)
+                        VALUES (%s, %s, %s, %s, %s, 'pendiente')
+                    """, (evento_id, rec.tipo, rec.antencion_valor, rec.antencion_unidad, f_prog.strftime("%Y-%m-%d %H:%M:%S")))
+
+            cursor.execute("""
+                INSERT INTO eventos_historial (evento_id, usuario, accion, detalles)
+                VALUES (%s, %s, 'Creado', %s)
+            """, (evento_id, data.usuario_creador or "Prefectura", f"Evento '{data.nombre_evento}' agendado para el aula {data.aula_nombre} el {data.fecha} de {data.hora_inicio[:5]} a {data.hora_fin[:5]}."))
+
+            connection.commit()
+            return {"success": True, "id": evento_id, "message": "Evento agendado exitosamente."}
+    finally:
+        connection.close()
+
+
+@app.get("/api/eventos")
+def api_listar_eventos(
+    busqueda: Optional[str] = None,
+    estado: Optional[str] = None,
+    tipo_evento: Optional[str] = None,
+    aula: Optional[str] = None,
+    fecha: Optional[str] = None
+):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            now_dt = datetime.now()
+
+            query = "SELECT * FROM eventos_aulas WHERE 1=1"
+            params = []
+
+            if estado and estado != "todos":
+                query += " AND estado = %s"
+                params.append(estado)
+            if tipo_evento and tipo_evento != "todos":
+                query += " AND tipo_evento = %s"
+                params.append(tipo_evento)
+            if aula and aula != "todas":
+                query += " AND aula_nombre = %s"
+                params.append(aula)
+            if fecha:
+                query += " AND fecha = %s"
+                params.append(fecha)
+            if busqueda:
+                b = f"%{busqueda.strip().lower()}%"
+                query += " AND (LOWER(nombre_evento) LIKE %s OR LOWER(responsable) LIKE %s OR LOWER(correo) LIKE %s OR LOWER(aula_nombre) LIKE %s)"
+                params.extend([b, b, b, b])
+
+            query += " ORDER BY fecha DESC, hora_inicio ASC"
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            resultado = []
+            for row in rows:
+                ev_id = row["id"]
+                est = row["estado"]
+                f_str = str(row["fecha"])
+                h_ini_str = _formatear_hora_hhmm(row["hora_inicio"])
+                h_fin_str = _formatear_hora_hhmm(row["hora_fin"])
+
+                try:
+                    dt_ini = datetime.strptime(f"{f_str} {h_ini_str}", "%Y-%m-%d %H:%M")
+                    dt_fin = datetime.strptime(f"{f_str} {h_fin_str}", "%Y-%m-%d %H:%M")
+
+                    if est not in ("Cancelado",):
+                        nuevo_est = est
+                        if now_dt >= dt_fin:
+                            nuevo_est = "Finalizado"
+                        elif now_dt >= dt_ini and now_dt < dt_fin:
+                            nuevo_est = "En curso"
+
+                        if nuevo_est != est:
+                            cursor.execute("UPDATE eventos_aulas SET estado = %s WHERE id = %s", (nuevo_est, ev_id))
+                            connection.commit()
+                            row["estado"] = nuevo_est
+                except Exception:
+                    pass
+
+                row["fecha"] = f_str
+                row["hora_inicio"] = h_ini_str
+                row["hora_fin"] = h_fin_str
+                resultado.append(row)
+
+            return resultado
+    finally:
+        connection.close()
+
+
+@app.get("/api/eventos-hoy")
+def api_eventos_hoy():
+    """Devuelve las reservas de eventos vigentes u hoy para mostrar en las tarjetas de Gestión de Aulas."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            cursor.execute("""
+                SELECT * FROM eventos_aulas 
+                WHERE fecha = %s AND estado IN ('Programado', 'En curso')
+                ORDER BY hora_inicio ASC
+            """, (today_str,))
+            rows = cursor.fetchall()
+            for r in rows:
+                r["fecha"] = str(r["fecha"])
+                r["hora_inicio"] = _formatear_hora_hhmm(r["hora_inicio"])
+                r["hora_fin"] = _formatear_hora_hhmm(r["hora_fin"])
+            return rows
+    finally:
+        connection.close()
+
+
+@app.get("/api/eventos/notificaciones-activas")
+def api_eventos_notificaciones_activas():
+    """Devuelve notificaciones activas para SIPREF (eventos de hoy y recordatorios recientes)."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            cursor.execute("""
+                SELECT e.*, 
+                       (SELECT COUNT(*) FROM eventos_recordatorios r WHERE r.evento_id = e.id AND r.estado = 'enviado') as total_enviados,
+                       (SELECT COUNT(*) FROM eventos_recordatorios r WHERE r.evento_id = e.id AND r.estado = 'error') as total_errores
+                FROM eventos_aulas e
+                WHERE e.fecha = %s AND e.estado IN ('Programado', 'En curso')
+                ORDER BY e.hora_inicio ASC
+            """, (today_str,))
+            eventos_hoy = cursor.fetchall()
+            for r in eventos_hoy:
+                r["fecha"] = str(r["fecha"])
+                r["hora_inicio"] = _formatear_hora_hhmm(r["hora_inicio"])
+                r["hora_fin"] = _formatear_hora_hhmm(r["hora_fin"])
+
+            # Recordatorios procesados recientemente (últimas 24 horas)
+            cursor.execute("""
+                SELECT r.*, e.nombre_evento, e.aula_nombre, e.responsable, e.hora_inicio, e.hora_fin
+                FROM eventos_recordatorios r
+                JOIN eventos_aulas e ON r.evento_id = e.id
+                WHERE r.fecha_programada >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+                ORDER BY r.fecha_programada DESC
+                LIMIT 15
+            """)
+            recordatorios = cursor.fetchall()
+            for rec in recordatorios:
+                rec["fecha_programada"] = str(rec["fecha_programada"]) if rec.get("fecha_programada") else None
+                rec["fecha_envio"] = str(rec["fecha_envio"]) if rec.get("fecha_envio") else None
+                rec["hora_inicio"] = _formatear_hora_hhmm(rec["hora_inicio"]) if rec.get("hora_inicio") else None
+                rec["hora_fin"] = _formatear_hora_hhmm(rec["hora_fin"]) if rec.get("hora_fin") else None
+
+            return {
+                "eventos_hoy": eventos_hoy,
+                "recordatorios": recordatorios,
+                "total_hoy": len(eventos_hoy)
+            }
+    finally:
+        connection.close()
+
+
+@app.get("/api/eventos/{evento_id}")
+def api_obtener_evento(evento_id: int):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM eventos_aulas WHERE id = %s", (evento_id,))
+            ev = cursor.fetchone()
+            if not ev:
+                raise HTTPException(status_code=404, detail="Evento no encontrado.")
+
+            ev["fecha"] = str(ev["fecha"])
+            ev["hora_inicio"] = _formatear_hora_hhmm(ev["hora_inicio"])
+            ev["hora_fin"] = _formatear_hora_hhmm(ev["hora_fin"])
+
+            cursor.execute("SELECT * FROM eventos_recordatorios WHERE evento_id = %s ORDER BY id ASC", (evento_id,))
+            recs = cursor.fetchall()
+            for r in recs:
+                r["fecha_programada"] = str(r["fecha_programada"]) if r.get("fecha_programada") else None
+                r["fecha_envio"] = str(r["fecha_envio"]) if r.get("fecha_envio") else None
+            ev["recordatorios"] = recs
+
+            cursor.execute("SELECT * FROM eventos_historial WHERE evento_id = %s ORDER BY fecha DESC", (evento_id,))
+            hists = cursor.fetchall()
+            for h in hists:
+                h["fecha"] = str(h["fecha"]) if h.get("fecha") else None
+            ev["historial"] = hists
+
+            return ev
+    finally:
+        connection.close()
+
+
+@app.put("/api/eventos/{evento_id}")
+def api_editar_evento(evento_id: int, data: EventoUpdateSchema):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM eventos_aulas WHERE id = %s", (evento_id,))
+            actual = cursor.fetchone()
+            if not actual:
+                raise HTTPException(status_code=404, detail="Evento no encontrado.")
+
+            nuevo_aula = data.aula_nombre or actual["aula_nombre"]
+            nueva_fecha = data.fecha or str(actual["fecha"])
+            nueva_ini = data.hora_inicio or _formatear_hora_hhmm(actual["hora_inicio"])
+            nueva_fin = data.hora_fin or _formatear_hora_hhmm(actual["hora_fin"])
+
+            # Verificar disponibilidad si cambió espacio o tiempo
+            actual_ini_str = _formatear_hora_hhmm(actual["hora_inicio"])
+            actual_fin_str = _formatear_hora_hhmm(actual["hora_fin"])
+            if nuevo_aula != actual["aula_nombre"] or nueva_fecha != str(actual["fecha"]) or nueva_ini != actual_ini_str or nueva_fin != actual_fin_str:
+                disp, motivo = _verificar_disponibilidad_interna(
+                    cursor, nuevo_aula, nueva_fecha, nueva_ini, nueva_fin, evento_id
+                )
+                if not disp:
+                    raise HTTPException(status_code=400, detail=motivo)
+
+            # Detectar cambios para historial de auditoría
+            cambios = []
+            if data.nombre_evento and data.nombre_evento != actual["nombre_evento"]:
+                cambios.append(f"Nombre cambiado a '{data.nombre_evento}'")
+            if nuevo_aula != actual["aula_nombre"]:
+                cambios.append(f"Aula cambiada de {actual['aula_nombre']} a {nuevo_aula}")
+            if nueva_fecha != str(actual["fecha"]) or nueva_ini != actual_ini_str or nueva_fin != actual_fin_str:
+                cambios.append(f"Horario reprogramado al {nueva_fecha} ({nueva_ini} - {nueva_fin})")
+            if data.responsable and data.responsable != actual["responsable"]:
+                cambios.append(f"Responsable cambiado a '{data.responsable}'")
+            if data.correo and data.correo != actual["correo"]:
+                cambios.append(f"Correo de aviso: {data.correo}")
+
+            cursor.execute("""
+                UPDATE eventos_aulas SET 
+                  tipo_evento = %s, nombre_evento = %s, aula_nombre = %s, fecha = %s,
+                  hora_inicio = %s, hora_fin = %s, responsable = %s, correo = %s, descripcion = %s
+                WHERE id = %s
+            """, (
+                data.tipo_evento or actual["tipo_evento"],
+                data.nombre_evento or actual["nombre_evento"],
+                nuevo_aula, nueva_fecha, nueva_ini, nueva_fin,
+                data.responsable or actual["responsable"],
+                data.correo or actual["correo"],
+                data.descripcion if data.descripcion is not None else actual["descripcion"],
+                evento_id
+            ))
+
+            if data.recordatorios is not None:
+                cursor.execute("DELETE FROM eventos_recordatorios WHERE evento_id = %s", (evento_id,))
+                for rec in data.recordatorios:
+                    f_prog = _calcular_fecha_programada(nueva_fecha, nueva_ini, rec.antencion_valor, rec.antencion_unidad)
+                    cursor.execute("""
+                        INSERT INTO eventos_recordatorios (evento_id, tipo, antencion_valor, antencion_unidad, fecha_programada, estado)
+                        VALUES (%s, %s, %s, %s, %s, 'pendiente')
+                    """, (evento_id, rec.tipo, rec.antencion_valor, rec.antencion_unidad, f_prog.strftime("%Y-%m-%d %H:%M:%S")))
+
+            detalle_auditoria = "; ".join(cambios) if cambios else "Actualización general de datos de reserva."
+            cursor.execute("""
+                INSERT INTO eventos_historial (evento_id, usuario, accion, detalles)
+                VALUES (%s, %s, 'Modificado', %s)
+            """, (evento_id, data.usuario_modificador or "Prefectura", detalle_auditoria))
+
+            connection.commit()
+            return {"success": True, "message": "Evento actualizado exitosamente."}
+    finally:
+        connection.close()
+
+
+@app.post("/api/eventos/{evento_id}/cancelar")
+def api_cancelar_evento(evento_id: int, data: EventoCancelarSchema):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM eventos_aulas WHERE id = %s", (evento_id,))
+            ev = cursor.fetchone()
+            if not ev:
+                raise HTTPException(status_code=404, detail="Evento no encontrado.")
+
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            cursor.execute("""
+                UPDATE eventos_aulas SET estado = 'Cancelado', motivo_cancelacion = %s, fecha_cancelacion = %s
+                WHERE id = %s
+            """, (data.motivo_cancelacion, now_str, evento_id))
+
+            cursor.execute("""
+                UPDATE eventos_recordatorios SET estado = 'cancelado' WHERE evento_id = %s AND estado = 'pendiente'
+            """, (evento_id,))
+
+            cursor.execute("""
+                INSERT INTO eventos_historial (evento_id, usuario, accion, detalles)
+                VALUES (%s, %s, 'Cancelado', %s)
+            """, (evento_id, data.usuario or "Prefectura", f"Evento cancelado. Motivo: {data.motivo_cancelacion}."))
+
+            connection.commit()
+            return {"success": True, "message": "Evento cancelado y aula liberada."}
+    finally:
+        connection.close()
+
+
+@app.post("/api/eventos/probar-correo")
+def api_probar_correo_evento(correo: str, evento_nombre: str = "Conferencia de Prueba"):
+    html_prueba = f"""
+    <html><body style="font-family:'Segoe UI',Arial,sans-serif;background:#f4f6fb;padding:32px;margin:0;">
+      <div style="max-width:480px;margin:auto;background:#fff;border-radius:20px;padding:32px;box-shadow:0 8px 30px rgba(0,0,0,.08);border:1px solid #e2e8f0;">
+        <h2 style="color:#1c355e;margin:0 0 4px 0;">Prueba de Recordatorio — SIPREF</h2>
+        <p style="color:#64748b;font-size:13px;margin:0 0 20px 0;">Universidad Latino</p>
+        <p style="color:#334155;line-height:1.6;">Este es un correo de prueba enviado exitosamente desde el backend de SIPREF para el evento: <b style="color:#1c355e;">{evento_nombre}</b>.</p>
+        <div style="background:#f8fafc;padding:12px;border-radius:10px;border-left:4px solid #10b981;margin:16px 0;">
+          <p style="margin:0;color:#065f46;font-size:12px;font-weight:600;">Servicio de correo SMTP verificado y listo para operar.</p>
+        </div>
+        <p style="color:#94a3b8;font-size:11px;margin-top:24px;text-align:center;">Este correo es únicamente informativo.</p>
+      </div>
+    </body></html>
+    """
+    ok = enviar_correo_generico(correo, f"Prueba de Recordatorio de evento — {evento_nombre}", html_prueba)
+    if ok:
+        return {"success": True, "message": f"Correo de prueba enviado exitosamente a {correo}"}
+    else:
+        raise HTTPException(status_code=500, detail="No se pudo enviar el correo de prueba. Verifique configuración SMTP.")
+
