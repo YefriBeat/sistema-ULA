@@ -135,6 +135,58 @@ export default function AgendaEventos({ aulasList = [] }) {
     }
   };
 
+  const handleEliminarEvento = async (ev) => {
+    if (!ev || !ev.id) return;
+
+    const result = await Swal.fire({
+      title: '¿Eliminar evento?',
+      html: `¿Estás seguro de que deseas eliminar permanentemente el evento <b>"${ev.nombre_evento}"</b>?<br/><br/><span style="font-size: 13px; color: #ef4444; font-weight: 600;">Esta acción borrará el registro de la base de datos y liberará el aula <b>${ev.aula_nombre}</b>. No se podrá recuperar.</span>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Sí, eliminar de la BD',
+      cancelButtonText: 'Cancelar',
+      reverseButtons: true
+    });
+
+    if (result.isConfirmed) {
+      try {
+        const res = await fetch(`${API_URL}/api/eventos/${ev.id}`, {
+          method: 'DELETE'
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'success',
+            title: 'Evento eliminado definitivamente de la base de datos',
+            showConfirmButton: false,
+            timer: 3500
+          });
+          if (eventoDetalle && eventoDetalle.id === ev.id) {
+            setEventoDetalle(null);
+          }
+          fetchEventos();
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'Error',
+            text: data.detail || 'No se pudo eliminar el evento.'
+          });
+        }
+      } catch (err) {
+        console.error('Error al eliminar evento:', err);
+        Swal.fire({
+          icon: 'error',
+          title: 'Error de conexión',
+          text: 'No se pudo comunicar con el servidor para eliminar el evento.'
+        });
+      }
+    }
+  };
+
   const getBadgeEstado = (estado) => {
     switch ((estado || '').toLowerCase()) {
       case 'programado':
@@ -339,13 +391,20 @@ export default function AgendaEventos({ aulasList = [] }) {
                         </button>
                         <button
                           onClick={() => setModalCancelar(ev)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+                          className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-all cursor-pointer"
                           title="Cancelar evento"
                         >
                           <span className="material-symbols-outlined text-lg">cancel</span>
                         </button>
                       </>
                     )}
+                    <button
+                      onClick={() => handleEliminarEvento(ev)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+                      title="Eliminar evento permanentemente"
+                    >
+                      <span className="material-symbols-outlined text-lg">delete</span>
+                    </button>
                   </div>
                 </div>
 
@@ -530,10 +589,17 @@ export default function AgendaEventos({ aulasList = [] }) {
               )}
             </div>
 
-            <div className="pt-2 text-right">
+            <div className="pt-2 flex items-center justify-between">
+              <button
+                onClick={() => handleEliminarEvento(eventoDetalle)}
+                className="px-4 py-2 bg-red-50 text-red-600 font-bold text-xs rounded-xl hover:bg-red-100 transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-base">delete</span>
+                Eliminar evento
+              </button>
               <button
                 onClick={() => setEventoDetalle(null)}
-                className="px-5 py-2 bg-[#1c355e] text-white font-bold text-xs rounded-xl hover:bg-[#152a4a]"
+                className="px-5 py-2 bg-[#1c355e] text-white font-bold text-xs rounded-xl hover:bg-[#152a4a] cursor-pointer"
               >
                 Cerrar
               </button>

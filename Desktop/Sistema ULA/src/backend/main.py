@@ -7702,6 +7702,27 @@ def api_cancelar_evento(evento_id: int, data: EventoCancelarSchema):
         connection.close()
 
 
+@app.delete("/api/eventos/{evento_id}")
+def api_eliminar_evento(evento_id: int):
+    """Elimina permanentemente un evento, sus recordatorios y su historial de la base de datos."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, nombre_evento, aula_nombre FROM eventos_aulas WHERE id = %s", (evento_id,))
+            ev = cursor.fetchone()
+            if not ev:
+                raise HTTPException(status_code=404, detail="Evento no encontrado.")
+
+            cursor.execute("DELETE FROM eventos_recordatorios WHERE evento_id = %s", (evento_id,))
+            cursor.execute("DELETE FROM eventos_historial WHERE evento_id = %s", (evento_id,))
+            cursor.execute("DELETE FROM eventos_aulas WHERE id = %s", (evento_id,))
+
+            connection.commit()
+            return {"success": True, "message": f"Evento #{evento_id} eliminado exitosamente de la base de datos."}
+    finally:
+        connection.close()
+
+
 @app.post("/api/eventos/probar-correo")
 def api_probar_correo_evento(correo: str, evento_nombre: str = "Conferencia de Prueba"):
     html_prueba = f"""
