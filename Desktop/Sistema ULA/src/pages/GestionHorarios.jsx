@@ -138,6 +138,9 @@ export default function GestionHorarios() {
   const [cargandoArchivos, setCargandoArchivos] = useState(false);
   const [vistaActual, setVistaActual] = useState('gestor'); // 'gestor' o 'cargar'
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+  const [modalCrearAbierto, setModalCrearAbierto] = useState(false);
+  const [nuevaClase, setNuevaClase] = useState({ docente: '', asignatura: '', dia: 'Lunes', inicio: '07:00', fin: '08:40', aula_asignada: 'Por asignar' });
+  const [guardandoCreacion, setGuardandoCreacion] = useState(false);
   // ocupacion: { "A24": { matutino: true, vespertino: true }, ... }
   const [ocupacion, setOcupacion] = useState({});
   const [archivosSeleccionados, setArchivosSeleccionados] = useState([]);
@@ -386,8 +389,28 @@ export default function GestionHorarios() {
     });
   };
 
+  const desglosarHorario = (horarioStr) => {
+    if (!horarioStr) return { dia: 'Lunes', inicio: '07:00', fin: '08:40' };
+    const str = String(horarioStr).trim();
+    const partes = str.split(/\s+/);
+    const diaRaw = partes[0] || 'Lunes';
+    const dia = diaRaw.charAt(0).toUpperCase() + diaRaw.slice(1).toLowerCase();
+    const resto = partes.slice(1).join(' ').replace(/--+/g, '-').replace(/\s*-\s*/g, '-');
+    const m = resto.match(/(\d{1,2}:\d{2})-(\d{1,2}:\d{2})/);
+    if (m) {
+      return { dia, inicio: m[1], fin: m[2] };
+    }
+    return { dia, inicio: '07:00', fin: '08:40' };
+  };
+
   const abrirModalEditar = (horario) => {
-    setHorarioAEditar({ ...horario });
+    const { dia, inicio, fin } = desglosarHorario(horario.horario);
+    setHorarioAEditar({
+      ...horario,
+      _dia: dia,
+      _inicio: inicio,
+      _fin: fin
+    });
     setModalEditarAbierto(true);
   };
 
@@ -395,13 +418,15 @@ export default function GestionHorarios() {
     if (!horarioAEditar) return;
     setGuardandoEdicion(true);
     try {
+      const horarioStr = `${horarioAEditar._dia || 'Lunes'} ${horarioAEditar._inicio || '07:00'}-${horarioAEditar._fin || '08:40'}`;
       const response = await fetch(`${API_URL}/api/horarios/${horarioAEditar.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           aula_asignada: horarioAEditar.aula_asignada,
           docente: horarioAEditar.docente,
-          asignatura: horarioAEditar.asignatura
+          asignatura: horarioAEditar.asignatura,
+          horario: horarioStr
         })
       });
 
@@ -410,6 +435,7 @@ export default function GestionHorarios() {
         setModalEditarAbierto(false);
         setHorarioAEditar(null);
         if (archivoSeleccionado) verDetallesArchivo(archivoSeleccionado);
+        cargarArchivosGuardados();
       } else {
         const err = await response.json().catch(() => ({}));
         toast(err.detail || "Error al actualizar el horario", "error");
@@ -419,6 +445,75 @@ export default function GestionHorarios() {
       toast("Error en la comunicación con el servidor", "error");
     } finally {
       setGuardandoEdicion(false);
+    }
+  };
+
+  const eliminarHorarioIndividual = async (horario) => {
+    const result = await Swal.fire({
+      title: '¿Eliminar clase?',
+      html: `¿Seguro que deseas eliminar <b>${horario.asignatura}</b>?<br/><span class="text-sm text-slate-500">${horario.horario} · ${horario.docente}</span>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (result.isConfirmed) {
+      try {
+        const res = await fetch(`${API_URL}/api/horarios/${horario.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok) {
+          toast("Clase eliminada exitosamente", "exito");
+          if (modalEditarAbierto) {
+            setModalEditarAbierto(false);
+            setHorarioAEditar(null);
+          }
+          if (archivoSeleccionado) verDetallesArchivo(archivoSeleccionado);
+          cargarArchivosGuardados();
+        } else {
+          toast(data.detail || "Error al eliminar clase", "error");
+        }
+      } catch (err) {
+        toast("Error al conectar con el servidor", "error");
+      }
+    }
+  };
+
+  const guardarNuevaClase = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!nuevaClase.docente.trim() || !nuevaClase.asignatura.trim()) {
+      toast("Docente y Asignatura son obligatorios", "advertencia");
+      return;
+    }
+    setGuardandoCreacion(true);
+    try {
+      const horarioStr = `${nuevaClase.dia} ${nuevaClase.inicio}-${nuevaClase.fin}`;
+      const res = await fetch(`${API_URL}/api/horarios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          archivo: archivoSeleccionado,
+          docente: nuevaClase.docente.trim(),
+          asignatura: nuevaClase.asignatura.trim(),
+          horario: horarioStr,
+          aula_asignada: nuevaClase.aula_asignada || 'Por asignar'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast("Clase agregada exitosamente", "exito");
+        setModalCrearAbierto(false);
+        setNuevaClase({ docente: '', asignatura: '', dia: 'Lunes', inicio: '07:00', fin: '08:40', aula_asignada: 'Por asignar' });
+        if (archivoSeleccionado) verDetallesArchivo(archivoSeleccionado);
+        cargarArchivosGuardados();
+      } else {
+        toast(data.detail || "Error al agregar clase", "error");
+      }
+    } catch (err) {
+      toast("Error de red al crear horario", "error");
+    } finally {
+      setGuardandoCreacion(false);
     }
   };
 
@@ -1451,6 +1546,17 @@ export default function GestionHorarios() {
                     className="pl-9 pr-4 py-2 bg-white border border-[#c5c6cf]/40 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 w-full sm:w-64"
                   />
                 </div>
+                <button
+                  onClick={() => {
+                    setNuevaClase({ docente: '', asignatura: '', dia: 'Lunes', inicio: '07:00', fin: '08:40', aula_asignada: 'Por asignar' });
+                    setModalCrearAbierto(true);
+                  }}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all whitespace-nowrap"
+                  title="Agregar clase o materia extra"
+                >
+                  <span className="material-symbols-outlined text-[16px]">add</span>
+                  Agregar Horario
+                </button>
                 <button 
                   onClick={() => {
                     setArchivoSeleccionado(null);
@@ -1557,12 +1663,22 @@ export default function GestionHorarios() {
                           </span>
                         </td>
                         <td className="px-6 py-4">
-                          <button 
-                            onClick={() => abrirModalEditar(horario)}
-                            className="p-2 text-[#1c355e] hover:bg-[#f4f3f6] rounded-lg transition-all"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">edit</span>
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button 
+                              onClick={() => abrirModalEditar(horario)}
+                              className="p-2 text-[#1c355e] hover:bg-[#f4f3f6] rounded-lg transition-all"
+                              title="Editar clase y horario"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">edit</span>
+                            </button>
+                            <button 
+                              onClick={() => eliminarHorarioIndividual(horario)}
+                              className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                              title="Eliminar clase"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">delete</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ));
@@ -1676,14 +1792,39 @@ export default function GestionHorarios() {
                 />
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Horario</label>
-                <input 
-                  type="text"
-                  value={horarioAEditar.horario || ''}
-                  disabled
-                  className="w-full px-4 py-2.5 bg-gray-100 border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-gray-500 cursor-not-allowed"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Día</label>
+                  <select
+                    value={horarioAEditar._dia || 'Lunes'}
+                    onChange={(e) => setHorarioAEditar({ ...horarioAEditar, _dia: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e] cursor-pointer"
+                  >
+                    {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'].map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Hora Inicio</label>
+                  <input 
+                    type="time"
+                    value={horarioAEditar._inicio || '07:00'}
+                    onChange={(e) => setHorarioAEditar({ ...horarioAEditar, _inicio: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Hora Fin</label>
+                  <input 
+                    type="time"
+                    value={horarioAEditar._fin || '08:40'}
+                    onChange={(e) => setHorarioAEditar({ ...horarioAEditar, _fin: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1706,24 +1847,160 @@ export default function GestionHorarios() {
               </div>
             </div>
 
-            <div className="p-6 bg-[#f4f3f6] border-t border-[#c5c6cf]/30 flex gap-3 justify-end sticky bottom-0">
-              <button 
-                onClick={() => {
-                  setModalEditarAbierto(false);
-                  setHorarioAEditar(null);
-                }}
-                className="px-6 py-2.5 rounded-xl text-sm font-bold text-[#44464e] hover:bg-white transition-all border border-[#c5c6cf]/40"
-              >
-                Cancelar
-              </button>
+            <div className="p-6 bg-[#f4f3f6] border-t border-[#c5c6cf]/30 flex items-center justify-between sticky bottom-0">
               <button
-                onClick={guardarHorarioEditado}
-                disabled={guardandoEdicion}
-                className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1c355e] text-white hover:bg-[#152a4a] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                type="button"
+                onClick={() => eliminarHorarioIndividual(horarioAEditar)}
+                className="px-4 py-2.5 rounded-xl text-sm font-bold text-red-600 hover:bg-red-50 border border-red-200 transition-all flex items-center gap-1.5"
+                title="Eliminar este horario de la base de datos"
               >
-                {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                <span className="material-symbols-outlined text-[18px]">delete</span>
+                Eliminar
+              </button>
+              <div className="flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setModalEditarAbierto(false);
+                    setHorarioAEditar(null);
+                  }}
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold text-[#44464e] hover:bg-white transition-all border border-[#c5c6cf]/40"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={guardarHorarioEditado}
+                  disabled={guardandoEdicion}
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1c355e] text-white hover:bg-[#152a4a] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL AGREGAR HORARIO EXTRA */}
+      {modalCrearAbierto && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 bg-[#f4f3f6] border-b border-[#c5c6cf]/30 flex items-center justify-between sticky top-0">
+              <div>
+                <h2 className="text-lg font-bold text-[#1b1c1e] flex items-center gap-2">
+                  <span className="material-symbols-outlined text-emerald-600">add_circle</span>
+                  Agregar Horario Extra
+                </h2>
+                <p className="text-xs text-[#44464e] mt-1">Registra una nueva materia o clase para este grupo</p>
+              </div>
+              <button 
+                onClick={() => setModalCrearAbierto(false)}
+                className="p-2 text-[#44464e] hover:bg-white rounded-lg"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
+
+            <form onSubmit={guardarNuevaClase}>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Docente *</label>
+                  <input 
+                    type="text"
+                    required
+                    placeholder="Nombre del maestro/docente"
+                    value={nuevaClase.docente}
+                    onChange={(e) => setNuevaClase({ ...nuevaClase, docente: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Asignatura / Materia *</label>
+                  <input 
+                    type="text"
+                    required
+                    placeholder="Nombre de la materia"
+                    value={nuevaClase.asignatura}
+                    onChange={(e) => setNuevaClase({ ...nuevaClase, asignatura: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Día</label>
+                    <select
+                      value={nuevaClase.dia}
+                      onChange={(e) => setNuevaClase({ ...nuevaClase, dia: e.target.value })}
+                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e] cursor-pointer"
+                    >
+                      {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'].map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Hora Inicio</label>
+                    <input 
+                      type="time"
+                      value={nuevaClase.inicio}
+                      onChange={(e) => setNuevaClase({ ...nuevaClase, inicio: e.target.value })}
+                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Hora Fin</label>
+                    <input 
+                      type="time"
+                      value={nuevaClase.fin}
+                      onChange={(e) => setNuevaClase({ ...nuevaClase, fin: e.target.value })}
+                      className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-[#44464e] uppercase block mb-2">Aula Asignada</label>
+                  <select
+                    value={nuevaClase.aula_asignada}
+                    onChange={(e) => setNuevaClase({ ...nuevaClase, aula_asignada: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#f4f3f6] border border-[#c5c6cf]/40 rounded-xl text-sm font-bold text-[#1b1c1e] focus:outline-none focus:ring-2 focus:ring-[#1c355e] cursor-pointer"
+                  >
+                    <option value="Por asignar">Por asignar</option>
+                    {aulas.map((aula) => {
+                      const bloqueada = esBloqueada(aula.nombre);
+                      return (
+                        <option key={aula.id} value={aula.nombre} disabled={bloqueada}>
+                          {bloqueada ? '🔴 ' : ''}{aula.nombre}{aula.edificio ? ` · ${aula.edificio}` : ''}{bloqueada ? ' (Bloqueada)' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </div>
+
+              <div className="p-6 bg-[#f4f3f6] border-t border-[#c5c6cf]/30 flex gap-3 justify-end sticky bottom-0">
+                <button 
+                  type="button"
+                  onClick={() => setModalCrearAbierto(false)}
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold text-[#44464e] hover:bg-white transition-all border border-[#c5c6cf]/40"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoCreacion}
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[18px]">save</span>
+                  {guardandoCreacion ? 'Guardando...' : 'Guardar Horario'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

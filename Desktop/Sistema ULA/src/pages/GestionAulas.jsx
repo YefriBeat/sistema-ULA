@@ -976,10 +976,19 @@ export default function GestionAulas() {
 
             const examenesEnAula = examenesHoy.filter(ex => {
               const fLow = (ex.fecha || '').trim().toLowerCase();
+              const p1Low = (ex.primer_parcial || '').trim().toLowerCase();
+              const p2Low = (ex.segundo_parcial || '').trim().toLowerCase();
+              const ordLow = (ex.ordinario || '').trim().toLowerCase();
               const dLow = (ex.dia || '').trim().toLowerCase();
-              const esHoy = fLow === fechaTexto
-                         || fLow === fechaDDMMYYYY.toLowerCase()
-                         || fLow === fechaISO.toLowerCase()
+
+              const matchFecha = (strVal) => {
+                if (!strVal) return false;
+                return strVal === fechaTexto
+                    || strVal.includes(fechaDDMMYYYY.toLowerCase())
+                    || strVal.includes(fechaISO.toLowerCase());
+              };
+
+              const esHoy = matchFecha(fLow) || matchFecha(p1Low) || matchFecha(p2Low) || matchFecha(ordLow)
                          || (fLow === '' && dLow === diaNombre);
               if (!esHoy) return false;
 

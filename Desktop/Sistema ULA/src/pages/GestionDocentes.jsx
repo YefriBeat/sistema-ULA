@@ -360,10 +360,19 @@ export default function GestionDocentes() {
           if (estadoPlan === "examenes") {
             const tieneExamen = examenesHoy.some(ex => {
               const fLow = (ex.fecha || '').trim().toLowerCase();
+              const p1Low = (ex.primer_parcial || '').trim().toLowerCase();
+              const p2Low = (ex.segundo_parcial || '').trim().toLowerCase();
+              const ordLow = (ex.ordinario || '').trim().toLowerCase();
               const dLow = (ex.dia || '').trim().toLowerCase();
-              const esHoy = fLow === fechaHoyTexto
-                         || fLow === fechaHoyStr1.toLowerCase()
-                         || fLow === fechaHoyStr2.toLowerCase()
+
+              const matchFecha = (strVal) => {
+                if (!strVal) return false;
+                return strVal === fechaHoyTexto
+                    || strVal.includes(fechaHoyStr1.toLowerCase())
+                    || strVal.includes(fechaHoyStr2.toLowerCase());
+              };
+
+              const esHoy = matchFecha(fLow) || matchFecha(p1Low) || matchFecha(p2Low) || matchFecha(ordLow)
                          || (fLow === '' && dLow === diaNombreStr);
               
               if (!esHoy) return false;

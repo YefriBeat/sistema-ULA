@@ -8,6 +8,7 @@ import pymysql
 import bcrypt
 import certifi
 import pdfplumber
+import openpyxl
 import json
 import smtplib
 import secrets
@@ -58,6 +59,11 @@ def migrar_columnas_verificacion():
                 "ALTER TABLE horarios ADD COLUMN es_reposicion BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE examenes_calendario ADD COLUMN archivo_origen VARCHAR(255) NULL",
                 "ALTER TABLE examenes_calendario ADD COLUMN ciclo_escolar VARCHAR(20) DEFAULT '2025-2026'",
+                "ALTER TABLE examenes_calendario ADD COLUMN clave VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE examenes_calendario ADD COLUMN docente VARCHAR(250) DEFAULT ''",
+                "ALTER TABLE examenes_calendario ADD COLUMN primer_parcial VARCHAR(100) DEFAULT ''",
+                "ALTER TABLE examenes_calendario ADD COLUMN segundo_parcial VARCHAR(100) DEFAULT ''",
+                "ALTER TABLE examenes_calendario ADD COLUMN ordinario VARCHAR(100) DEFAULT ''",
                 """CREATE TABLE IF NOT EXISTS docentes (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     nombre VARCHAR(200) NOT NULL,
@@ -1602,6 +1608,276 @@ async def subir_calendario(
         connection.close()
 
 
+def _limpiar_fecha_examen(val: str) -> str:
+    """Extrae únicamente la fecha (DD/MM/YYYY), eliminando horas genéricas como '12:00 a. m.', '08:00 a. m.'."""
+    if not val:
+        return ""
+    val_str = str(val).strip()
+    match_iso = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', val_str)
+    if match_iso:
+        y, m, d = match_iso.group(1), int(match_iso.group(2)), int(match_iso.group(3))
+        return f"{d:02d}/{m:02d}/{y}"
+    match_dmy = re.match(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})', val_str)
+    if match_dmy:
+        d, m, y = int(match_dmy.group(1)), int(match_dmy.group(2)), match_dmy.group(3)
+        return f"{d:02d}/{m:02d}/{y}"
+    val_sin_hora = re.sub(r'\s+\d{1,2}:\d{2}(:\d{2})?(\s*[ap]\.?\s*m\.?)?', '', val_str, flags=re.IGNORECASE).strip()
+    return val_sin_hora
+
+
+def _resolver_carrera_excel(texto: str) -> str:
+    """Resuelve un texto (nombre de plan, licenciatura, nombre de hoja) al código de carrera."""
+    if not texto:
+        return None
+    t = re.sub(r'\s+', ' ', str(texto)).strip().upper()
+    for cod in ['DER', 'ENF', 'GAS', 'ISC', 'NEG', 'NUT', 'PSCF', 'PSIC', 'VMK']:
+        if t.startswith(cod + ' ') or t.startswith(cod + '-') or t == cod:
+            return cod
+    if 'ENFERMER' in t: return 'ENF'
+    if 'GASTRONOM' in t: return 'GAS'
+    if 'NUTRI' in t or 'NUTTI' in t: return 'NUT'
+    if 'SISTEMAS' in t or 'COMPUTACIONAL' in t: return 'ISC'
+    if 'NEGOCIO' in t: return 'NEG'
+    if 'VENTAS' in t or 'MERCADOTECNIA' in t: return 'VMK'
+    if 'DERECHO' in t: return 'DER'
+    if 'FAMILIA' in t or 'PSCF' in t: return 'PSCF'
+    if 'PSICOLOG' in t: return 'PSIC'
+    return None
+
+
+@app.post("/api/examenes-calendario/upload-excel")
+async def subir_examenes_excel(
+    ciclo_escolar: str = Form("2025-2026"),
+    archivo: UploadFile = File(...)
+):
+    """Procesa un archivo Excel (.xlsx/.xls) o CSV con fechas de exámenes de TODAS las carreras.
+    Detecta automáticamente la carrera por nombre de hoja o por títulos dentro del contenido.
+    Extrae: grado, clave, materia, docente, 1er parcial, 2do parcial, ordinario."""
+    
+    allowed_types = [
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "text/csv",
+        "application/csv",
+    ]
+    filename = archivo.filename or ""
+    es_excel = filename.lower().endswith(('.xlsx', '.xls'))
+    es_csv = filename.lower().endswith('.csv')
+    
+    if not es_excel and not es_csv:
+        if archivo.content_type not in allowed_types:
+            raise HTTPException(status_code=400, detail="Solo se permiten archivos Excel (.xlsx, .xls) o CSV (.csv).")
+    
+    file_bytes = await archivo.read()
+    
+    # ── Extraer filas de cada hoja/origen ──
+    todas_las_filas = []  # [(nombre_origen, [[celda, ...], ...])]
+    
+    if es_excel or file_bytes[:4] == b'PK\x03\x04':
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+            for sheetname in wb.sheetnames:
+                ws = wb[sheetname]
+                sheet_rows = []
+                for row in ws.iter_rows(values_only=True):
+                    r_str = [str(c).strip() if c is not None else "" for c in row]
+                    if any(r_str):
+                        sheet_rows.append(r_str)
+                todas_las_filas.append((sheetname, sheet_rows))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"No se pudo leer el archivo Excel: {str(e)}")
+    else:
+        for enc in ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252']:
+            try:
+                texto = file_bytes.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            texto = file_bytes.decode('utf-8', errors='ignore')
+        
+        sniffer = csv.Sniffer()
+        try:
+            dialect = sniffer.sniff(texto[:2048])
+            delim = dialect.delimiter
+        except Exception:
+            delim = ',' if ',' in texto[:500] else ';'
+        
+        csv_rows = []
+        reader = csv.reader(io.StringIO(texto), delimiter=delim)
+        for row in reader:
+            r_str = [str(c).strip() for c in row]
+            if any(r_str):
+                csv_rows.append(r_str)
+        todas_las_filas.append(("CSV", csv_rows))
+    
+    if not todas_las_filas:
+        raise HTTPException(status_code=400, detail="El archivo está vacío o no se pudo leer.")
+    
+    # ── Procesar filas a exámenes ──
+    resultados = {}  # { carrera: [ {dict} ] }
+    
+    for nombre_origen, filas in todas_las_filas:
+        if not filas:
+            continue
+        
+        carrera_de_hoja = _resolver_carrera_excel(nombre_origen)
+        
+        # Detectar formato ERP (IdSubciclo, NombrePlan, ...)
+        es_erp = False
+        headers_erp = None
+        for i in range(min(5, len(filas))):
+            row_joined = " ".join(filas[i]).upper()
+            if "IDSUBCICLO" in row_joined and "NOMBREPLAN" in row_joined:
+                es_erp = True
+                headers_erp = [c.strip().lower() for c in filas[i]]
+                filas_datos = filas[i+1:]
+                break
+        
+        if es_erp:
+            for r in filas_datos:
+                r_dict = {h: (r[idx] if idx < len(r) else "") for idx, h in enumerate(headers_erp)}
+                plan = r_dict.get("nombreplan", "")
+                carrera = _resolver_carrera_excel(plan)
+                if not carrera:
+                    continue
+                periodo_num = r_dict.get("idperiodo", "")
+                grado = f"{periodo_num}º" if periodo_num else ""
+                materia = r_dict.get("nombremateria", "")
+                docente = " ".join(filter(None, [
+                    r_dict.get("nombre", ""),
+                    r_dict.get("primerapellido", ""),
+                    r_dict.get("segundoapellido", "")
+                ])).strip()
+                fecha_aplicacion = _limpiar_fecha_examen(r_dict.get("aplicacion", ""))
+                clave_mat = r_dict.get("idmateria", "")
+                desc = r_dict.get("descripcion", "")
+                
+                item = {
+                    "carrera": carrera, "semestre": grado or f"Grado {periodo_num}",
+                    "periodo": desc or "Examen", "clave": clave_mat, "materia": materia,
+                    "docente": docente, "dia": "", "fecha": fecha_aplicacion,
+                    "primer_parcial": "", "segundo_parcial": "", "ordinario": fecha_aplicacion
+                }
+                resultados.setdefault(carrera, []).append(item)
+            continue
+        
+        # Formato con encabezados: Grado, Clave, Asignatura, Docente, 1er. Parcial, 2do. Parcial, Ordinario
+        carrera_actual = carrera_de_hoja
+        headers_actual = None
+        
+        for row in filas:
+            fila_texto = " ".join(row)
+            
+            c_en_fila = _resolver_carrera_excel(fila_texto)
+            if c_en_fila and ("CALENDARIO" in fila_texto.upper() or "LICENCIATURA" in fila_texto.upper() or "INGENIER" in fila_texto.upper()):
+                carrera_actual = c_en_fila
+                headers_actual = None
+                continue
+            
+            row_lower = [c.lower() for c in row if c]
+            if any("asignatura" in c or "materia" in c for c in row_lower) and any("parcial" in c or "ordinario" in c for c in row_lower):
+                headers_actual = [c.strip().lower() for c in row]
+                continue
+            
+            if carrera_actual and headers_actual:
+                row_dict = {}
+                for idx, h in enumerate(headers_actual):
+                    if h and idx < len(row):
+                        row_dict[h] = row[idx]
+                
+                materia = ""
+                for k, v in row_dict.items():
+                    if ("asignatura" in k or "materia" in k) and v:
+                        materia = v
+                        break
+                
+                if not materia or materia.lower() in ["asignatura", "materia", ""]:
+                    continue
+                
+                grado = clave_mat = docente = p1 = p2 = ord_ex = ""
+                for k, v in row_dict.items():
+                    kl = k.lower()
+                    if ("grado" in kl or "semestre" in kl or "cuatrimestre" in kl) and not grado:
+                        grado = v
+                    elif "clave" in kl and not clave_mat:
+                        clave_mat = v
+                    elif ("docente" in kl or "maestro" in kl or "profesor" in kl) and not docente:
+                        docente = v
+                    elif ("1er" in kl or "primer" in kl) and not p1:
+                        p1 = v
+                    elif ("2do" in kl or "segund" in kl) and not p2:
+                        p2 = v
+                    elif "ordinario" in kl and not ord_ex:
+                        ord_ex = v
+                
+                p1_clean = _limpiar_fecha_examen(p1)
+                p2_clean = _limpiar_fecha_examen(p2)
+                ord_clean = _limpiar_fecha_examen(ord_ex)
+                fecha_clean = ord_clean or p2_clean or p1_clean
+
+                item = {
+                    "carrera": carrera_actual, "semestre": grado,
+                    "periodo": "Exámenes Parciales y Ordinarios", "clave": clave_mat,
+                    "materia": materia, "docente": docente, "dia": "",
+                    "fecha": fecha_clean, "primer_parcial": p1_clean,
+                    "segundo_parcial": p2_clean, "ordinario": ord_clean
+                }
+                resultados.setdefault(carrera_actual, []).append(item)
+    
+    if not resultados:
+        raise HTTPException(status_code=400, detail="No se encontraron datos de exámenes en el archivo. Verifica que tenga columnas como Asignatura, Docente, 1er. Parcial, 2do. Parcial, Ordinario.")
+    
+    # ── Guardar en la BD ──
+    connection = get_db_connection()
+    total_insertados = 0
+    carreras_procesadas = []
+    
+    try:
+        with connection.cursor() as cursor:
+            for carrera, items in resultados.items():
+                # Borrar exámenes previos de esta carrera para este ciclo y origen
+                cursor.execute(
+                    "DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s AND ciclo_escolar = %s",
+                    (carrera, filename, ciclo_escolar)
+                )
+                
+                for d in items:
+                    cursor.execute(
+                        """INSERT INTO examenes_calendario 
+                        (carrera, periodo, semestre, dia, fecha, materia, archivo_origen, ciclo_escolar, clave, docente, primer_parcial, segundo_parcial, ordinario) 
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (carrera, d['periodo'], d['semestre'], d['dia'], d['fecha'], d['materia'],
+                         filename, ciclo_escolar, d.get('clave', ''), d.get('docente', ''),
+                         d.get('primer_parcial', ''), d.get('segundo_parcial', ''), d.get('ordinario', ''))
+                    )
+                    total_insertados += 1
+                
+                # Registrar en calendarios
+                cursor.execute(
+                    "DELETE FROM calendarios WHERE tipo = %s AND carrera = %s AND ciclo_escolar = %s",
+                    ('examenes', carrera, ciclo_escolar)
+                )
+                cursor.execute(
+                    "INSERT INTO calendarios (tipo, carrera, archivo_nombre, archivo_url, ciclo_escolar) VALUES (%s, %s, %s, %s, %s)",
+                    ('examenes', carrera, filename, f"/api/examenes-calendario/{carrera}", ciclo_escolar)
+                )
+                carreras_procesadas.append(carrera)
+            
+            connection.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al guardar en la base de datos: {str(e)}")
+    finally:
+        connection.close()
+    
+    return {
+        "message": f"Se procesaron {total_insertados} exámenes de {len(carreras_procesadas)} carreras.",
+        "total": total_insertados,
+        "carreras": carreras_procesadas,
+        "detalle": {c: len(items) for c, items in resultados.items()}
+    }
+
+
 def _es_fecha_pasada(fecha_str: str) -> bool:
     """Devuelve True si la fecha (ej. '06 de junio') tiene más de 5 días de haber pasado, asumiendo el ciclo actual."""
     if not fecha_str:
@@ -1643,10 +1919,14 @@ def obtener_examenes_calendario(carrera: str, ciclo_escolar: str = "2025-2026"):
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id, periodo, semestre, dia, fecha, materia, archivo_origen FROM examenes_calendario WHERE carrera = %s AND ciclo_escolar = %s ORDER BY id",
+                "SELECT id, periodo, semestre, dia, fecha, materia, archivo_origen, clave, docente, primer_parcial, segundo_parcial, ordinario FROM examenes_calendario WHERE carrera = %s AND ciclo_escolar = %s ORDER BY id",
                 (carrera, ciclo_escolar)
             )
             datos = cursor.fetchall()
+            for d in (datos or []):
+                for fld in ['primer_parcial', 'segundo_parcial', 'ordinario', 'fecha']:
+                    if d.get(fld):
+                        d[fld] = _limpiar_fecha_examen(d[fld])
             
             if not datos:
                 return []
@@ -1697,10 +1977,14 @@ def examenes_hoy(ciclo_escolar: str = None):
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT DISTINCT carrera, materia, periodo, semestre, dia, fecha FROM examenes_calendario WHERE ciclo_escolar = %s ORDER BY carrera, semestre",
+                "SELECT DISTINCT carrera, materia, periodo, semestre, dia, fecha, primer_parcial, segundo_parcial, ordinario, docente, clave FROM examenes_calendario WHERE ciclo_escolar = %s ORDER BY carrera, semestre",
                 (ciclo_escolar,)
             )
             datos = cursor.fetchall()
+            for d in (datos or []):
+                for fld in ['primer_parcial', 'segundo_parcial', 'ordinario', 'fecha']:
+                    if d.get(fld):
+                        d[fld] = _limpiar_fecha_examen(d[fld])
         return datos
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -3483,17 +3767,22 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
                 # Formato "07 de agosto" (como lo almacena el parser del PDF)
                 date_str_texto = f"{date_obj.day:02d} de {meses_nombres[date_obj.month]}"
                 date_str_iso = date_obj.strftime("%Y-%m-%d")
-                date_str_ddmmyyyy = date_obj.strftime("%d/%m/%Y")
-                ciclo_actual_estado = ciclos_disponibles(date_str_iso)["ciclo_actual"]
-                
                 cursor.execute("""
                     SELECT materia FROM examenes_calendario 
                     WHERE ciclo_escolar = %s
-                      AND (LOWER(fecha) = LOWER(%s)
-                       OR LOWER(fecha) = LOWER(%s)
-                       OR LOWER(fecha) = LOWER(%s)
+                      AND (LOWER(fecha) LIKE %s OR LOWER(fecha) = LOWER(%s) OR LOWER(fecha) = LOWER(%s)
+                       OR LOWER(primer_parcial) LIKE %s OR LOWER(primer_parcial) = LOWER(%s)
+                       OR LOWER(segundo_parcial) LIKE %s OR LOWER(segundo_parcial) = LOWER(%s)
+                       OR LOWER(ordinario) LIKE %s OR LOWER(ordinario) = LOWER(%s)
                        OR (TRIM(fecha) = '' AND LOWER(dia) = LOWER(%s)))
-                """, (ciclo_actual_estado, date_str_texto, date_str_iso, date_str_ddmmyyyy, dia_str))
+                """, (
+                    ciclo_actual_estado,
+                    f"%{date_str_ddmmyyyy}%", date_str_texto, date_str_iso,
+                    f"%{date_str_ddmmyyyy}%", date_str_texto,
+                    f"%{date_str_ddmmyyyy}%", date_str_texto,
+                    f"%{date_str_ddmmyyyy}%", date_str_texto,
+                    dia_str
+                ))
                 examenes_hoy_materias = {normalize_subject(row['materia']) for row in cursor.fetchall()}
             else:
                 examenes_hoy_materias = set()
@@ -4035,31 +4324,43 @@ def obtener_horarios_archivo(nombre_archivo: str):
 
 @app.put("/api/horarios/{horario_id}")
 def actualizar_horario(horario_id: int, datos: dict, request: Request):
-    """Actualiza un horario específico (aula, docente, asignatura). Valida conflictos de aula."""
+    """Actualiza un horario específico (aula, docente, asignatura, horario/día/hora). Valida conflictos de aula."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
             nueva_aula = datos.get("aula_asignada", "Por asignar")
+            nuevo_docente = datos.get("docente", "").strip()
+            nueva_asignatura = datos.get("asignatura", "").strip()
+            nuevo_horario = datos.get("horario", "").strip()
             usuario = obtener_usuario(request)
-            # Obtener el horario original para parsear día y hora
+
             cursor.execute("SELECT docente, asignatura, horario, aula_asignada FROM horarios WHERE id = %s", (horario_id,))
-            actual = cursor.fetchone() or {}
-            if actual:
-                msg = _verificar_conflicto_aula(cursor, nueva_aula, actual.get('horario', ''), excluir_id=horario_id)
-                if msg:
-                    raise HTTPException(status_code=409, detail=msg)
-            sql = "UPDATE horarios SET aula_asignada = %s, docente = %s, asignatura = %s WHERE id = %s"
+            actual = cursor.fetchone()
+            if not actual:
+                raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+            docente_final = nuevo_docente or actual.get("docente", "")
+            asig_final = nueva_asignatura or actual.get("asignatura", "")
+            horario_final = nuevo_horario or actual.get("horario", "")
+
+            msg = _verificar_conflicto_aula(cursor, nueva_aula, horario_final, excluir_id=horario_id)
+            if msg:
+                raise HTTPException(status_code=409, detail=msg)
+
+            sql = "UPDATE horarios SET aula_asignada = %s, docente = %s, asignatura = %s, horario = %s WHERE id = %s"
             cursor.execute(sql, (
                 nueva_aula,
-                datos.get("docente", ""),
-                datos.get("asignatura", ""),
+                docente_final,
+                asig_final,
+                horario_final,
                 horario_id
             ))
             registrar_bitacora(
                 cursor, usuario, 'actualizar_clase', 'horarios', registro_id=horario_id,
-                docente=datos.get("docente", ""), asignatura=datos.get("asignatura", ""),
+                docente=docente_final, asignatura=asig_final,
                 aula_anterior=actual.get('aula_asignada'), aula_nueva=nueva_aula,
-                datos_anteriores={"docente": actual.get("docente"), "asignatura": actual.get("asignatura")}
+                datos_anteriores={"docente": actual.get("docente"), "asignatura": actual.get("asignatura"), "horario": actual.get("horario")},
+                datos_nuevos={"docente": docente_final, "asignatura": asig_final, "horario": horario_final}
             )
         connection.commit()
         return {"message": "Horario actualizado exitosamente"}
@@ -4067,6 +4368,91 @@ def actualizar_horario(horario_id: int, datos: dict, request: Request):
         raise
     except pymysql.Error as e:
         raise HTTPException(status_code=500, detail=f"Error al actualizar horario: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.delete("/api/horarios/{horario_id}")
+def eliminar_horario(horario_id: int, request: Request):
+    """Elimina una clase / horario específico de la base de datos."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            usuario = obtener_usuario(request)
+            cursor.execute("SELECT docente, asignatura, horario, aula_asignada, archivo FROM horarios WHERE id = %s", (horario_id,))
+            actual = cursor.fetchone()
+            if not actual:
+                raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+            cursor.execute("DELETE FROM horarios WHERE id = %s", (horario_id,))
+            registrar_bitacora(
+                cursor, usuario, 'eliminar_clase', 'horarios', registro_id=horario_id,
+                docente=actual.get("docente", ""), asignatura=actual.get("asignatura", ""),
+                aula_anterior=actual.get('aula_asignada'),
+                datos_anteriores={"docente": actual.get("docente"), "asignatura": actual.get("asignatura"), "horario": actual.get("horario")}
+            )
+        connection.commit()
+        return {"message": "Clase eliminada exitosamente"}
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar horario: {str(e)}")
+    finally:
+        connection.close()
+
+
+@app.post("/api/horarios")
+def crear_horario_extra(datos: dict, request: Request):
+    """Crea una nueva clase / horario extra en un grupo o archivo existente."""
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            usuario = obtener_usuario(request)
+            archivo = datos.get("archivo", "").strip()
+            docente = datos.get("docente", "").strip()
+            asignatura = datos.get("asignatura", "").strip()
+            horario = datos.get("horario", "").strip()
+            aula_asignada = datos.get("aula_asignada", "Por asignar").strip() or "Por asignar"
+
+            if not docente or not asignatura or not horario:
+                raise HTTPException(status_code=400, detail="Docente, Asignatura y Horario son obligatorios")
+
+            licenciatura = datos.get("licenciatura", "").strip()
+            semestre = datos.get("semestre", "").strip()
+            cuatrimestre = datos.get("cuatrimestre", "").strip()
+            grupo = datos.get("grupo", "").strip()
+
+            if archivo and (not licenciatura or not grupo or (not semestre and not cuatrimestre)):
+                cursor.execute("SELECT licenciatura, semestre, cuatrimestre, grupo FROM horarios WHERE archivo = %s LIMIT 1", (archivo,))
+                base = cursor.fetchone()
+                if base:
+                    if not licenciatura: licenciatura = base.get("licenciatura", "")
+                    if not semestre: semestre = base.get("semestre", "")
+                    if not cuatrimestre: cuatrimestre = base.get("cuatrimestre", "")
+                    if not grupo: grupo = base.get("grupo", "")
+
+            msg = _verificar_conflicto_aula(cursor, aula_asignada, horario)
+            if msg:
+                raise HTTPException(status_code=409, detail=msg)
+
+            cursor.execute(
+                """INSERT INTO horarios 
+                (docente, licenciatura, asignatura, horario, aula_asignada, archivo, semestre, cuatrimestre, grupo, estado_slug) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'programada')""",
+                (docente, licenciatura, asignatura, horario, aula_asignada, archivo, semestre, cuatrimestre, grupo)
+            )
+            nuevo_id = cursor.lastrowid
+            registrar_bitacora(
+                cursor, usuario, 'crear_clase', 'horarios', registro_id=nuevo_id,
+                docente=docente, asignatura=asignatura, aula_nueva=aula_asignada,
+                datos_nuevos={"docente": docente, "asignatura": asignatura, "horario": horario, "aula": aula_asignada}
+            )
+        connection.commit()
+        return {"message": "Clase agregada exitosamente", "id": nuevo_id}
+    except HTTPException:
+        raise
+    except pymysql.Error as e:
+        raise HTTPException(status_code=500, detail=f"Error al agregar horario: {str(e)}")
     finally:
         connection.close()
 
@@ -5206,14 +5592,14 @@ def _generar_pdf_reporte(registros: list[dict], filtros: dict, usuario_nombre: s
 
     story = []
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    tipo_repr = "HISTORIAL COMPLETO DE EVENTOS ACADÉMICOS" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
+    tipo_repr = "BITÁCORA Y REPORTE HISTÓRICO DE CLASES" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
     
     story.append(Paragraph(f"<b>UNIVERSIDAD LATINO — {tipo_repr}</b>", title_style))
     story.append(Spacer(1, 4))
     story.append(Paragraph(f"Generado por: <b>{usuario_nombre}</b> | Fecha y Hora: <b>{ahora_str}</b> | Total Registros: <b>{len(registros)}</b>", sub_style))
     story.append(Spacer(1, 6))
 
-    if filtros and not es_historial:
+    if filtros:
         filtros_str_list = [f"<b>{k}:</b> {v}" for k, v in filtros.items() if v]
         if filtros_str_list:
             filtros_text = " | ".join(filtros_str_list)
@@ -5221,16 +5607,16 @@ def _generar_pdf_reporte(registros: list[dict], filtros: dict, usuario_nombre: s
             story.append(Paragraph(f"<b>Filtros Activos:</b> {filtros_text}", filtros_style))
             story.append(Spacer(1, 8))
 
-    col_widths = [55, 120, 75, 60, 165, 80, 55, 110]
+    col_widths = [65, 115, 65, 55, 155, 75, 75, 115] if es_historial else [55, 120, 75, 60, 165, 80, 55, 110]
     table_data = [[
-        Paragraph("Día", cell_head_style),
+        Paragraph("Fecha / Día" if es_historial else "Día", cell_head_style),
         Paragraph("Docente", cell_head_style),
         Paragraph("Licenciatura", cell_head_style),
         Paragraph("Nivel", cell_head_style),
         Paragraph("Asignatura", cell_head_style),
         Paragraph("Horario", cell_head_style),
         Paragraph("Aula", cell_head_style),
-        Paragraph("Estado / Motivo", cell_head_style),
+        Paragraph("Estado / Incidencia" if es_historial else "Estado / Motivo", cell_head_style),
     ]]
 
     for r in registros:
@@ -5241,7 +5627,12 @@ def _generar_pdf_reporte(registros: list[dict], filtros: dict, usuario_nombre: s
             estado_lbl = str(r.get('estado_label'))
             inc = str(r.get('incidencia_detalle') or '')
             estado_txt = f"{estado_lbl} ({inc})" if inc else estado_lbl
-            aula_str = str(r.get('aula_actual') or r.get('aula_original') or r.get('aula_asignada') or '—')
+            aula_orig = str(r.get('aula_original') or '')
+            aula_act = str(r.get('aula_actual') or r.get('aula_asignada') or '')
+            if aula_orig and aula_act and aula_orig != aula_act:
+                aula_str = f"{aula_orig} ➔ {aula_act}"
+            else:
+                aula_str = aula_act or aula_orig or '—'
         else:
             estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
             if r.get('esAulaLiberada'):
@@ -5258,7 +5649,13 @@ def _generar_pdf_reporte(registros: list[dict], filtros: dict, usuario_nombre: s
             elif r.get('aula_reasignada'):
                 aula_str = f"{r.get('aula_asignada')} (Temp)"
 
-        dia_val = str(r.get('diaOriginal') or r.get('dia_semana') or r.get('dia') or '—').capitalize()
+        if es_historial and r.get('fecha'):
+            f_str = str(r.get('fecha'))
+            d_str = str(r.get('dia_semana') or r.get('diaOriginal') or '').capitalize()
+            dia_val = f"{f_str}<br/><b>{d_str}</b>" if d_str else f_str
+        else:
+            dia_val = str(r.get('diaOriginal') or r.get('dia_semana') or r.get('dia') or '—').capitalize()
+
         doc_val = str(r.get('docente_nombre') or r.get('docente') or '—')
         lic_val = str(r.get('licenciatura_codigo') or r.get('licenciatura') or '—')
         asig_val = str(r.get('asignatura_nombre') or r.get('asignatura') or '—')
@@ -5311,20 +5708,24 @@ def _generar_excel_reporte(registros: list[dict], filtros: dict, usuario_nombre:
     )
     zebra_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
 
-    tipo_repr = "HISTORIAL COMPLETO DE EVENTOS ACADÉMICOS" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
+    tipo_repr = "BITÁCORA HISTÓRICA DE CLASES E INCIDENCIAS" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
     ws.cell(row=1, column=1, value=f"UNIVERSIDAD LATINO — {tipo_repr}").font = title_font
     
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ws.cell(row=2, column=1, value=f"Generado por: {usuario_nombre} | Fecha y hora: {ahora_str} | Total registros: {len(registros)}").font = meta_font
 
     row_offset = 4
-    if filtros and not es_historial:
+    if filtros:
         filtros_str = ", ".join([f"{k}: {v}" for k, v in filtros.items() if v])
         if filtros_str:
             ws.cell(row=3, column=1, value=f"Filtros aplicados: {filtros_str}").font = meta_font
             row_offset = 5
 
-    headers = ["Día", "Docente", "Licenciatura", "Semestre", "Cuatrimestre", "Grupo", "Asignatura", "Horario", "Aula", "Estado", "Detalle / Motivo"]
+    if es_historial:
+        headers = ["Fecha", "Día", "Docente", "Licenciatura", "Semestre / Grado", "Grupo", "Asignatura", "Horario", "Aula Original", "Aula Final", "Estado", "Incidencia / Detalle"]
+    else:
+        headers = ["Día", "Docente", "Licenciatura", "Semestre", "Cuatrimestre", "Grupo", "Asignatura", "Horario", "Aula", "Estado", "Detalle / Motivo"]
+
     for col_num, h in enumerate(headers, 1):
         cell = ws.cell(row=row_offset, column=col_num, value=h)
         cell.fill = header_fill
@@ -5335,7 +5736,9 @@ def _generar_excel_reporte(registros: list[dict], filtros: dict, usuario_nombre:
         if r.get('estado_label'):
             estado_txt = str(r.get('estado_label'))
             motivo = str(r.get('incidencia_detalle') or '')
-            aula_str = str(r.get('aula_actual') or r.get('aula_original') or r.get('aula_asignada') or '—')
+            aula_orig = str(r.get('aula_original') or r.get('aula_asignada') or '—')
+            aula_act = str(r.get('aula_actual') or r.get('aula_asignada') or '—')
+            aula_str = f"{aula_orig} ➔ {aula_act}" if (aula_orig != aula_act and aula_orig != '—') else aula_act
         else:
             estado_txt = str(r.get('estadoTiempo', 'programada')).replace('_', ' ').capitalize()
             motivo = ""
@@ -5348,23 +5751,41 @@ def _generar_excel_reporte(registros: list[dict], filtros: dict, usuario_nombre:
             elif r.get('estadoRazon'):
                 motivo = str(r.get('estadoRazon'))
 
-            aula_str = str(r.get('aula_asignada', '—'))
-            if r.get('esAulaLiberada'):
-                aula_str = f"Fuera de Aula ({aula_str})"
+            aula_orig = str(r.get('aula_asignada', '—'))
+            aula_act = f"Fuera de Aula ({aula_orig})" if r.get('esAulaLiberada') else aula_orig
+            aula_str = aula_act
 
-        values = [
-            str(r.get('diaOriginal') or r.get('dia_semana') or r.get('dia') or '—').capitalize(),
-            str(r.get('docente_nombre') or r.get('docente') or '—'),
-            str(r.get('licenciatura_codigo') or r.get('licenciatura') or '—'),
-            str(r.get('semestre', '—')),
-            str(r.get('cuatrimestre', '—')),
-            str(r.get('grupo', '—')),
-            str(r.get('asignatura_nombre') or r.get('asignatura') or '—'),
-            f"{r.get('horario_inicio')}-{r.get('horario_fin')}" if r.get('horario_inicio') and r.get('horario_fin') else str(r.get('textoHora', r.get('horario', '—'))),
-            aula_str,
-            estado_txt,
-            motivo
-        ]
+        horario_val = f"{r.get('horario_inicio')}-{r.get('horario_fin')}" if r.get('horario_inicio') and r.get('horario_fin') else str(r.get('textoHora', r.get('horario', '—')))
+
+        if es_historial:
+            values = [
+                str(r.get('fecha') or '—'),
+                str(r.get('dia_semana') or r.get('diaOriginal') or r.get('dia') or '—').capitalize(),
+                str(r.get('docente_nombre') or r.get('docente') or '—'),
+                str(r.get('licenciatura_codigo') or r.get('licenciatura') or '—'),
+                str(r.get('semestre') or r.get('cuatrimestre') or '—'),
+                str(r.get('grupo', '—')),
+                str(r.get('asignatura_nombre') or r.get('asignatura') or '—'),
+                horario_val,
+                aula_orig,
+                aula_act,
+                estado_txt,
+                motivo
+            ]
+        else:
+            values = [
+                str(r.get('diaOriginal') or r.get('dia_semana') or r.get('dia') or '—').capitalize(),
+                str(r.get('docente_nombre') or r.get('docente') or '—'),
+                str(r.get('licenciatura_codigo') or r.get('licenciatura') or '—'),
+                str(r.get('semestre', '—')),
+                str(r.get('cuatrimestre', '—')),
+                str(r.get('grupo', '—')),
+                str(r.get('asignatura_nombre') or r.get('asignatura') or '—'),
+                horario_val,
+                aula_str,
+                estado_txt,
+                motivo
+            ]
 
         use_zebra = (r_idx % 2 == 0)
         for c_idx, val in enumerate(values, 1):
@@ -5395,15 +5816,16 @@ class ExportarRequest(BaseModel):
     usuario_nombre: str = "Administrador"
     usuario_correo: str = "admin@universidadlatino.edu.mx"
     es_historial_completo: bool = False
-    filtros_aplicados: dict = {}
-    registros: list = []
-    licenciatura: Optional[str] = None
-    semestre: Optional[str] = None
-    asignatura: Optional[str] = None
+    origen_datos: Optional[str] = "dashboard"  # 'dashboard', 'historial_clases', 'auditoria'
+    tipo_historial: Optional[str] = "clases"   # 'clases' o 'auditoria'
+    filtros_clases: Optional[dict] = None
     filtros_bitacora: Optional[dict] = None
     filtros_aplicados: Optional[dict] = {}
     registros: list[dict] = []
     formato: Optional[str] = "excel"
+    licenciatura: Optional[str] = None
+    semestre: Optional[str] = None
+    asignatura: Optional[str] = None
 
 class EnviarReporteEmailRequest(BaseModel):
     usuario_nombre: Optional[str] = "Administrador"
@@ -5416,6 +5838,10 @@ class EnviarReporteEmailRequest(BaseModel):
     adjuntar_pdf: Optional[bool] = True
     adjuntar_excel: Optional[bool] = False
     es_historial_completo: Optional[bool] = False
+    origen_datos: Optional[str] = "dashboard"
+    tipo_historial: Optional[str] = "clases"
+    filtros_clases: Optional[dict] = None
+    filtros_bitacora: Optional[dict] = None
     licenciatura: Optional[str] = None
     semestre: Optional[str] = None
     asignatura: Optional[str] = None
@@ -5436,6 +5862,57 @@ def _registrar_auditoria_exportacion(usuario_nombre, usuario_correo, tipo, es_hi
             connection.commit()
     except Exception as e:
         print(f"Error al registrar auditoria de exportacion: {e}")
+    finally:
+        connection.close()
+
+
+@app.get("/api/historial-clases/filtros")
+def obtener_filtros_historial_clases():
+    """Retorna licenciaturas, docentes y tipos de incidencia disponibles para el Historial de Clases."""
+    _evaluar_y_cerrar_clases_vencidas()
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT DISTINCT lic FROM (
+                    SELECT licenciatura_codigo AS lic FROM clases_historico WHERE licenciatura_codigo IS NOT NULL AND TRIM(licenciatura_codigo) != ''
+                    UNION
+                    SELECT licenciatura AS lic FROM horarios WHERE licenciatura IS NOT NULL AND TRIM(licenciatura) != ''
+                ) t ORDER BY lic
+            """)
+            lics = [r['lic'] if isinstance(r, dict) else r[0] for r in cursor.fetchall()]
+
+            cursor.execute("""
+                SELECT DISTINCT doc FROM (
+                    SELECT docente_nombre AS doc FROM clases_historico WHERE docente_nombre IS NOT NULL AND TRIM(docente_nombre) != ''
+                    UNION
+                    SELECT docente AS doc FROM horarios WHERE docente IS NOT NULL AND TRIM(docente) != ''
+                ) t ORDER BY doc
+            """)
+            docs = [r['doc'] if isinstance(r, dict) else r[0] for r in cursor.fetchall()]
+
+            cursor.execute("SELECT MIN(fecha) as min_f, MAX(fecha) as max_f FROM clases_historico")
+            r_fechas = cursor.fetchone()
+            min_f = str(r_fechas['min_f']) if r_fechas and r_fechas.get('min_f') else ""
+            max_f = str(r_fechas['max_f']) if r_fechas and r_fechas.get('max_f') else ""
+
+            return {
+                "licenciaturas": lics,
+                "docentes": docs,
+                "fecha_min": min_f,
+                "fecha_max": max_f,
+                "incidencias": [
+                    {"id": "todos", "label": "Todas las clases registradas"},
+                    {"id": "suplencia", "label": "Solo con Suplente"},
+                    {"id": "cambio_aula", "label": "Solo con Cambio de Aula / Aula Liberada"},
+                    {"id": "reprogramada", "label": "Solo Reprogramadas / Pospuestas"},
+                    {"id": "finalizada", "label": "Solo Finalizadas sin incidencias"},
+                    {"id": "con_incidencias", "label": "Todas las incidencias (excluye normales)"}
+                ]
+            }
+    except Exception as e:
+        print(f"Error en filtros historial clases: {e}")
+        return {"licenciaturas": [], "docentes": [], "incidencias": []}
     finally:
         connection.close()
 
@@ -5625,19 +6102,71 @@ def _generar_excel_bitacora(registros: list[dict], filtros: dict, usuario_nombre
     buffer.seek(0)
     return buffer.getvalue()
 
-def _consultar_historial_para_exportacion(licenciatura: Optional[str] = None, semestre: Optional[str] = None, asignatura: Optional[str] = None):
+def _consultar_historial_para_exportacion(filtros_or_lic: Any = None, semestre: Optional[str] = None, asignatura: Optional[str] = None):
     _evaluar_y_cerrar_clases_vencidas()
     query = "SELECT * FROM clases_historico WHERE 1=1"
     params = []
-    if licenciatura and str(licenciatura).strip() not in ("", "Todos", "Todas las Licenciaturas"):
-        query += " AND licenciatura_codigo = %s"
-        params.append(str(licenciatura).strip())
-    if semestre and str(semestre).strip() not in ("", "Todos", "Todos los Grados"):
-        query += " AND semestre = %s"
-        params.append(str(semestre).strip())
-    if asignatura and str(asignatura).strip() not in ("", "Todos", "Todas las Asignaturas"):
-        query += " AND asignatura_nombre = %s"
-        params.append(str(asignatura).strip())
+
+    if isinstance(filtros_or_lic, dict):
+        f = filtros_or_lic
+        f_ini = f.get('fecha_inicio') or f.get('fechaInicio')
+        f_fin = f.get('fecha_fin') or f.get('fechaFin')
+        lic = f.get('licenciatura')
+        sem = f.get('semestre')
+        asig = f.get('asignatura')
+        doc = f.get('docente')
+        inc = f.get('incidencia') or f.get('estado')
+
+        if f_ini and f_fin:
+            query += " AND fecha BETWEEN %s AND %s"
+            params.extend([f_ini, f_fin])
+        elif f_ini:
+            query += " AND fecha >= %s"
+            params.append(f_ini)
+        elif f_fin:
+            query += " AND fecha <= %s"
+            params.append(f_fin)
+
+        if lic and str(lic).strip() not in ("", "Todos", "Todas", "Todas las Licenciaturas"):
+            query += " AND (licenciatura_codigo = %s OR licenciatura_codigo LIKE %s)"
+            params.extend([str(lic).strip(), f"{str(lic).strip()}%"])
+
+        if sem and str(sem).strip() not in ("", "Todos", "Todos los Grados"):
+            query += " AND semestre = %s"
+            params.append(str(sem).strip())
+
+        if asig and str(asig).strip() not in ("", "Todos", "Todas las Asignaturas"):
+            query += " AND asignatura_nombre LIKE %s"
+            params.append(f"%{str(asig).strip()}%")
+
+        if doc and str(doc).strip() not in ("", "Todos", "Todos los Docentes"):
+            query += " AND docente_nombre LIKE %s"
+            params.append(f"%{str(doc).strip()}%")
+
+        if inc and str(inc).strip() not in ("", "todos", "Todas", "Todos"):
+            inc_val = str(inc).strip().lower()
+            if inc_val == "suplencia":
+                query += " AND estado_slug = 'suplencia'"
+            elif inc_val in ("cambio_aula", "aula_liberada"):
+                query += " AND (estado_slug = 'aula_liberada' OR estado_slug = 'cambio_aula' OR (aula_original != '' AND aula_actual != '' AND aula_original != aula_actual))"
+            elif inc_val in ("reprogramada", "pospuesta"):
+                query += " AND (estado_slug = 'reprogramada' OR estado_slug = 'pospuesta')"
+            elif inc_val == "finalizada":
+                query += " AND estado_slug = 'finalizada'"
+            elif inc_val == "con_incidencias":
+                query += " AND estado_slug != 'finalizada'"
+    else:
+        licenciatura = filtros_or_lic
+        if licenciatura and str(licenciatura).strip() not in ("", "Todos", "Todas las Licenciaturas"):
+            query += " AND licenciatura_codigo = %s"
+            params.append(str(licenciatura).strip())
+        if semestre and str(semestre).strip() not in ("", "Todos", "Todos los Grados"):
+            query += " AND semestre = %s"
+            params.append(str(semestre).strip())
+        if asignatura and str(asignatura).strip() not in ("", "Todos", "Todas las Asignaturas"):
+            query += " AND asignatura_nombre = %s"
+            params.append(str(asignatura).strip())
+
     query += " ORDER BY fecha DESC, horario_inicio ASC"
     connection = get_db_connection()
     try:
@@ -5646,21 +6175,30 @@ def _consultar_historial_para_exportacion(licenciatura: Optional[str] = None, se
             filas = cursor.fetchall() or []
         resultado = []
         for r in filas:
+            h_ini = _timedelta_to_str(r["horario_inicio"])
+            h_fin = _timedelta_to_str(r["horario_fin"])
             resultado.append({
                 "id": r["id"],
                 "clase_id": r.get("clase_id"),
                 "fecha": str(r["fecha"]),
                 "dia_semana": r["dia_semana"],
+                "diaOriginal": r["dia_semana"],
                 "semana_numero": r["semana_numero"],
                 "docente_nombre": r["docente_nombre"],
+                "docente": r["docente_nombre"],
                 "licenciatura_codigo": r["licenciatura_codigo"],
+                "licenciatura": r["licenciatura_codigo"],
                 "semestre": r["semestre"],
                 "grupo": r["grupo"],
                 "asignatura_nombre": r["asignatura_nombre"],
-                "horario_inicio": _timedelta_to_str(r["horario_inicio"]),
-                "horario_fin": _timedelta_to_str(r["horario_fin"]),
+                "asignatura": r["asignatura_nombre"],
+                "horario_inicio": h_ini,
+                "horario_fin": h_fin,
+                "textoHora": f"{h_ini}-{h_fin}",
+                "horario": f"{r['dia_semana']} {h_ini}-{h_fin}",
                 "aula_original": r["aula_original"],
                 "aula_actual": r["aula_actual"],
+                "aula_asignada": r["aula_actual"] or r["aula_original"],
                 "estado_slug": r["estado_slug"],
                 "estado_label": r["estado_label"],
                 "incidencia_detalle": r.get("incidencia_detalle") or ""
@@ -5676,17 +6214,28 @@ def _consultar_historial_para_exportacion(licenciatura: Optional[str] = None, se
 @app.post("/api/exportar/pdf")
 def exportar_pdf(req: ExportarRequest):
     try:
-        if req.es_historial_completo:
-            registros_data = _consultar_bitacora_para_exportacion(req.filtros_bitacora)
+        fecha_str = datetime.now().strftime("%Y-%m-%d")
+        origen = req.origen_datos or ("historial_clases" if req.es_historial_completo else "dashboard")
+        
+        if origen == "auditoria" or (req.es_historial_completo and getattr(req, 'tipo_historial', None) == 'auditoria'):
+            registros_data = _consultar_bitacora_para_exportacion(req.filtros_bitacora or req.filtros_aplicados)
             pdf_bytes = _generar_pdf_bitacora(registros_data, req.filtros_aplicados, req.usuario_nombre)
+            filename = f"Auditoria_Sistema_{fecha_str}.pdf"
+            es_hist = True
+        elif origen in ("historial_clases", "historial") or req.es_historial_completo:
+            filtros = req.filtros_clases or req.filtros_aplicados or {}
+            registros_data = _consultar_historial_para_exportacion(filtros)
+            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=True)
+            filename = f"Bitacora_Clases_Historico_{fecha_str}.pdf"
+            es_hist = True
         else:
             registros_data = req.registros
-            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, False)
+            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=False)
+            filename = f"Dashboard_Clases_{fecha_str}.pdf"
+            es_hist = False
         
-        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "PDF", req.es_historial_completo, req.filtros_aplicados, len(registros_data))
+        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "PDF", es_hist, req.filtros_aplicados, len(registros_data))
         
-        fecha_str = datetime.now().strftime("%Y-%m-%d")
-        filename = f"Bitacora_Eventos_{fecha_str}.pdf" if req.es_historial_completo else f"Dashboard_Clases_{fecha_str}.pdf"
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -5699,17 +6248,28 @@ def exportar_pdf(req: ExportarRequest):
 @app.post("/api/exportar/excel")
 def exportar_excel(req: ExportarRequest):
     try:
-        if req.es_historial_completo:
-            registros_data = _consultar_bitacora_para_exportacion(req.filtros_bitacora)
+        fecha_str = datetime.now().strftime("%Y-%m-%d")
+        origen = req.origen_datos or ("historial_clases" if req.es_historial_completo else "dashboard")
+
+        if origen == "auditoria" or (req.es_historial_completo and getattr(req, 'tipo_historial', None) == 'auditoria'):
+            registros_data = _consultar_bitacora_para_exportacion(req.filtros_bitacora or req.filtros_aplicados)
             excel_bytes = _generar_excel_bitacora(registros_data, req.filtros_aplicados, req.usuario_nombre)
+            filename = f"Auditoria_Sistema_{fecha_str}.xlsx"
+            es_hist = True
+        elif origen in ("historial_clases", "historial") or req.es_historial_completo:
+            filtros = req.filtros_clases or req.filtros_aplicados or {}
+            registros_data = _consultar_historial_para_exportacion(filtros)
+            excel_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=True)
+            filename = f"Bitacora_Clases_Historico_{fecha_str}.xlsx"
+            es_hist = True
         else:
             registros_data = req.registros
-            excel_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, False)
+            excel_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=False)
+            filename = f"Dashboard_Clases_{fecha_str}.xlsx"
+            es_hist = False
 
-        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "Excel", req.es_historial_completo, req.filtros_aplicados, len(registros_data))
+        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, "Excel", es_hist, req.filtros_aplicados, len(registros_data))
 
-        fecha_str = datetime.now().strftime("%Y-%m-%d")
-        filename = f"Bitacora_Eventos_{fecha_str}.xlsx" if req.es_historial_completo else f"Dashboard_Clases_{fecha_str}.xlsx"
         return Response(
             content=excel_bytes,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -6017,22 +6577,46 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest, request: Request):
         dest_str = f"To: {','.join(destinos)}"
         if cc_list: dest_str += f" | CC: {','.join(cc_list)}"
         if cco_list: dest_str += f" | CCO: {','.join(cco_list)}"
-        tipo_str = "Email PDF+Excel" if (req.adjuntar_pdf and req.adjuntar_excel) else ("Email PDF" if req.adjuntar_pdf else "Email Excel")
-
-        registros_data = _consultar_historial_para_exportacion(req.licenciatura, req.semestre, req.asignatura) if req.es_historial_completo else req.registros
+        origen = req.origen_datos or ("historial_clases" if req.es_historial_completo else "dashboard")
+        if origen == "auditoria":
+            registros_data = _consultar_bitacora_para_exportacion(req.filtros_bitacora or req.filtros_aplicados)
+            es_hist = True
+        elif origen in ("historial_clases", "historial") or req.es_historial_completo:
+            filtros = req.filtros_clases or req.filtros_aplicados or {}
+            registros_data = _consultar_historial_para_exportacion(filtros)
+            es_hist = True
+        else:
+            registros_data = req.registros
+            es_hist = False
 
         pdf_bytes = None
         xlsx_bytes = None
         id_pdf = None
         id_excel = None
+        filename_pdf = f"Bitacora_Clases_Historico_{fecha_str}.pdf" if es_hist else f"Dashboard_Clases_{fecha_str}.pdf"
+        filename_xlsx = f"Bitacora_Clases_Historico_{fecha_str}.xlsx" if es_hist else f"Dashboard_Clases_{fecha_str}.xlsx"
+
+        if origen == "auditoria":
+            filename_pdf = f"Auditoria_Sistema_{fecha_str}.pdf"
+            filename_xlsx = f"Auditoria_Sistema_{fecha_str}.xlsx"
 
         if req.adjuntar_pdf:
-            pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
-            id_pdf = _guardar_reporte_compartido(f"Reporte_Academico_{fecha_str}.pdf", "pdf", pdf_bytes)
+            if origen == "auditoria":
+                pdf_bytes = _generar_pdf_bitacora(registros_data, req.filtros_aplicados, req.usuario_nombre)
+            elif es_hist:
+                pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=True)
+            else:
+                pdf_bytes = _generar_pdf_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=False)
+            id_pdf = _guardar_reporte_compartido(filename_pdf, "pdf", pdf_bytes)
 
         if req.adjuntar_excel:
-            xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, req.es_historial_completo)
-            id_excel = _guardar_reporte_compartido(f"Reporte_Academico_{fecha_str}.xlsx", "xlsx", xlsx_bytes)
+            if origen == "auditoria":
+                xlsx_bytes = _generar_excel_bitacora(registros_data, req.filtros_aplicados, req.usuario_nombre)
+            elif es_hist:
+                xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=True)
+            else:
+                xlsx_bytes = _generar_excel_reporte(registros_data, req.filtros_aplicados, req.usuario_nombre, es_historial=False)
+            id_excel = _guardar_reporte_compartido(filename_xlsx, "xlsx", xlsx_bytes)
 
         backend_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("BACKEND_URL") or str(request.base_url).rstrip('/')
         if backend_url.endswith('/'):
@@ -6078,10 +6662,10 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest, request: Request):
         """
 
         # Intentar envío SMTP si está configurado
-        sender_email = os.getenv("SMTP_USER", "")
-        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        sender_email = os.getenv("SMTP_USER", "").strip()
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
         smtp_port = int(os.getenv("SMTP_PORT", 587))
-        smtp_pass = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
+        smtp_pass = (os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")).strip()
 
         if not sender_email:
             sender_email = "soporte.sipref.software@gmail.com"
@@ -6100,32 +6684,49 @@ def enviar_reporte_email(req: EnviarReporteEmailRequest, request: Request):
             part = MIMEBase('application', 'pdf')
             part.set_payload(pdf_bytes)
             encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename="Reporte_Academico_{fecha_str}.pdf"')
+            part.add_header('Content-Disposition', f'attachment; filename="{filename_pdf}"')
             msg.attach(part)
 
         if xlsx_bytes:
             part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             part.set_payload(xlsx_bytes)
             encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename="Reporte_Academico_{fecha_str}.xlsx"')
+            part.add_header('Content-Disposition', f'attachment; filename="{filename_xlsx}"')
             msg.attach(part)
+
+        tipo_str = "PDF + Excel" if (pdf_bytes and xlsx_bytes) else ("PDF" if pdf_bytes else ("Excel" if xlsx_bytes else "Enlace"))
+        cant_registros = len(registros_data) if registros_data else 0
 
         enviado_smtp = False
         if sender_email and smtp_pass:
             try:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=4.0) as server:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=15.0) as server:
                     server.starttls()
                     server.login(sender_email, smtp_pass)
                     server.sendmail(sender_email, destinos + cc_list + cco_list, msg.as_string())
                 enviado_smtp = True
             except Exception as e_smtp:
-                print(f"SMTP no disponible en Render o falló ({e_smtp}), usando fallback de EmailJS...")
+                print(f"SMTP directo falló ({e_smtp}), intentando fallback...")
 
         if not enviado_smtp:
-            for dest in (destinos + cc_list + cco_list):
-                _enviar_smtp(dest, asunto, body_html)
+            try:
+                for dest in (destinos + cc_list + cco_list):
+                    _enviar_smtp(dest, asunto, body_html)
+                enviado_smtp = True
+            except Exception as e_fb:
+                print(f"Fallback EmailJS falló: {e_fb}")
+                raise HTTPException(status_code=500, detail=f"No se pudo enviar el correo: {str(e_fb)}")
 
-        _registrar_auditoria_exportacion(req.usuario_nombre, req.usuario_correo, tipo_str, req.es_historial_completo, req.filtros_aplicados, len(req.registros), enviado_email=True, destinatarios=dest_str)
+        _registrar_auditoria_exportacion(
+            req.usuario_nombre,
+            req.usuario_correo,
+            f"Email ({tipo_str})",
+            es_hist,
+            req.filtros_aplicados,
+            cant_registros,
+            enviado_email=True,
+            destinatarios=dest_str
+        )
         return {"message": f"Reporte enviado exitosamente a {', '.join(destinos)}"}
     except HTTPException:
         raise
@@ -6244,6 +6845,50 @@ def _evaluar_y_cerrar_clases_vencidas():
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # Backfill automático: registrar días pasados de la semana en curso si aún no existen en histórico
+            lunes_actual = fecha_hoy - timedelta(days=ahora.weekday())
+            dias_transcurridos = (fecha_hoy - lunes_actual).days
+            if dias_transcurridos > 0:
+                cursor.execute("""
+                    SELECT h.id, h.docente, h.licenciatura, h.asignatura, h.horario, h.aula_asignada,
+                           h.semestre, h.cuatrimestre, h.grupo
+                    FROM horarios h
+                    WHERE h.docente IS NOT NULL AND TRIM(h.docente) != ''
+                """)
+                horarios_todos = cursor.fetchall() or []
+
+                for offset in range(dias_transcurridos):
+                    dia_pasado = lunes_actual + timedelta(days=offset)
+                    dia_pasado_idx = dia_pasado.isoweekday() % 7
+                    cursor.execute("SELECT COUNT(*) as c FROM clases_historico WHERE fecha = %s", (dia_pasado,))
+                    res_c = cursor.fetchone()
+                    total_dia = res_c['c'] if isinstance(res_c, dict) else res_c[0]
+                    if total_dia == 0:
+                        for h_p in horarios_todos:
+                            d_idx, ini_m, fin_m = _parse_horario_minutos(h_p.get('horario', ''))
+                            if d_idx == dia_pasado_idx and ini_m is not None and fin_m is not None:
+                                h_ini_s = f"{ini_m // 60:02d}:{ini_m % 60:02d}:00"
+                                h_fin_s = f"{fin_m // 60:02d}:{fin_m % 60:02d}:00"
+                                sem_v = h_p.get('cuatrimestre') or h_p.get('semestre') or ''
+                                aula_o = h_p.get('aula_asignada', '')
+                                _guardar_registro_historico(
+                                    cursor,
+                                    clase_id=h_p.get('id'),
+                                    fecha_obj=dia_pasado,
+                                    docente_nombre=h_p['docente'],
+                                    licenciatura_codigo=h_p.get('licenciatura', ''),
+                                    semestre=sem_v,
+                                    grupo=h_p.get('grupo', ''),
+                                    asignatura_nombre=h_p['asignatura'],
+                                    horario_inicio_str=h_ini_s,
+                                    horario_fin_str=h_fin_s,
+                                    aula_original=aula_o,
+                                    aula_actual=aula_o,
+                                    estado_slug='finalizada',
+                                    estado_label='Finalizada',
+                                    incidencia_detalle='Clase impartida sin incidencias'
+                                )
+
             # Precargar aulas liberadas y suplencias del día en diccionarios O(1)
             cursor.execute("SELECT aula_nombre, motivo FROM aulas_liberadas WHERE fecha = %s AND activa = TRUE", (fecha_hoy,))
             aulas_lib_raw = cursor.fetchall() or []

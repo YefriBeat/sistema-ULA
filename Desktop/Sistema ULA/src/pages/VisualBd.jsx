@@ -140,35 +140,47 @@ const groupConsecutiveClasses = (clases) => {
 
 const MESES_REGEX_ARRAY = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'].map(m => new RegExp(`\\b${m}\\b`));
 
-// Función altamente optimizada para determinar si un examen es HOY basado en strings
+// Función altamente optimizada para determinar si un examen es HOY basado en strings o fechas de parciales
 const isExamToday = (ex, day, month, monthShort, dayRegex) => {
-  if (!ex.fecha) return false;
+  const fechasToCheck = [ex.primer_parcial, ex.segundo_parcial, ex.ordinario, ex.fecha].filter(Boolean);
+  if (fechasToCheck.length === 0) return false;
 
-  const fechaStr = String(ex.fecha).toLowerCase();
-  const periodoStr = String(ex.periodo || '').toLowerCase();
-  const diaStr = String(ex.dia || '').toLowerCase();
+  const dayPad = String(day).padStart(2, '0');
 
-  let hasDay = false;
-  const match = fechaStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
-  if (match) {
-    const start = parseInt(match[1], 10);
-    const end = parseInt(match[2], 10);
-    if (day >= start && day <= end) hasDay = true;
-  }
-  if (!hasDay) {
-    hasDay = dayRegex.test(fechaStr) || dayRegex.test(diaStr);
-  }
+  return fechasToCheck.some(f => {
+    const fechaStr = String(f).toLowerCase();
+    const periodoStr = String(ex.periodo || '').toLowerCase();
+    const diaStr = String(ex.dia || '').toLowerCase();
 
-  const containsAnyMonth = MESES_REGEX_ARRAY.some(regex => regex.test(fechaStr) || regex.test(diaStr));
-  const hasMonth = fechaStr.includes(month) || fechaStr.includes(monthShort) || diaStr.includes(month) || diaStr.includes(monthShort);
+    // Formato DD/MM/YYYY exacto
+    const matchDmy = fechaStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+    if (matchDmy) {
+      const d = parseInt(matchDmy[1], 10);
+      if (d === day) return true;
+    }
 
-  if (containsAnyMonth) {
-    return hasDay && hasMonth;
-  } else {
-    const hasPeriodMonth = periodoStr.includes(month) || periodoStr.includes(monthShort);
-    if (hasPeriodMonth) return hasDay;
-    return hasDay; // fallback
-  }
+    let hasDay = false;
+    const match = fechaStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
+    if (match) {
+      const start = parseInt(match[1], 10);
+      const end = parseInt(match[2], 10);
+      if (day >= start && day <= end) hasDay = true;
+    }
+    if (!hasDay) {
+      hasDay = dayRegex.test(fechaStr) || dayRegex.test(diaStr);
+    }
+
+    const containsAnyMonth = MESES_REGEX_ARRAY.some(regex => regex.test(fechaStr) || regex.test(diaStr));
+    const hasMonth = fechaStr.includes(month) || fechaStr.includes(monthShort) || diaStr.includes(month) || diaStr.includes(monthShort);
+
+    if (containsAnyMonth) {
+      return hasDay && hasMonth;
+    } else {
+      const hasPeriodMonth = periodoStr.includes(month) || periodoStr.includes(monthShort);
+      if (hasPeriodMonth) return hasDay;
+      return hasDay; // fallback
+    }
+  });
 };
 
 // Función para limpiar y estandarizar nombres de exámenes a formato corto (ej. "SEGUNDO EXAMEN PARCIAL" -> "Parcial 2")
@@ -255,7 +267,7 @@ export default function VisualBd() {
   });
 
   const [mostrarCentroExportacion, setMostrarCentroExportacion] = useState(false);
-  const [origenExportacion, setOrigenExportacion] = useState('dashboard'); // 'dashboard' | 'historial'
+  const [origenExportacion, setOrigenExportacion] = useState('historial_clases'); // 'historial_clases' | 'dashboard' | 'auditoria'
   const [mostrarFormEmail, setMostrarFormEmail] = useState(false);
   const [formEmail, setFormEmail] = useState({
     destinatarios: '',
@@ -273,6 +285,22 @@ export default function VisualBd() {
   const [mostrarSugerenciasEmails, setMostrarSugerenciasEmails] = useState(true);
   const [campoDestino, setCampoDestino] = useState('destinatarios');
 
+  // Filtros para Bitácora de Clases e Incidencias (clases_historico)
+  const [filtrosHistorialClases, setFiltrosHistorialClases] = useState({
+    fechaInicio: '',
+    fechaFin: '',
+    licenciatura: 'Todos',
+    incidencia: 'todos',
+    docente: ''
+  });
+  const [filtrosDisponiblesClases, setFiltrosDisponiblesClases] = useState({
+    licenciaturas: [],
+    docentes: [],
+    incidencias: []
+  });
+  const [cargandoFiltrosClases, setCargandoFiltrosClases] = useState(false);
+
+  // Filtros para Auditoría del Sistema (bitacora_cambios)
   const [filtrosDisponiblesHistorial, setFiltrosDisponiblesHistorial] = useState({
     usuarios: [],
     modulos: []
@@ -781,53 +809,98 @@ export default function VisualBd() {
   const abrirCentroExportacion = async () => {
     setMostrarCentroExportacion(true);
     dragExport.resetPos();
-    setOrigenExportacion('dashboard');
+    setOrigenExportacion('historial_clases');
     setMostrarFormEmail(false);
-    setFiltrosHistorial({ licenciatura: 'Todos', semestre: 'Todos', asignatura: 'Todos' });
+
+    const now = new Date();
+    const hoyIso = now.toISOString().split('T')[0];
+    const primerDiaMesIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+    setFiltrosHistorialClases(prev => ({
+      ...prev,
+      fechaInicio: prev.fechaInicio || primerDiaMesIso,
+      fechaFin: prev.fechaFin || hoyIso,
+      licenciatura: 'Todos',
+      incidencia: 'todos',
+      docente: ''
+    }));
+
+    setFiltrosHistorial(prev => ({
+      ...prev,
+      fechaInicio: prev.fechaInicio || primerDiaMesIso,
+      fechaFin: prev.fechaFin || hoyIso,
+      usuario: 'Todos',
+      modulo: 'Todos'
+    }));
+
+    setCargandoFiltrosClases(true);
     setCargandoFiltrosHistorial(true);
     try {
-      const res = await fetch('/api/bitacora/filtros-disponibles');
-      if (res.ok) {
-        const data = await res.json();
-        setFiltrosDisponiblesHistorial(data);
+      const [resClases, resAudit] = await Promise.all([
+        fetch('/api/historial-clases/filtros').catch(() => null),
+        fetch('/api/bitacora/filtros-disponibles').catch(() => null)
+      ]);
+      if (resClases && resClases.ok) {
+        const dataClases = await resClases.json();
+        setFiltrosDisponiblesClases(dataClases);
+      }
+      if (resAudit && resAudit.ok) {
+        const dataAudit = await resAudit.json();
+        setFiltrosDisponiblesHistorial(dataAudit);
       }
     } catch (e) {
-      console.error("Error al cargar filtros históricos:", e);
+      console.error("Error al cargar filtros del Centro de Exportación:", e);
     } finally {
+      setCargandoFiltrosClases(false);
       setCargandoFiltrosHistorial(false);
     }
   };
 
   const handleExportarDesdePanel = async (formato) => {
     setExportando(true);
-    const esHistorial = origenExportacion === 'historial';
     const endpoint = formato === 'pdf' ? '/api/exportar/pdf' : '/api/exportar/excel';
     const ext = formato === 'pdf' ? 'pdf' : 'xlsx';
     try {
-      let registrosAExportar = [];
       let bodyData = {
         usuario_nombre: 'Administrador',
         usuario_correo: 'admin@universidadlatino.edu.mx',
-        es_historial_completo: esHistorial,
-        filtros_aplicados: esHistorial ? {
-          fecha_inicio: filtrosHistorial.fechaInicio,
-          fecha_fin: filtrosHistorial.fechaFin,
-          modulo: filtrosHistorial.modulo,
-          usuario: filtrosHistorial.usuario
-        } : obtenerResumenFiltros(),
-        registros: []
+        origen_datos: origenExportacion,
+        formato
       };
-      if (esHistorial) {
-        bodyData.filtros_bitacora = {
-          fecha_inicio: filtrosHistorial.fechaInicio,
-          fecha_fin: filtrosHistorial.fechaFin,
-          modulo: filtrosHistorial.modulo,
-          usuario: filtrosHistorial.usuario
+
+      let downloadName = `Reporte_${hoyStr}.${ext}`;
+
+      if (origenExportacion === 'historial_clases') {
+        bodyData.es_historial_completo = true;
+        bodyData.tipo_historial = 'clases';
+        bodyData.filtros_clases = { ...filtrosHistorialClases };
+        bodyData.filtros_aplicados = {
+          "Desde": filtrosHistorialClases.fechaInicio,
+          "Hasta": filtrosHistorialClases.fechaFin,
+          "Licenciatura": filtrosHistorialClases.licenciatura,
+          "Incidencia": filtrosHistorialClases.incidencia === 'todos' ? 'Todas' : filtrosHistorialClases.incidencia,
+          "Docente": filtrosHistorialClases.docente || 'Todos'
         };
+        downloadName = `Bitacora_Clases_Historico_${hoyStr}.${ext}`;
+      } else if (origenExportacion === 'auditoria') {
+        bodyData.es_historial_completo = true;
+        bodyData.tipo_historial = 'auditoria';
+        bodyData.filtros_bitacora = { ...filtrosHistorial };
+        bodyData.filtros_aplicados = {
+          "Desde": filtrosHistorial.fechaInicio,
+          "Hasta": filtrosHistorial.fechaFin,
+          "Módulo": filtrosHistorial.modulo,
+          "Usuario": filtrosHistorial.usuario
+        };
+        downloadName = `Auditoria_Sistema_${hoyStr}.${ext}`;
       } else {
-        registrosAExportar = await obtenerRegistrosAExportar(false);
+        const registrosAExportar = await obtenerRegistrosAExportar(false);
+        bodyData.es_historial_completo = false;
         bodyData.registros = registrosAExportar;
+        bodyData.filtros_aplicados = obtenerResumenFiltros();
+        downloadName = `Dashboard_Clases_${hoyStr}.${ext}`;
       }
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -838,7 +911,7 @@ export default function VisualBd() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = esHistorial ? `Bitacora_Eventos_${hoyStr}.${ext}` : `Dashboard_Clases_${hoyStr}.${ext}`;
+        a.download = downloadName;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -860,33 +933,51 @@ export default function VisualBd() {
       return;
     }
     setEnviandoEmail(true);
-    const esHistorial = origenExportacion === 'historial';
-    const registrosAExportar = esHistorial ? [] : await obtenerRegistrosAExportar(false);
     try {
+      let bodyData = {
+        usuario_nombre: 'Administrador',
+        usuario_correo: 'admin@universidadlatino.edu.mx',
+        destinatarios: formEmail.destinatarios,
+        cc: formEmail.cc,
+        cco: formEmail.cco,
+        asunto: formEmail.asunto,
+        mensaje: formEmail.mensaje,
+        adjuntar_pdf: formEmail.adjuntar_pdf,
+        adjuntar_excel: formEmail.adjuntar_excel,
+        origen_datos: origenExportacion
+      };
+
+      if (origenExportacion === 'historial_clases') {
+        bodyData.es_historial_completo = true;
+        bodyData.tipo_historial = 'clases';
+        bodyData.filtros_clases = { ...filtrosHistorialClases };
+        bodyData.filtros_aplicados = {
+          "Desde": filtrosHistorialClases.fechaInicio,
+          "Hasta": filtrosHistorialClases.fechaFin,
+          "Licenciatura": filtrosHistorialClases.licenciatura,
+          "Incidencia": filtrosHistorialClases.incidencia,
+          "Docente": filtrosHistorialClases.docente || 'Todos'
+        };
+      } else if (origenExportacion === 'auditoria') {
+        bodyData.es_historial_completo = true;
+        bodyData.tipo_historial = 'auditoria';
+        bodyData.filtros_bitacora = { ...filtrosHistorial };
+        bodyData.filtros_aplicados = {
+          "Desde": filtrosHistorial.fechaInicio,
+          "Hasta": filtrosHistorial.fechaFin,
+          "Módulo": filtrosHistorial.modulo,
+          "Usuario": filtrosHistorial.usuario
+        };
+      } else {
+        bodyData.es_historial_completo = false;
+        bodyData.registros = await obtenerRegistrosAExportar(false);
+        bodyData.filtros_aplicados = obtenerResumenFiltros();
+      }
+
       const res = await fetch('/api/exportar/email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          usuario_nombre: 'Administrador',
-          usuario_correo: 'admin@universidadlatino.edu.mx',
-          destinatarios: formEmail.destinatarios,
-          cc: formEmail.cc,
-          cco: formEmail.cco,
-          asunto: formEmail.asunto,
-          mensaje: formEmail.mensaje,
-          adjuntar_pdf: formEmail.adjuntar_pdf,
-          adjuntar_excel: formEmail.adjuntar_excel,
-          es_historial_completo: esHistorial,
-          licenciatura: esHistorial ? filtrosHistorial.licenciatura : undefined,
-          semestre: esHistorial ? filtrosHistorial.semestre : undefined,
-          asignatura: esHistorial ? filtrosHistorial.asignatura : undefined,
-          filtros_aplicados: esHistorial ? {
-            licenciatura: filtrosHistorial.licenciatura,
-            semestre: filtrosHistorial.semestre,
-            asignatura: filtrosHistorial.asignatura
-          } : obtenerResumenFiltros(),
-          registros: registrosAExportar
-        })
+        body: JSON.stringify(bodyData)
       });
       if (res.ok) {
         setMostrarFormEmail(false);
@@ -1650,15 +1741,15 @@ export default function VisualBd() {
 
       {/* ═══════════════════ CENTRO DE EXPORTACIÓN UNIFICADO ═══════════════════ */}
       {mostrarCentroExportacion && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-[100] p-4 pointer-events-none transition-opacity">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100] p-4 sm:p-6 pointer-events-none transition-opacity">
           <div
             style={{ transform: `translate(${dragExport.pos.x}px, ${dragExport.pos.y}px)` }}
-            className="bg-white/95 backdrop-blur-xl rounded-[2rem] w-full max-w-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] font-manrope max-h-[90vh] flex flex-col pointer-events-auto border border-white/60 transition-shadow"
+            className="bg-white/95 backdrop-blur-xl rounded-[2.25rem] w-full max-w-5xl shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35)] font-manrope max-h-[92vh] flex flex-col pointer-events-auto border border-white/80 transition-shadow"
           >
             {/* Header */}
             <div
               onMouseDown={dragExport.handleMouseDown}
-              className="flex justify-between items-center border-b border-[#c5c6cf]/20 p-6 shrink-0 cursor-grab active:cursor-grabbing select-none group bg-gradient-to-r from-white to-[#f4f3f6]/50 rounded-t-[2rem]"
+              className="flex justify-between items-center border-b border-[#c5c6cf]/20 p-6 sm:px-8 sm:py-5 shrink-0 cursor-grab active:cursor-grabbing select-none group bg-gradient-to-r from-white via-white to-[#f4f3f6]/60 rounded-t-[2.25rem]"
               title="Haz clic y mantén presionado para arrastrar la ventana"
             >
               <div className="flex items-center gap-4">
@@ -1666,11 +1757,11 @@ export default function VisualBd() {
                   <span className="material-symbols-outlined text-[24px]">download</span>
                 </div>
                 <div>
-                  <h3 className="text-xl font-black text-[#1b1c1e] flex items-center gap-2 tracking-tight">
+                  <h3 className="text-xl sm:text-2xl font-black text-[#1b1c1e] flex items-center gap-2 tracking-tight">
                     Centro de Exportación
                     <span className="material-symbols-outlined text-[#75777f] text-base group-hover:text-[#1c355e] transition-colors">drag_indicator</span>
                   </h3>
-                  <p className="text-sm font-medium text-[#75777f] mt-0.5">Selecciona el origen de datos, filtra y elige la acción</p>
+                  <p className="text-xs sm:text-sm font-medium text-[#75777f] mt-0.5">Selecciona el origen de datos, personaliza tus filtros y genera o envía tu reporte</p>
                 </div>
               </div>
               <button onClick={() => setMostrarCentroExportacion(false)} className="w-10 h-10 rounded-2xl bg-[#f4f3f6] hover:bg-red-50 hover:text-red-600 flex items-center justify-center transition-all cursor-pointer shadow-sm">
@@ -1679,47 +1770,58 @@ export default function VisualBd() {
             </div>
 
             {/* Body scrollable */}
-            <div className="overflow-y-auto flex-1 p-5 space-y-5">
+            <div className="overflow-y-auto flex-1 p-6 sm:p-8 space-y-6">
 
               {/* SECCIÓN 1: Toggle Origen */}
               <div>
-                <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider mb-2">1. Origen de Datos</p>
-                <div className="flex bg-[#f4f3f6] p-1 rounded-2xl border border-[#c5c6cf]/40">
+                <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider mb-2.5">1. Origen de Datos</p>
+                <div className="flex flex-col sm:flex-row bg-[#f4f3f6] p-1.5 rounded-2xl border border-[#c5c6cf]/40 gap-1.5">
                   <button
-                    onClick={() => setOrigenExportacion('dashboard')}
-                    className={`flex-1 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${origenExportacion === 'dashboard'
+                    onClick={() => setOrigenExportacion('historial_clases')}
+                    className={`flex-1 px-4 py-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${origenExportacion === 'historial_clases'
                         ? 'bg-white text-[#1c355e] shadow-sm border border-[#c5c6cf]/30'
                         : 'text-[#75777f] hover:text-[#44464e]'
                       }`}
                   >
-                    <span className="material-symbols-outlined text-[16px]">dashboard</span>
-                    Dashboard Actual
+                    <span className="material-symbols-outlined text-[18px] text-emerald-600">history_edu</span>
+                    Bitácora de Clases e Incidencias (Histórico)
                   </button>
                   <button
-                    onClick={() => setOrigenExportacion('historial')}
-                    className={`flex-1 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${origenExportacion === 'historial'
+                    onClick={() => setOrigenExportacion('dashboard')}
+                    className={`flex-1 px-4 py-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${origenExportacion === 'dashboard'
                         ? 'bg-white text-[#1c355e] shadow-sm border border-[#c5c6cf]/30'
                         : 'text-[#75777f] hover:text-[#44464e]'
                       }`}
                   >
-                    <span className="material-symbols-outlined text-[16px]">history</span>
-                    Bitácora Histórica
+                    <span className="material-symbols-outlined text-[18px] text-blue-600">dashboard</span>
+                    Dashboard Actual (Tiempo Real)
                   </button>
                 </div>
               </div>
 
-              {/* SECCIÓN 2: Filtros Historial */}
-              {origenExportacion === 'historial' && (
-                <div className="bg-[#faf9fc] border border-[#c5c6cf]/30 rounded-2xl p-4 space-y-3">
-                  <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider">2. Filtros de Bitácora</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              {/* SECCIÓN 2A: Filtros Historial de Clases e Incidencias */}
+              {origenExportacion === 'historial_clases' && (
+                <div className="bg-[#faf9fc] border border-[#c5c6cf]/30 rounded-2xl p-5 space-y-3.5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-extrabold text-[#1c355e] uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-emerald-600">history_edu</span>
+                      2. Filtros de Bitácora Académica (Clases Terminadas y Cambios)
+                    </p>
+                    {cargandoFiltrosClases && (
+                      <span className="text-xs text-[#75777f] flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+                        Cargando catálogo...
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
                     <div>
                       <label className="block font-bold text-[#44464e] uppercase mb-1">Desde</label>
                       <input
                         type="date"
-                        value={filtrosHistorial.fechaInicio}
-                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, fechaInicio: e.target.value })}
-                        disabled={cargandoFiltrosHistorial}
+                        value={filtrosHistorialClases.fechaInicio}
+                        onChange={(e) => setFiltrosHistorialClases({ ...filtrosHistorialClases, fechaInicio: e.target.value })}
                         className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium"
                       />
                     </div>
@@ -1727,49 +1829,65 @@ export default function VisualBd() {
                       <label className="block font-bold text-[#44464e] uppercase mb-1">Hasta</label>
                       <input
                         type="date"
-                        value={filtrosHistorial.fechaFin}
-                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, fechaFin: e.target.value })}
-                        disabled={cargandoFiltrosHistorial}
+                        value={filtrosHistorialClases.fechaFin}
+                        onChange={(e) => setFiltrosHistorialClases({ ...filtrosHistorialClases, fechaFin: e.target.value })}
                         className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium"
                       />
                     </div>
                     <div>
-                      <label className="block font-bold text-[#44464e] uppercase mb-1">Módulo</label>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Licenciatura</label>
                       <select
-                        value={filtrosHistorial.modulo}
-                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, modulo: e.target.value })}
-                        disabled={cargandoFiltrosHistorial}
+                        value={filtrosHistorialClases.licenciatura}
+                        onChange={(e) => setFiltrosHistorialClases({ ...filtrosHistorialClases, licenciatura: e.target.value })}
                         className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
                       >
-                        <option value="Todos">Todos los Módulos</option>
-                        {filtrosDisponiblesHistorial.modulos?.map((mod) => (
-                          <option key={mod} value={mod}>{mod}</option>
+                        <option value="Todos">Todas las Licenciaturas</option>
+                        {filtrosDisponiblesClases.licenciaturas?.map((lic) => (
+                          <option key={lic} value={lic}>{lic}</option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="block font-bold text-[#44464e] uppercase mb-1">Usuario</label>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Tipo de Incidencia</label>
                       <select
-                        value={filtrosHistorial.usuario}
-                        onChange={(e) => setFiltrosHistorial({ ...filtrosHistorial, usuario: e.target.value })}
-                        disabled={cargandoFiltrosHistorial}
+                        value={filtrosHistorialClases.incidencia}
+                        onChange={(e) => setFiltrosHistorialClases({ ...filtrosHistorialClases, incidencia: e.target.value })}
                         className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
                       >
-                        <option value="Todos">Todos los Usuarios</option>
-                        {filtrosDisponiblesHistorial.usuarios?.map((usr) => (
-                          <option key={usr} value={usr}>{usr}</option>
-                        ))}
+                        {filtrosDisponiblesClases.incidencias && filtrosDisponiblesClases.incidencias.length > 0 ? (
+                          filtrosDisponiblesClases.incidencias.map((inc) => (
+                            <option key={inc.id} value={inc.id}>{inc.label}</option>
+                          ))
+                        ) : (
+                          <>
+                            <option value="todos">Todas las clases registradas</option>
+                            <option value="suplencia">Solo con Suplente</option>
+                            <option value="cambio_aula">Solo con Cambio de Aula / Liberada</option>
+                            <option value="reprogramada">Solo Reprogramadas / Pospuestas</option>
+                            <option value="finalizada">Solo Finalizadas sin incidencias</option>
+                            <option value="con_incidencias">Todas las incidencias (excluye normales)</option>
+                          </>
+                        )}
                       </select>
                     </div>
+                    <div>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Docente (Opcional)</label>
+                      <input
+                        type="text"
+                        placeholder="Buscar maestro..."
+                        value={filtrosHistorialClases.docente}
+                        onChange={(e) => setFiltrosHistorialClases({ ...filtrosHistorialClases, docente: e.target.value })}
+                        className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium"
+                      />
+                    </div>
                   </div>
-                  {cargandoFiltrosHistorial && (
-                    <p className="text-xs text-[#75777f] italic flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
-                      Cargando filtros desde la base de datos...
-                    </p>
-                  )}
+                  <p className="text-[11px] text-[#75777f] italic flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[14px] text-blue-600">info</span>
+                    Incluye todas las clases impartidas, terminadas y cualquier modificación de suplentes, aulas liberadas o reprogramaciones.
+                  </p>
                 </div>
               )}
+
 
               {/* Indicador Dashboard */}
               {origenExportacion === 'dashboard' && (
@@ -1784,7 +1902,7 @@ export default function VisualBd() {
               {/* SECCIÓN 3: Acciones */}
               <div>
                 <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider mb-3">
-                  {origenExportacion === 'historial' ? '3' : '2'}. Acciones
+                  {origenExportacion !== 'dashboard' ? '3' : '2'}. Acciones
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <button

@@ -39,10 +39,62 @@ export default function Calendarios() {
   const [formatoCorreo, setFormatoCorreo] = useState('pdf');
   const [enviandoCorreo, setEnviandoCorreo] = useState(false);
 
+  // ── Estado para modal de carga masiva Excel ──
+  const [modalSubirExcel, setModalSubirExcel] = useState(false);
+  const [subiendoExcel, setSubiendoExcel] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+
   // ── NUEVO: Estado para ciclos escolares ──
   const [ciclosDisponibles, setCiclosDisponibles] = useState([]);
   const [cicloSeleccionado, setCicloSeleccionado] = useState('');
   const [cicloActual, setCicloActual] = useState('');
+
+  // ── Handler para subir archivo Excel masivo ──
+  const handleSubirExcelMasivo = async (file) => {
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['xlsx', 'xls', 'csv'].includes(ext)) {
+      Swal.fire('Error', 'Solo se permiten archivos Excel (.xlsx, .xls) o CSV (.csv)', 'error');
+      return;
+    }
+
+    setSubiendoExcel(true);
+    Swal.fire({ title: 'Procesando archivo...', html: 'Analizando carreras, materias y fechas de exámenes...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+    const formData = new FormData();
+    formData.append('archivo', file);
+    formData.append('ciclo_escolar', cicloSeleccionado);
+
+    try {
+      const res = await fetch(`${API_URL}/api/examenes-calendario/upload-excel`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        const detalleHtml = Object.entries(data.detalle || {})
+          .map(([c, n]) => `<b>${c}</b>: ${n} exámenes`)
+          .join('<br/>');
+        await Swal.fire({
+          icon: 'success',
+          title: '¡Carga masiva exitosa!',
+          html: `Se procesaron <b>${data.total}</b> exámenes de <b>${data.carreras?.length || 0}</b> carreras.<br/><br/><div class="text-left text-sm">${detalleHtml}</div>`,
+          confirmButtonColor: '#1c355e'
+        });
+        setModalSubirExcel(false);
+        fetchCalendarios();
+        setExamenesData({});
+        setCarreraExpandida(null);
+      } else {
+        Swal.fire('Error', data.detail || 'No se pudo procesar el archivo', 'error');
+      }
+    } catch (err) {
+      Swal.fire('Error', `Error de conexión: ${err.message}`, 'error');
+    } finally {
+      setSubiendoExcel(false);
+    }
+  };
 
   const carreras = ['DER', 'ENF', 'GAS', 'ISC', 'NEG', 'NUT', 'PSCF', 'PSIC', 'VMK'];
   const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
@@ -115,42 +167,75 @@ export default function Calendarios() {
     }
   }, [tabActual, carreraExpandida, ahora]);
 
-  // Función para determinar si un examen es HOY basado en strings de PDF
+  // Limpia cualquier hora (ej. '12:00 a. m.') y formatea solo la fecha (DD/MM/YYYY)
+  const formatearSoloFecha = (val) => {
+    if (!val) return '—';
+    const str = String(val).trim();
+    // Formato ISO: YYYY-MM-DD
+    const matchIso = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (matchIso) {
+      const y = matchIso[1];
+      const m = matchIso[2].padStart(2, '0');
+      const d = matchIso[3].padStart(2, '0');
+      return `${d}/${m}/${y}`;
+    }
+    // Formato DD/MM/YYYY
+    const matchDmy = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+    if (matchDmy) {
+      const d = matchDmy[1].padStart(2, '0');
+      const m = matchDmy[2].padStart(2, '0');
+      const y = matchDmy[3];
+      return `${d}/${m}/${y}`;
+    }
+    // Quitar cualquier hora en texto
+    const limpia = str.replace(/\s+\d{1,2}:\d{2}(:\d{2})?(\s*[ap]\.?\s*m\.?)?/gi, '').trim();
+    return limpia || '—';
+  };
+
+  // Función para determinar si un examen es HOY basado en strings de PDF o Excel
   const isExamToday = (ex) => {
-    if (!ex.fecha) return false;
+    const fechasToCheck = [ex.primer_parcial, ex.segundo_parcial, ex.ordinario, ex.fecha].filter(Boolean);
+    if (fechasToCheck.length === 0) return false;
     
     const day = ahora.getDate();
+    const dayPad = String(day).padStart(2, '0');
+    const monthNum = String(ahora.getMonth() + 1).padStart(2, '0');
+    const year = ahora.getFullYear();
     const month = ahora.toLocaleString('es-ES', { month: 'long' }).toLowerCase();
     const monthShort = ahora.toLocaleString('es-ES', { month: 'short' }).toLowerCase();
-    
-    const fechaStr = String(ex.fecha).toLowerCase();
-    const periodoStr = String(ex.periodo || '').toLowerCase();
-    const diaStr = String(ex.dia || '').toLowerCase();
-    
-    // Buscar si hay rango, ej: "20 al 27", "20-27"
-    let hasDay = false;
-    const match = fechaStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
-    if (match) {
-       const start = parseInt(match[1]);
-       const end = parseInt(match[2]);
-       if (day >= start && day <= end) hasDay = true;
-    }
-    if (!hasDay) {
-       hasDay = new RegExp(`\\b0?${day}\\b`).test(fechaStr) || new RegExp(`\\b0?${day}\\b`).test(diaStr);
-    }
-    
-    const mesesArray = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-    const containsAnyMonth = mesesArray.some(m => new RegExp(`\\b${m}\\b`).test(fechaStr)) || mesesArray.some(m => new RegExp(`\\b${m}\\b`).test(diaStr));
-    
-    const hasMonth = fechaStr.includes(month) || fechaStr.includes(monthShort) || diaStr.includes(month) || diaStr.includes(monthShort);
-    
-    if (containsAnyMonth) {
-      return hasDay && hasMonth;
-    } else {
-      const hasPeriodMonth = periodoStr.includes(month) || periodoStr.includes(monthShort);
-      if (hasPeriodMonth) return hasDay;
-      return hasDay; // fallback
-    }
+
+    return fechasToCheck.some(f => {
+      const fStr = String(f).toLowerCase();
+      
+      // Match formatos numéricos: DD/MM/YYYY o YYYY-MM-DD
+      if (fStr.includes(`${dayPad}/${monthNum}/${year}`) || fStr.includes(`${day}/${monthNum}/${year}`)) {
+        return true;
+      }
+      if (fStr.includes(`${year}-${monthNum}-${dayPad}`) || fStr.includes(`${year}-${monthNum}-${day}`)) {
+        return true;
+      }
+
+      // Buscar si hay rango, ej: "20 al 27", "20-27"
+      let hasDay = false;
+      const match = fStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
+      if (match) {
+        const start = parseInt(match[1]);
+        const end = parseInt(match[2]);
+        if (day >= start && day <= end) hasDay = true;
+      }
+      if (!hasDay) {
+        hasDay = new RegExp(`\\b0?${day}\\b`).test(fStr) || new RegExp(`\\b0?${day}\\b`).test(String(ex.dia || ''));
+      }
+      
+      const mesesArray = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+      const containsAnyMonth = mesesArray.some(m => new RegExp(`\\b${m}\\b`).test(fStr));
+      const hasMonth = fStr.includes(month) || fStr.includes(monthShort);
+      
+      if (containsAnyMonth) {
+        return hasDay && hasMonth;
+      }
+      return false;
+    });
   };
 
   // ── NUEVO: CRUD Modal Eventos ──
@@ -506,15 +591,24 @@ export default function Calendarios() {
             </button>
           ))}
         </div>
-        {/* Botón exportar (solo en tab exámenes) */}
+        {/* Botones de acción (solo en tab exámenes) */}
         {tabActual === 'examenes' && (
-          <button
-            onClick={() => setModalExportar(true)}
-            className="px-4 py-2 rounded-lg text-xs font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all flex items-center gap-1.5 shadow-sm"
-          >
-            <span className="material-symbols-outlined text-[16px]">download</span>
-            Exportar / Enviar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setModalSubirExcel(true)}
+              className="px-4 py-2 rounded-lg text-xs font-bold bg-[#1c355e] text-white hover:bg-[#284a7e] transition-all flex items-center gap-1.5 shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[16px]">upload_file</span>
+              Subir Fechas (Excel)
+            </button>
+            <button
+              onClick={() => setModalExportar(true)}
+              className="px-4 py-2 rounded-lg text-xs font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all flex items-center gap-1.5 shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[16px]">download</span>
+              Exportar / Enviar
+            </button>
+          </div>
         )}
       </div>
 
@@ -828,10 +922,12 @@ export default function Calendarios() {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className={`${colors.bg}`}>
-                              <th className="text-left px-4 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider w-28">Semestre</th>
-                              <th className="text-left px-4 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider">Materia</th>
-                              <th className="text-left px-4 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider w-28">Día</th>
-                              <th className="text-left px-4 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider w-36">Fecha</th>
+                              <th className="text-left px-3 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider w-20">Grado</th>
+                              <th className="text-left px-3 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider">Materia</th>
+                              <th className="text-left px-3 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider">Docente</th>
+                              <th className="text-left px-3 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider w-36">1er Parcial</th>
+                              <th className="text-left px-3 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider w-36">2do Parcial</th>
+                              <th className="text-left px-3 py-2.5 font-bold text-[#1c355e] text-xs uppercase tracking-wider w-36">Ordinario</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -848,11 +944,11 @@ export default function Calendarios() {
                                 return (
                                   <tr key={`${sIdx}-${eIdx}`} {...trProps} className={`border-t transition-all ${isHoy ? 'bg-emerald-50 shadow-[inset_4px_0_0_0_#10b981]' : `hover:${colors.bg} ${colors.border} ${eIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}`}>
                                     {eIdx === 0 && (
-                                      <td rowSpan={examenes.length} className={`px-4 py-2 font-bold text-xs ${colors.text} border-r ${colors.border} align-top`}>
+                                      <td rowSpan={examenes.length} className={`px-3 py-2 font-bold text-xs ${colors.text} border-r ${colors.border} align-top`}>
                                         {semestre}
                                       </td>
                                     )}
-                                    <td className="px-4 py-2">
+                                    <td className="px-3 py-2">
                                       <div className="flex items-center gap-2">
                                         <span className={`font-medium text-xs ${isHoy ? 'text-emerald-800' : 'text-[#1b1c1e]'}`}>{ex.materia}</span>
                                         {isHoy && (
@@ -863,8 +959,10 @@ export default function Calendarios() {
                                         )}
                                       </div>
                                     </td>
-                                    <td className={`px-4 py-2 text-xs capitalize ${isHoy ? 'text-emerald-600/80 font-medium' : 'text-slate-500'}`}>{ex.dia}</td>
-                                    <td className={`px-4 py-2 text-xs ${isHoy ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}>{ex.fecha}</td>
+                                    <td className={`px-3 py-2 text-xs ${isHoy ? 'text-emerald-700 font-medium' : 'text-slate-600'}`}>{ex.docente || '—'}</td>
+                                    <td className={`px-3 py-2 text-xs whitespace-nowrap ${isHoy ? 'text-emerald-700 font-bold' : 'text-slate-600'}`}>{formatearSoloFecha(ex.primer_parcial || ex.dia)}</td>
+                                    <td className={`px-3 py-2 text-xs whitespace-nowrap ${isHoy ? 'text-emerald-700 font-bold' : 'text-slate-600'}`}>{formatearSoloFecha(ex.segundo_parcial)}</td>
+                                    <td className={`px-3 py-2 text-xs whitespace-nowrap ${isHoy ? 'text-emerald-700 font-bold' : 'text-slate-600'}`}>{formatearSoloFecha(ex.ordinario || ex.fecha)}</td>
                                   </tr>
                                 );
                               });
@@ -1206,6 +1304,78 @@ export default function Calendarios() {
                 </div>
                 <p className="text-[11px] text-slate-400 mt-2 text-center">
                   Se enviará un archivo <strong>{formatoCorreo === 'pdf' ? 'PDF' : 'Excel (.xlsx)'}</strong> adjunto al correo
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Subir Fechas Excel Masivo ── */}
+      {modalSubirExcel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-100">
+            <div className="bg-[#1c355e] px-6 py-4 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <span className="material-symbols-outlined">upload_file</span>
+                Carga Masiva de Exámenes
+              </h2>
+              <button onClick={() => setModalSubirExcel(false)} className="text-white/60 hover:text-white p-1.5 rounded-xl transition-colors hover:bg-white/10">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <p className="text-sm text-blue-800 font-medium flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5 flex-shrink-0">info</span>
+                  <span>Sube un archivo <strong>Excel (.xlsx)</strong> o <strong>CSV</strong> con las fechas de exámenes. El sistema detectará automáticamente cada carrera y llenará todos los cuadros con sus materias, docentes y fechas de parciales/ordinarios.</span>
+                </p>
+              </div>
+
+              <div className="text-xs text-slate-500 space-y-1">
+                <p className="font-bold text-slate-600">Columnas esperadas:</p>
+                <p>Grado · Asignatura (Materia) · Docente · 1er. Parcial · 2do. Parcial · Ordinario</p>
+                <p className="text-slate-400 mt-1">Puede tener múltiples hojas (una por carrera) o una sola hoja con títulos de licenciatura.</p>
+              </div>
+
+              {/* Zona de Drag & Drop */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+                onDragLeave={() => setDragActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragActive(false);
+                  const file = e.dataTransfer.files[0];
+                  if (file) handleSubirExcelMasivo(file);
+                }}
+                className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer ${
+                  dragActive
+                    ? 'border-[#1c355e] bg-indigo-50 scale-[1.02]'
+                    : 'border-slate-300 hover:border-[#1c355e] hover:bg-slate-50'
+                }`}
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = '.xlsx,.xls,.csv';
+                  input.onchange = (e) => {
+                    if (e.target.files[0]) handleSubirExcelMasivo(e.target.files[0]);
+                  };
+                  input.click();
+                }}
+              >
+                <span className={`material-symbols-outlined text-5xl mb-3 block transition-colors ${dragActive ? 'text-[#1c355e]' : 'text-slate-300'}`}>
+                  cloud_upload
+                </span>
+                <p className="font-bold text-[#1c355e] text-sm">Arrastra tu archivo aquí</p>
+                <p className="text-xs text-slate-400 mt-1">o haz clic para seleccionar</p>
+                <p className="text-[10px] text-slate-300 mt-3 uppercase tracking-widest font-bold">.xlsx · .xls · .csv</p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <p className="text-xs text-amber-700 flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[16px] mt-0.5 flex-shrink-0">warning</span>
+                  <span>Esta acción <strong>reemplazará</strong> los datos de exámenes existentes para las carreras detectadas en el archivo del ciclo <strong>{cicloSeleccionado}</strong>.</span>
                 </p>
               </div>
             </div>
