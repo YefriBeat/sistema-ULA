@@ -115,34 +115,52 @@ export default function Layout() {
         const dayRegex = new RegExp(`\\b0?${dayNum}\\b`);
         
         const isExamToday = (ex) => {
-          if (!ex.fecha) return false;
+          const fechasToCheck = [ex.primer_parcial, ex.segundo_parcial, ex.ordinario, ex.fecha].filter(Boolean);
+          if (fechasToCheck.length === 0) return false;
           
-          const fechaStr = String(ex.fecha).toLowerCase();
-          const periodoStr = String(ex.periodo || '').toLowerCase();
-          const diaStr = String(ex.dia || '').toLowerCase();
-          
-          let hasDay = false;
-          const match = fechaStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
-          if (match) {
-             const start = parseInt(match[1], 10);
-             const end = parseInt(match[2], 10);
-             if (dayNum >= start && dayNum <= end) hasDay = true;
-          }
-          if (!hasDay) {
-             hasDay = dayRegex.test(fechaStr) || dayRegex.test(diaStr);
-          }
-          
-          const MESES_REGEX = [/\benero\b/, /\bfebrero\b/, /\bmarzo\b/, /\babril\b/, /\bmayo\b/, /\bjunio\b/, /\bjulio\b/, /\bagosto\b/, /\bseptiembre\b/, /\boctubre\b/, /\bnoviembre\b/, /\bdiciembre\b/];
-          const containsAnyMonth = MESES_REGEX.some(regex => regex.test(fechaStr) || regex.test(diaStr));
-          const hasMonth = fechaStr.includes(monthStr) || fechaStr.includes(monthShortStr) || diaStr.includes(monthStr) || diaStr.includes(monthShortStr);
-          
-          if (containsAnyMonth) {
-            return hasDay && hasMonth;
-          } else {
-            const hasPeriodMonth = periodoStr.includes(monthStr) || periodoStr.includes(monthShortStr);
-            if (hasPeriodMonth) return hasDay;
-            return hasDay; // fallback
-          }
+          const day = ahora.getDate();
+          const dayPad = String(day).padStart(2, '0');
+          const monthNum = String(ahora.getMonth() + 1).padStart(2, '0');
+          const monthInt = ahora.getMonth() + 1;
+          const year = ahora.getFullYear();
+
+          return fechasToCheck.some(f => {
+            const fStr = String(f).toLowerCase().trim();
+            const periodoStr = String(ex.periodo || '').toLowerCase();
+            const diaStr = String(ex.dia || '').toLowerCase();
+
+            // Match numérico exacto DD/MM/YYYY
+            const matchDmy = fStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+            if (matchDmy) {
+              const d = parseInt(matchDmy[1], 10);
+              const m = parseInt(matchDmy[2], 10);
+              const y = parseInt(matchDmy[3], 10);
+              return d === day && m === monthInt && y === year;
+            }
+
+            // Match texto contiene DD/MM/YYYY o YYYY-MM-DD
+            if (fStr.includes(`${dayPad}/${monthNum}/${year}`) || fStr.includes(`${day}/${monthNum}/${year}`)) return true;
+            if (fStr.includes(`${year}-${monthNum}-${dayPad}`) || fStr.includes(`${year}-${monthNum}-${day}`)) return true;
+
+            let hasDay = false;
+            const match = fStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
+            if (match) {
+              const start = parseInt(match[1], 10);
+              const end = parseInt(match[2], 10);
+              if (day >= start && day <= end) hasDay = true;
+            }
+            if (!hasDay) {
+              hasDay = new RegExp(`\\b0?${day}\\b`).test(fStr) || new RegExp(`\\b0?${day}\\b`).test(diaStr);
+            }
+
+            const mesesArray = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+            const containsAnyMonth = mesesArray.some(m => new RegExp(`\\b${m}\\b`).test(fStr));
+            const hasMonth = fStr.includes(monthStr) || fStr.includes(monthShortStr) || diaStr.includes(monthStr) || diaStr.includes(monthShortStr);
+
+            if (containsAnyMonth) return hasDay && hasMonth;
+            if (periodoStr.includes(monthStr) || periodoStr.includes(monthShortStr)) return hasDay;
+            return false;
+          });
         };
 
         const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';

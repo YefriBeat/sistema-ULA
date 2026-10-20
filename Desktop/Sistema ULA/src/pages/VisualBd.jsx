@@ -141,44 +141,68 @@ const groupConsecutiveClasses = (clases) => {
 const MESES_REGEX_ARRAY = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'].map(m => new RegExp(`\\b${m}\\b`));
 
 // Función altamente optimizada para determinar si un examen es HOY basado en strings o fechas de parciales
-const isExamToday = (ex, day, month, monthShort, dayRegex) => {
+// Función para determinar si un examen es HOY basado en strings o fechas de parciales
+const isExamToday = (ex, ahoraDate) => {
   const fechasToCheck = [ex.primer_parcial, ex.segundo_parcial, ex.ordinario, ex.fecha].filter(Boolean);
   if (fechasToCheck.length === 0) return false;
 
+  const day = ahoraDate.getDate();
   const dayPad = String(day).padStart(2, '0');
+  const monthNum = String(ahoraDate.getMonth() + 1).padStart(2, '0');
+  const monthInt = ahoraDate.getMonth() + 1;
+  const year = ahoraDate.getFullYear();
+  const month = ahoraDate.toLocaleString('es-ES', { month: 'long' }).toLowerCase();
+  const monthShort = ahoraDate.toLocaleString('es-ES', { month: 'short' }).toLowerCase();
 
   return fechasToCheck.some(f => {
-    const fechaStr = String(f).toLowerCase();
+    const fStr = String(f).toLowerCase().trim();
     const periodoStr = String(ex.periodo || '').toLowerCase();
     const diaStr = String(ex.dia || '').toLowerCase();
 
-    // Formato DD/MM/YYYY exacto
-    const matchDmy = fechaStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+    // 1. Match numérico exacto DD/MM/YYYY
+    const matchDmy = fStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
     if (matchDmy) {
       const d = parseInt(matchDmy[1], 10);
-      if (d === day) return true;
+      const m = parseInt(matchDmy[2], 10);
+      const y = parseInt(matchDmy[3], 10);
+      return d === day && m === monthInt && y === year;
     }
 
+    // 2. Match numérico exacto YYYY-MM-DD
+    const matchIso = fStr.match(/^(\d{4})[/-](\d{1,2})[/-](\d{4})/);
+    if (matchIso) {
+      const y = parseInt(matchIso[1], 10);
+      const m = parseInt(matchIso[2], 10);
+      const d = parseInt(matchIso[3], 10);
+      return d === day && m === monthInt && y === year;
+    }
+
+    // 3. Match texto contiene DD/MM/YYYY o YYYY-MM-DD
+    if (fStr.includes(`${dayPad}/${monthNum}/${year}`) || fStr.includes(`${day}/${monthNum}/${year}`)) return true;
+    if (fStr.includes(`${year}-${monthNum}-${dayPad}`) || fStr.includes(`${year}-${monthNum}-${day}`)) return true;
+
+    // 4. Rango de días textual (ej: "20 al 27 de octubre")
     let hasDay = false;
-    const match = fechaStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
+    const match = fStr.match(/\b(\d{1,2})\s*(?:al|-|a)\s*(\d{1,2})\b/i);
     if (match) {
       const start = parseInt(match[1], 10);
       const end = parseInt(match[2], 10);
       if (day >= start && day <= end) hasDay = true;
     }
     if (!hasDay) {
-      hasDay = dayRegex.test(fechaStr) || dayRegex.test(diaStr);
+      const dayRegex = new RegExp(`\\b0?${day}\\b`);
+      hasDay = dayRegex.test(fStr) || dayRegex.test(diaStr);
     }
 
-    const containsAnyMonth = MESES_REGEX_ARRAY.some(regex => regex.test(fechaStr) || regex.test(diaStr));
-    const hasMonth = fechaStr.includes(month) || fechaStr.includes(monthShort) || diaStr.includes(month) || diaStr.includes(monthShort);
+    const containsAnyMonth = MESES_REGEX_ARRAY.some(regex => regex.test(fStr) || regex.test(diaStr));
+    const hasMonth = fStr.includes(month) || fStr.includes(monthShort) || diaStr.includes(month) || diaStr.includes(monthShort);
 
     if (containsAnyMonth) {
       return hasDay && hasMonth;
     } else {
       const hasPeriodMonth = periodoStr.includes(month) || periodoStr.includes(monthShort);
       if (hasPeriodMonth) return hasDay;
-      return hasDay; // fallback
+      return false;
     }
   });
 };
@@ -477,11 +501,7 @@ export default function VisualBd() {
     const liberacionesMap = new Map(liberacionesActivas.map(l => [l.aula_nombre, l]));
 
     // Pre-calcular valores y pre-filtrar exámenes para evitar congelamiento de la app
-    const dayNum = ahora.getDate();
-    const monthStr = ahora.toLocaleString('es-ES', { month: 'long' }).toLowerCase();
-    const monthShortStr = ahora.toLocaleString('es-ES', { month: 'short' }).toLowerCase();
-    const dayRegex = new RegExp(`\\b0?${dayNum}\\b`);
-    const examenesHoyValidos = examenesHoy.filter(ex => isExamToday(ex, dayNum, monthStr, monthShortStr, dayRegex));
+    const examenesHoyValidos = examenesHoy.filter(ex => isExamToday(ex, ahora));
 
     return asignaturas.map(clase => {
       const { dia, inicio, fin, textoHora } = parsearHorario(clase.horario);
@@ -504,11 +524,26 @@ export default function VisualBd() {
 
       if (diaClaseIndex === diaActualIndex) {
         tieneExamenHoy = examenesHoyValidos.some(ex => {
+          // 1. Validar coincidencia de carrera / licenciatura si ambas existen
+          if (ex.carrera && clase.licenciatura) {
+            const licClase = norm(clase.licenciatura);
+            const carEx = norm(ex.carrera);
+            if (licClase !== carEx) return false;
+          }
+
+          // 2. Normalizar materias y comparar
           let matReal = ex.materia;
           try { matReal = decodeURIComponent(escape(ex.materia)); } catch (e) { }
           const matNorm = norm(matReal);
           if (!matNorm || matNorm.length < 3) return false;
-          if (asigNorm.includes(matNorm) || matNorm.includes(asigNorm)) {
+
+          // Comparación exacta o por coincidencia segura (evitando falsos positivos como Inglés I vs Inglés II)
+          const getRomano = (s) => (s.match(/\b(i{1,3}|iv|v|vi{0,3}|ix|x)\b$/i) || [])[1] || '';
+          const matchRomano = getRomano(asigNorm) === getRomano(matNorm);
+          const sonIguales = asigNorm === matNorm;
+          const matchSub = (asigNorm.includes(matNorm) || matNorm.includes(asigNorm)) && matchRomano;
+
+          if (sonIguales || matchSub) {
             nombreExamen = ex.periodo || 'EXAMEN';
             return true;
           }
