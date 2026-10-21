@@ -1,8 +1,58 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Swal from 'sweetalert2';
 import AgendarEventoModal from './AgendarEventoModal';
 
+// Hook reutilizable para mover ventanas modales arrastrando su encabezado
+function useDraggableModal() {
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
+
+  const handleMouseDown = (e) => {
+    if (
+      e.target.closest('button') ||
+      e.target.closest('select') ||
+      e.target.closest('input') ||
+      e.target.closest('textarea') ||
+      e.target.closest('a')
+    )
+      return;
+    setDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      posX: pos.x,
+      posY: pos.y,
+    };
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const handleMouseMove = (e) => {
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      setPos({
+        x: dragStartRef.current.posX + dx,
+        y: dragStartRef.current.posY + dy,
+      });
+    };
+    const handleMouseUp = () => setDragging(false);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dragging]);
+
+  const resetPos = () => setPos({ x: 0, y: 0 });
+
+  return { pos, handleMouseDown, resetPos };
+}
+
 export default function AgendaEventos({ aulasList = [] }) {
+  const dragExport = useDraggableModal();
+
   const [eventos, setEventos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [aulasLocales, setAulasLocales] = useState([]);
@@ -24,6 +74,32 @@ export default function AgendaEventos({ aulasList = [] }) {
   const [modalCancelar, setModalCancelar] = useState(null);
   const [motivoCancelar, setMotivoCancelar] = useState('Cancelación por reorganización de espacio');
   const [cancelando, setCancelando] = useState(false);
+
+  // Centro de Exportación
+  const [mostrarCentroExportacion, setMostrarCentroExportacion] = useState(false);
+  const [filtrosExport, setFiltrosExport] = useState({
+    fechaInicio: '',
+    fechaFin: '',
+    aula: 'todas',
+    estado: 'todos',
+    tipo: 'todos',
+    busqueda: ''
+  });
+  const [mostrarFormEmail, setMostrarFormEmail] = useState(false);
+  const [formEmail, setFormEmail] = useState({
+    destinatarios: '',
+    cc: '',
+    cco: '',
+    asunto: 'Reporte de Reservas y Eventos — SIPREF',
+    mensaje: '',
+    adjuntar_pdf: true,
+    adjuntar_excel: false
+  });
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [usuariosRegistrados, setUsuariosRegistrados] = useState([]);
+  const [mostrarSugerenciasEmails, setMostrarSugerenciasEmails] = useState(true);
+  const [campoDestino, setCampoDestino] = useState('destinatarios');
 
   const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '';
 
@@ -187,6 +263,154 @@ export default function AgendaEventos({ aulasList = [] }) {
     }
   };
 
+  const handleExportarHistorial = () => {
+    dragExport.resetPos();
+    setFiltrosExport({
+      fechaInicio: '',
+      fechaFin: '',
+      aula: filtroAula,
+      estado: filtroEstado,
+      tipo: filtroTipo,
+      busqueda: busqueda
+    });
+    setMostrarFormEmail(false);
+    setMostrarCentroExportacion(true);
+  };
+
+  // Cargar usuarios registrados cuando se abre el centro de exportación o email
+  useEffect(() => {
+    if (mostrarFormEmail || mostrarCentroExportacion) {
+      fetch(`${API_URL}/api/usuarios`)
+        .then(res => res.ok ? res.json() : [])
+        .then(data => setUsuariosRegistrados(Array.isArray(data) ? data : []))
+        .catch(() => setUsuariosRegistrados([]));
+    }
+  }, [mostrarFormEmail, mostrarCentroExportacion]);
+
+  // Construir query params para los endpoints de exportación de eventos
+  const buildExportParams = () => {
+    const params = new URLSearchParams();
+    if (filtrosExport.fechaInicio) params.append('fecha_inicio', filtrosExport.fechaInicio);
+    if (filtrosExport.fechaFin) params.append('fecha_fin', filtrosExport.fechaFin);
+    if (filtrosExport.aula && filtrosExport.aula !== 'todas') params.append('aula', filtrosExport.aula);
+    if (filtrosExport.estado && filtrosExport.estado !== 'todos') params.append('estado', filtrosExport.estado);
+    if (filtrosExport.tipo && filtrosExport.tipo !== 'todos') params.append('tipo_evento', filtrosExport.tipo);
+    if (filtrosExport.busqueda) params.append('busqueda', filtrosExport.busqueda);
+    return params;
+  };
+
+  const handleExportarDesdePanel = async (formato) => {
+    setExportando(true);
+    try {
+      const params = buildExportParams();
+      const endpoint = formato === 'pdf' ? '/api/eventos/exportar/pdf' : '/api/eventos/exportar/excel';
+      const url = `${API_URL}${endpoint}${params.toString() ? `?${params.toString()}` : ''}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const blob = await res.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        const fecha = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        a.download = `Historial_Eventos_${fecha}.${formato === 'pdf' ? 'pdf' : 'xlsx'}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(blobUrl);
+        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Reporte ${formato.toUpperCase()} generado exitosamente`, showConfirmButton: false, timer: 3500 });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.detail || `Error al generar reporte ${formato.toUpperCase()}`, showConfirmButton: false, timer: 4000 });
+      }
+    } catch (e) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Error de conexión al generar reporte', showConfirmButton: false, timer: 4000 });
+    } finally {
+      setExportando(false);
+    }
+  };
+
+  const handleEnviarEmailEventos = async (e) => {
+    e.preventDefault();
+    if (!formEmail.destinatarios) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Especifica al menos un destinatario', showConfirmButton: false, timer: 3000 });
+      return;
+    }
+    setEnviandoEmail(true);
+    try {
+      const bodyData = {
+        destinatarios: formEmail.destinatarios,
+        cc: formEmail.cc,
+        cco: formEmail.cco,
+        asunto: formEmail.asunto,
+        mensaje: formEmail.mensaje,
+        adjuntar_pdf: formEmail.adjuntar_pdf,
+        adjuntar_excel: formEmail.adjuntar_excel,
+        fecha_inicio: filtrosExport.fechaInicio || null,
+        fecha_fin: filtrosExport.fechaFin || null,
+        aula: (filtrosExport.aula && filtrosExport.aula !== 'todas') ? filtrosExport.aula : null,
+        estado: (filtrosExport.estado && filtrosExport.estado !== 'todos') ? filtrosExport.estado : null,
+        tipo_evento: (filtrosExport.tipo && filtrosExport.tipo !== 'todos') ? filtrosExport.tipo : null,
+        busqueda: filtrosExport.busqueda || null,
+        usuario_nombre: 'Prefectura'
+      };
+      const res = await fetch(`${API_URL}/api/eventos/exportar/email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData)
+      });
+      if (res.ok) {
+        setMostrarFormEmail(false);
+        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Reporte de eventos enviado por correo con éxito', showConfirmButton: false, timer: 3500 });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.detail || 'Error al enviar correo', showConfirmButton: false, timer: 4000 });
+      }
+    } catch {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Error de conexión al enviar correo', showConfirmButton: false, timer: 4000 });
+    } finally {
+      setEnviandoEmail(false);
+    }
+  };
+
+  const handleImprimirEventos = () => {
+    window.print();
+  };
+
+  // Renderizar badges de correos escritos en los campos de email
+  const renderBadgesCampo = (nombreCampo, valorCampo) => {
+    const correos = (valorCampo || '').split(',').map(c => c.trim()).filter(Boolean);
+    if (correos.length === 0) return null;
+    return (
+      <div className="flex flex-wrap gap-1 mt-1">
+        {correos.map((correo, idx) => {
+          const usr = usuariosRegistrados.find(u => (u.correo || u.email || '').toLowerCase() === correo.toLowerCase());
+          return (
+            <span
+              key={`${correo}-${idx}`}
+              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200"
+            >
+              {usr ? usr.nombre : correo}
+              <button
+                type="button"
+                onClick={() => {
+                  const rest = valorCampo
+                    .split(',')
+                    .map(c => c.trim())
+                    .filter(c => c.toLowerCase() !== correo.toLowerCase())
+                    .join(', ');
+                  setFormEmail({ ...formEmail, [nombreCampo]: rest });
+                }}
+                className="ml-0.5 hover:text-red-600 font-extrabold text-[11px]"
+              >
+                ×
+              </button>
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
   const getBadgeEstado = (estado) => {
     switch ((estado || '').toLowerCase()) {
       case 'programado':
@@ -217,16 +441,27 @@ export default function AgendaEventos({ aulasList = [] }) {
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            setEventoAEditar(null);
-            setModalNuevo(true);
-          }}
-          className="w-full sm:w-auto bg-gradient-to-r from-[#fdbb11] to-[#e8a906] text-[#0e2045] px-5 py-3 rounded-2xl text-sm font-black hover:brightness-105 transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer shrink-0"
-        >
-          <span className="material-symbols-outlined text-xl">event_available</span>
-          + Agendar evento
-        </button>
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto shrink-0">
+          <button
+            onClick={handleExportarHistorial}
+            className="w-full sm:w-auto px-4 py-3 bg-white border border-[#c5c6cf]/50 text-[#1c355e] hover:bg-slate-50 hover:border-[#1c355e]/30 rounded-2xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+            title="Exportar historial de reservas y eventos a Excel o PDF"
+          >
+            <span className="material-symbols-outlined text-lg text-emerald-600">download</span>
+            Exportar historial
+          </button>
+
+          <button
+            onClick={() => {
+              setEventoAEditar(null);
+              setModalNuevo(true);
+            }}
+            className="w-full sm:w-auto bg-gradient-to-r from-[#fdbb11] to-[#e8a906] text-[#0e2045] px-5 py-3 rounded-2xl text-sm font-black hover:brightness-105 transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer shrink-0"
+          >
+            <span className="material-symbols-outlined text-xl">event_available</span>
+            + Agendar evento
+          </button>
+        </div>
       </div>
 
       {/* BARRA DE FILTROS Y BÚSQUEDA */}
@@ -589,7 +824,7 @@ export default function AgendaEventos({ aulasList = [] }) {
               )}
             </div>
 
-            <div className="pt-2 flex items-center justify-between">
+            <div className="pt-2 flex items-center justify-between gap-2 flex-wrap">
               <button
                 onClick={() => handleEliminarEvento(eventoDetalle)}
                 className="px-4 py-2 bg-red-50 text-red-600 font-bold text-xs rounded-xl hover:bg-red-100 transition-all flex items-center gap-1 cursor-pointer"
@@ -597,14 +832,319 @@ export default function AgendaEventos({ aulasList = [] }) {
                 <span className="material-symbols-outlined text-base">delete</span>
                 Eliminar evento
               </button>
-              <button
-                onClick={() => setEventoDetalle(null)}
-                className="px-5 py-2 bg-[#1c355e] text-white font-bold text-xs rounded-xl hover:bg-[#152a4a] cursor-pointer"
-              >
-                Cerrar
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportarHistorial}
+                  className="px-4 py-2 bg-slate-100 text-[#1c355e] font-bold text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-base text-emerald-600">download</span>
+                  Exportar historial
+                </button>
+                <button
+                  onClick={() => setEventoDetalle(null)}
+                  className="px-5 py-2 bg-[#1c355e] text-white font-bold text-xs rounded-xl hover:bg-[#152a4a] cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════ CENTRO DE EXPORTACIÓN DE EVENTOS ═══════════════════ */}
+      {mostrarCentroExportacion && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100] p-4 sm:p-6 pointer-events-none transition-opacity">
+          <div
+            style={{ transform: `translate(${dragExport.pos.x}px, ${dragExport.pos.y}px)` }}
+            className="bg-white/95 backdrop-blur-xl rounded-[2.25rem] w-full max-w-5xl shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35)] font-manrope max-h-[92vh] flex flex-col pointer-events-auto border border-white/80 transition-shadow"
+          >
+            {/* Header */}
+            <div
+              onMouseDown={dragExport.handleMouseDown}
+              className="flex justify-between items-center border-b border-[#c5c6cf]/20 p-6 sm:px-8 sm:py-5 shrink-0 cursor-grab active:cursor-grabbing select-none group bg-gradient-to-r from-white via-white to-[#f4f3f6]/60 rounded-t-[2.25rem]"
+              title="Haz clic y mantén presionado para arrastrar la ventana"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#1c355e] to-blue-800 text-white flex items-center justify-center shadow-lg shadow-blue-900/20">
+                  <span className="material-symbols-outlined text-[24px]">download</span>
+                </div>
+                <div>
+                  <h3 className="text-xl sm:text-2xl font-black text-[#1b1c1e] flex items-center gap-2 tracking-tight">
+                    Centro de Exportación
+                    <span className="material-symbols-outlined text-[#75777f] text-base group-hover:text-[#1c355e] transition-colors">drag_indicator</span>
+                  </h3>
+                  <p className="text-xs sm:text-sm font-medium text-[#75777f] mt-0.5">Personaliza tus filtros de fecha y genera o envía tu reporte de eventos y reservas</p>
+                </div>
+              </div>
+              <button onClick={() => setMostrarCentroExportacion(false)} className="w-10 h-10 rounded-2xl bg-[#f4f3f6] hover:bg-red-50 hover:text-red-600 flex items-center justify-center transition-all cursor-pointer shadow-sm">
+                <span className="material-symbols-outlined text-[22px]">close</span>
               </button>
             </div>
 
+            {/* Body scrollable */}
+            <div className="overflow-y-auto flex-1 p-6 sm:p-8 space-y-6">
+
+              {/* SECCIÓN 1: Filtros de Eventos */}
+              <div className="bg-[#faf9fc] border border-[#c5c6cf]/30 rounded-2xl p-5 space-y-3.5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-extrabold text-[#1c355e] uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-[#fdbb11]">event_upcoming</span>
+                    1. Filtros de Eventos y Reservas de Aulas
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+                  <div>
+                    <label className="block font-bold text-[#44464e] uppercase mb-1">Desde</label>
+                    <input
+                      type="date"
+                      value={filtrosExport.fechaInicio}
+                      onChange={(e) => setFiltrosExport({ ...filtrosExport, fechaInicio: e.target.value })}
+                      className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-[#44464e] uppercase mb-1">Hasta</label>
+                    <input
+                      type="date"
+                      value={filtrosExport.fechaFin}
+                      onChange={(e) => setFiltrosExport({ ...filtrosExport, fechaFin: e.target.value })}
+                      className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-[#44464e] uppercase mb-1">Aula</label>
+                    <select
+                      value={filtrosExport.aula}
+                      onChange={(e) => setFiltrosExport({ ...filtrosExport, aula: e.target.value })}
+                      className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
+                    >
+                      <option value="todas">Todas las aulas</option>
+                      {aulasLocales.map((a) => (
+                        <option key={a.id || a.nombre} value={a.nombre}>{a.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-[#44464e] uppercase mb-1">Tipo de Evento</label>
+                    <select
+                      value={filtrosExport.tipo}
+                      onChange={(e) => setFiltrosExport({ ...filtrosExport, tipo: e.target.value })}
+                      className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
+                    >
+                      <option value="todos">Todos los tipos</option>
+                      <option value="Conferencia">Conferencia</option>
+                      <option value="Junta">Junta</option>
+                      <option value="Taller">Taller</option>
+                      <option value="Examen">Examen</option>
+                      <option value="Reunión">Reunión</option>
+                      <option value="Evento Especial">Evento Especial</option>
+                      <option value="Otro">Otro</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-[#44464e] uppercase mb-1">Estado</label>
+                    <select
+                      value={filtrosExport.estado}
+                      onChange={(e) => setFiltrosExport({ ...filtrosExport, estado: e.target.value })}
+                      className="w-full px-3 py-2.5 bg-white border border-[#c5c6cf]/50 rounded-xl text-sm outline-none focus:border-[#1c355e] font-medium cursor-pointer"
+                    >
+                      <option value="todos">Todos los estados</option>
+                      <option value="Programado">Programado</option>
+                      <option value="En curso">En curso</option>
+                      <option value="Finalizado">Finalizado</option>
+                      <option value="Cancelado">Cancelado</option>
+                    </select>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#75777f] italic flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[14px] text-blue-600">info</span>
+                  Deja los filtros vacíos para exportar todo el historial de eventos, o selecciona un rango de fechas para acotar el reporte.
+                </p>
+              </div>
+
+              {/* SECCIÓN 2: Acciones */}
+              <div>
+                <p className="text-[10px] font-extrabold text-[#75777f] uppercase tracking-wider mb-3">2. Acciones</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <button
+                    disabled={exportando}
+                    onClick={() => handleExportarDesdePanel('pdf')}
+                    className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-[#c5c6cf]/40 hover:border-red-300 hover:bg-red-50/50 transition-all cursor-pointer group disabled:opacity-50"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center group-hover:bg-red-100 transition-colors">
+                      <span className="material-symbols-outlined text-[22px]">picture_as_pdf</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Descargar PDF</span>
+                  </button>
+
+                  <button
+                    disabled={exportando}
+                    onClick={() => handleExportarDesdePanel('excel')}
+                    className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-[#c5c6cf]/40 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all cursor-pointer group disabled:opacity-50"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
+                      <span className="material-symbols-outlined text-[22px]">table_chart</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Descargar Excel</span>
+                  </button>
+
+                  <button
+                    onClick={() => setMostrarFormEmail(!mostrarFormEmail)}
+                    className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all cursor-pointer group ${mostrarFormEmail
+                        ? 'border-blue-400 bg-blue-50/80 ring-2 ring-blue-200/50'
+                        : 'border-[#c5c6cf]/40 hover:border-blue-300 hover:bg-blue-50/50'
+                      }`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${mostrarFormEmail ? 'bg-blue-200 text-blue-700' : 'bg-blue-50 text-blue-600 group-hover:bg-blue-100'}`}>
+                      <span className="material-symbols-outlined text-[22px]">mail</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Enviar Correo</span>
+                  </button>
+
+                  <button
+                    onClick={handleImprimirEventos}
+                    className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-[#c5c6cf]/40 hover:border-slate-300 hover:bg-slate-50/50 transition-all cursor-pointer group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-slate-50 text-slate-600 flex items-center justify-center group-hover:bg-slate-100 transition-colors">
+                      <span className="material-symbols-outlined text-[22px]">print</span>
+                    </div>
+                    <span className="text-xs font-bold text-[#1b1c1e]">Imprimir</span>
+                  </button>
+                </div>
+              </div>
+
+              {exportando && (
+                <div className="bg-amber-50 border border-amber-200/50 rounded-2xl p-3 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px] text-amber-600 animate-spin">progress_activity</span>
+                  <span className="text-xs font-bold text-amber-800">Generando reporte, por favor espera...</span>
+                </div>
+              )}
+
+              {/* SECCIÓN 3: Formulario de Correo */}
+              {mostrarFormEmail && (
+                <div className="bg-[#faf9fc] border border-blue-200/50 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[14px]">mail</span>
+                      Enviar Reporte por Correo Electrónico
+                    </p>
+                    <button type="button" onClick={() => setMostrarFormEmail(false)} className="text-[#75777f] hover:text-[#44464e] transition-colors cursor-pointer">
+                      <span className="material-symbols-outlined text-[18px]">expand_less</span>
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleEnviarEmailEventos} className="space-y-3 text-xs">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="block font-bold text-[#44464e] uppercase">Destinatario(s) *</label>
+                        {usuariosRegistrados.length > 0 && (
+                          <button type="button" onClick={() => setMostrarSugerenciasEmails(!mostrarSugerenciasEmails)} className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer">
+                            <span className="material-symbols-outlined text-[14px]">how_to_reg</span>
+                            {mostrarSugerenciasEmails ? 'Ocultar usuarios' : `Ver registrados (${usuariosRegistrados.length})`}
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Escribe correos separados por coma..."
+                        value={formEmail.destinatarios}
+                        onFocus={() => setCampoDestino('destinatarios')}
+                        onChange={(e) => setFormEmail({ ...formEmail, destinatarios: e.target.value })}
+                        className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-sm outline-none transition-all font-medium ${campoDestino === 'destinatarios' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'}`}
+                      />
+                      {renderBadgesCampo('destinatarios', formEmail.destinatarios)}
+
+                      {mostrarSugerenciasEmails && usuariosRegistrados.length > 0 && (
+                        <div className="mt-2 p-2 bg-blue-50/80 border border-blue-200/90 rounded-xl space-y-1.5">
+                          <p className="text-[10px] font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px] text-blue-600">verified_user</span>
+                            Usuarios Registrados:
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {usuariosRegistrados.map((user) => {
+                              const correo = user.correo || user.email || '';
+                              const yaAgregado = formEmail[campoDestino]?.split(',').map(e => e.trim()).includes(correo);
+                              return (
+                                <button
+                                  key={correo}
+                                  type="button"
+                                  onClick={() => {
+                                    const actual = formEmail[campoDestino] || '';
+                                    if (!yaAgregado) {
+                                      const nuevo = actual ? `${actual}, ${correo}` : correo;
+                                      setFormEmail({ ...formEmail, [campoDestino]: nuevo });
+                                    }
+                                  }}
+                                  className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all border flex items-center gap-1 cursor-pointer ${yaAgregado ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-900 border-blue-200 hover:bg-blue-100/80'}`}
+                                >
+                                  <span className="material-symbols-outlined text-[12px]">{yaAgregado ? 'check_circle' : 'add_circle'}</span>
+                                  {user.nombre || correo}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-bold text-[#44464e] uppercase mb-1">CC</label>
+                        <input type="text" placeholder="copia@ula.edu.mx" value={formEmail.cc} onFocus={() => setCampoDestino('cc')} onChange={(e) => setFormEmail({ ...formEmail, cc: e.target.value })} className={`w-full px-3 py-2 bg-white border rounded-xl text-xs outline-none transition-all ${campoDestino === 'cc' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'}`} />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-[#44464e] uppercase mb-1">CCO</label>
+                        <input type="text" placeholder="oculta@ula.edu.mx" value={formEmail.cco} onFocus={() => setCampoDestino('cco')} onChange={(e) => setFormEmail({ ...formEmail, cco: e.target.value })} className={`w-full px-3 py-2 bg-white border rounded-xl text-xs outline-none transition-all ${campoDestino === 'cco' ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-[#c5c6cf]/50'}`} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Asunto</label>
+                      <input type="text" required value={formEmail.asunto} onChange={(e) => setFormEmail({ ...formEmail, asunto: e.target.value })} className="w-full px-3 py-2 bg-white border border-[#c5c6cf]/50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-600/20 font-medium" />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#44464e] uppercase mb-1">Mensaje</label>
+                      <textarea rows="2" placeholder="Escribe una nota..." value={formEmail.mensaje} onChange={(e) => setFormEmail({ ...formEmail, mensaje: e.target.value })} className="w-full px-3 py-2 bg-white border border-[#c5c6cf]/50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-600/20"></textarea>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border border-[#c5c6cf]/30 flex items-center gap-4">
+                      <p className="font-bold text-[#1c355e] uppercase text-[10px]">Adjuntar:</p>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={formEmail.adjuntar_pdf} onChange={(e) => setFormEmail({ ...formEmail, adjuntar_pdf: e.target.checked })} className="w-4 h-4 rounded text-blue-600" />
+                        <span className="font-bold text-gray-700 text-xs">PDF</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={formEmail.adjuntar_excel} onChange={(e) => setFormEmail({ ...formEmail, adjuntar_excel: e.target.checked })} className="w-4 h-4 rounded text-emerald-600" />
+                        <span className="font-bold text-gray-700 text-xs">Excel</span>
+                      </label>
+                    </div>
+
+                    <div className="flex gap-3 pt-1">
+                      <button type="button" onClick={() => setMostrarFormEmail(false)} className="flex-1 py-2.5 rounded-xl border border-[#c5c6cf]/50 font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-all cursor-pointer">
+                        Cancelar
+                      </button>
+                      <button type="submit" disabled={enviandoEmail} className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer">
+                        <span className="material-symbols-outlined text-[16px]">send</span>
+                        {enviandoEmail ? 'Enviando...' : 'Enviar Reporte'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-[#c5c6cf]/30 p-4 flex justify-end shrink-0">
+              <button onClick={() => setMostrarCentroExportacion(false)} className="px-5 py-2 rounded-xl border border-[#c5c6cf]/50 text-xs font-bold text-[#44464e] hover:bg-[#f4f3f6] transition-colors cursor-pointer">
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

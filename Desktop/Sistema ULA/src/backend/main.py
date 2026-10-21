@@ -8256,6 +8256,469 @@ def api_listar_eventos(
         connection.close()
 
 
+def _consultar_eventos_db(
+    busqueda: Optional[str] = None,
+    estado: Optional[str] = None,
+    tipo_evento: Optional[str] = None,
+    aula: Optional[str] = None,
+    fecha: Optional[str] = None,
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None
+):
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            query = "SELECT * FROM eventos_aulas WHERE 1=1"
+            params = []
+
+            if estado and estado != "todos":
+                query += " AND estado = %s"
+                params.append(estado)
+            if tipo_evento and tipo_evento != "todos":
+                query += " AND tipo_evento = %s"
+                params.append(tipo_evento)
+            if aula and aula != "todas":
+                query += " AND aula_nombre = %s"
+                params.append(aula)
+            if fecha_inicio:
+                query += " AND fecha >= %s"
+                params.append(fecha_inicio)
+            if fecha_fin:
+                query += " AND fecha <= %s"
+                params.append(fecha_fin)
+            if fecha and not fecha_inicio and not fecha_fin:
+                query += " AND fecha = %s"
+                params.append(fecha)
+            if busqueda:
+                b = f"%{busqueda.strip().lower()}%"
+                query += " AND (LOWER(nombre_evento) LIKE %s OR LOWER(responsable) LIKE %s OR LOWER(correo) LIKE %s OR LOWER(aula_nombre) LIKE %s)"
+                params.extend([b, b, b, b])
+
+            query += " ORDER BY fecha DESC, hora_inicio ASC"
+            cursor.execute(query, params)
+            return cursor.fetchall()
+    finally:
+        connection.close()
+
+
+def _generar_bytes_eventos_excel(rows, titulo_extra=""):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Historial de Eventos"
+
+    header_font = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+    header_fill = PatternFill(start_color='1C355E', end_color='1C355E', fill_type='solid')
+    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    cell_align_left = Alignment(horizontal='left', vertical='center')
+    cell_align_center = Alignment(horizontal='center', vertical='center')
+    thin_border = Border(
+        left=Side(style='thin', color='D0D0D0'),
+        right=Side(style='thin', color='D0D0D0'),
+        top=Side(style='thin', color='D0D0D0'),
+        bottom=Side(style='thin', color='D0D0D0')
+    )
+
+    title_font = Font(name='Calibri', bold=True, size=15, color='1C355E')
+    subtitle_font = Font(name='Calibri', size=10, color='666666')
+
+    ws.merge_cells('A1:I1')
+    ws['A1'] = "SIPREF — Agenda e Historial de Eventos y Reservas de Aulas"
+    ws['A1'].font = title_font
+    ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+
+    hoy_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+    ws.merge_cells('A2:I2')
+    extra_txt = f"  |  Filtro: {titulo_extra}" if titulo_extra else ""
+    ws['A2'] = f"Reporte generado el: {hoy_str}  |  Total de eventos: {len(rows)}{extra_txt}"
+    ws['A2'].font = subtitle_font
+    ws['A2'].alignment = Alignment(horizontal='center')
+
+    headers = [
+        'ID', 'Fecha', 'Horario', 'Aula', 'Tipo de Evento',
+        'Nombre del Evento', 'Responsable', 'Correo de Contacto', 'Estado'
+    ]
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = thin_border
+    ws.row_dimensions[4].height = 28
+
+    estado_colors = {
+        'en curso': {'bg': 'E0F2FE', 'fg': '0369A1'},
+        'programado': {'bg': 'EEF2FF', 'fg': '4338CA'},
+        'finalizado': {'bg': 'F1F5F9', 'fg': '475569'},
+        'cancelado': {'bg': 'FEE2E2', 'fg': 'B91C1C'}
+    }
+
+    for row_idx, r in enumerate(rows, 5):
+        f_str = str(r['fecha'])
+        h_ini = _formatear_hora_hhmm(r['hora_inicio'])
+        h_fin = _formatear_hora_hhmm(r['hora_fin'])
+        est = str(r.get('estado', 'Programado'))
+        est_lower = est.lower()
+
+        vals = [
+            r['id'],
+            f_str,
+            f"{h_ini} - {h_fin}",
+            r['aula_nombre'],
+            r['tipo_evento'],
+            r['nombre_evento'],
+            r['responsable'],
+            r.get('correo', ''),
+            est
+        ]
+
+        for col_idx, val in enumerate(vals, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.font = Font(name='Calibri', size=10)
+            cell.border = thin_border
+            if col_idx in (1, 2, 3, 9):
+                cell.alignment = cell_align_center
+            else:
+                cell.alignment = cell_align_left
+
+            if col_idx == 9 and est_lower in estado_colors:
+                cfg = estado_colors[est_lower]
+                cell.fill = PatternFill(start_color=cfg['bg'], end_color=cfg['bg'], fill_type='solid')
+                cell.font = Font(name='Calibri', bold=True, size=10, color=cfg['fg'])
+
+        ws.row_dimensions[row_idx].height = 22
+
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.row < 4:
+                continue
+            val_str = str(cell.value or '')
+            max_len = max(max_len, len(val_str))
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+
+def _generar_bytes_eventos_pdf(rows, titulo_extra=""):
+    output = io.BytesIO()
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=landscape(letter),
+        rightMargin=25,
+        leftMargin=25,
+        topMargin=25,
+        bottomMargin=25
+    )
+    elements = []
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        name="EvTitle",
+        parent=styles['Heading1'],
+        alignment=1,
+        textColor=colors.HexColor("#1c355e"),
+        fontSize=16,
+        fontName="Helvetica-Bold",
+        spaceAfter=4
+    )
+    subtitle_style = ParagraphStyle(
+        name="EvSubtitle",
+        parent=styles['Normal'],
+        alignment=1,
+        textColor=colors.HexColor("#64748b"),
+        fontSize=10,
+        spaceAfter=15
+    )
+    cell_style = ParagraphStyle(
+        name="EvCell",
+        parent=styles['Normal'],
+        fontSize=8.5,
+        leading=11
+    )
+    cell_bold_style = ParagraphStyle(
+        name="EvCellBold",
+        parent=styles['Normal'],
+        fontSize=8.5,
+        leading=11,
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#1c355e")
+    )
+    cell_header_style = ParagraphStyle(
+        name="EvHeader",
+        parent=styles['Normal'],
+        fontSize=9,
+        leading=12,
+        fontName="Helvetica-Bold",
+        textColor=colors.white,
+        alignment=1
+    )
+
+    elements.append(Paragraph("SIPREF — Agenda e Historial de Eventos", title_style))
+    hoy_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+    extra_txt = f" &nbsp;|&nbsp; Filtro: {titulo_extra}" if titulo_extra else ""
+    elements.append(Paragraph(f"Fecha de reporte: {hoy_str} &nbsp;|&nbsp; Total de eventos: {len(rows)}{extra_txt}", subtitle_style))
+
+    table_data = [[
+        Paragraph("Fecha", cell_header_style),
+        Paragraph("Horario", cell_header_style),
+        Paragraph("Aula", cell_header_style),
+        Paragraph("Tipo", cell_header_style),
+        Paragraph("Evento", cell_header_style),
+        Paragraph("Responsable", cell_header_style),
+        Paragraph("Estado", cell_header_style)
+    ]]
+
+    for r in rows:
+        f_str = str(r['fecha'])
+        h_ini = _formatear_hora_hhmm(r['hora_inicio'])
+        h_fin = _formatear_hora_hhmm(r['hora_fin'])
+        est = str(r.get('estado', 'Programado'))
+        
+        table_data.append([
+            Paragraph(f_str, cell_style),
+            Paragraph(f"{h_ini} - {h_fin}", cell_style),
+            Paragraph(str(r['aula_nombre']), cell_bold_style),
+            Paragraph(str(r['tipo_evento']), cell_style),
+            Paragraph(str(r['nombre_evento']), cell_bold_style),
+            Paragraph(str(r['responsable']), cell_style),
+            Paragraph(est, cell_style)
+        ])
+
+    col_widths = [65, 75, 80, 85, 185, 120, 80]
+    t = Table(table_data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1c355e")),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]))
+
+    elements.append(t)
+    doc.build(elements)
+    output.seek(0)
+    return output.getvalue()
+
+
+@app.get("/api/eventos/exportar/excel")
+def api_exportar_eventos_excel(
+    busqueda: Optional[str] = None,
+    estado: Optional[str] = None,
+    tipo_evento: Optional[str] = None,
+    aula: Optional[str] = None,
+    fecha: Optional[str] = None,
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None
+):
+    """Exporta el historial de eventos a un archivo Excel con formato y diseño corporativo SIPREF."""
+    rows = _consultar_eventos_db(busqueda, estado, tipo_evento, aula, fecha, fecha_inicio, fecha_fin)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No se encontraron eventos para exportar con los filtros seleccionados.")
+
+    titulo_rango = ""
+    if fecha_inicio and fecha_fin:
+        titulo_rango = f"{fecha_inicio} al {fecha_fin}"
+    elif fecha_inicio:
+        titulo_rango = f"Desde {fecha_inicio}"
+    elif fecha_fin:
+        titulo_rango = f"Hasta {fecha_fin}"
+
+    content = _generar_bytes_eventos_excel(rows, titulo_rango)
+    fecha_archivo = datetime.now().strftime("%Y%m%d_%H%M")
+    return Response(
+        content=content,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename="Historial_Eventos_{fecha_archivo}.xlsx"'}
+    )
+
+
+@app.get("/api/eventos/exportar/pdf")
+def api_exportar_eventos_pdf(
+    busqueda: Optional[str] = None,
+    estado: Optional[str] = None,
+    tipo_evento: Optional[str] = None,
+    aula: Optional[str] = None,
+    fecha: Optional[str] = None,
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None
+):
+    """Exporta el historial de eventos a un documento PDF profesional."""
+    rows = _consultar_eventos_db(busqueda, estado, tipo_evento, aula, fecha, fecha_inicio, fecha_fin)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No se encontraron eventos para exportar con los filtros seleccionados.")
+
+    titulo_rango = ""
+    if fecha_inicio and fecha_fin:
+        titulo_rango = f"{fecha_inicio} al {fecha_fin}"
+    elif fecha_inicio:
+        titulo_rango = f"Desde {fecha_inicio}"
+    elif fecha_fin:
+        titulo_rango = f"Hasta {fecha_fin}"
+
+    content = _generar_bytes_eventos_pdf(rows, titulo_rango)
+    fecha_archivo = datetime.now().strftime("%Y%m%d_%H%M")
+    return Response(
+        content=content,
+        media_type='application/pdf',
+        headers={'Content-Disposition': f'attachment; filename="Historial_Eventos_{fecha_archivo}.pdf"'}
+    )
+
+
+class ExportarEventosEmailRequest(BaseModel):
+    destinatarios: str
+    cc: Optional[str] = ""
+    cco: Optional[str] = ""
+    asunto: Optional[str] = "Reporte de Reservas y Eventos — SIPREF"
+    mensaje: Optional[str] = ""
+    adjuntar_pdf: Optional[bool] = True
+    adjuntar_excel: Optional[bool] = False
+    fecha_inicio: Optional[str] = None
+    fecha_fin: Optional[str] = None
+    aula: Optional[str] = None
+    estado: Optional[str] = None
+    tipo_evento: Optional[str] = None
+    busqueda: Optional[str] = None
+    usuario_nombre: Optional[str] = "Prefectura"
+    usuario_correo: Optional[str] = ""
+
+
+@app.post("/api/eventos/exportar/email")
+def api_exportar_eventos_email(req: ExportarEventosEmailRequest, request: Request):
+    """Genera los reportes de eventos solicitados y los envía por correo electrónico."""
+    destinos = [d.strip() for d in req.destinatarios.replace(';', ',').split(',') if d.strip()]
+    if not destinos:
+        raise HTTPException(status_code=400, detail="Debe especificar al menos un correo destinatario.")
+
+    cc_list = [d.strip() for d in (req.cc or '').replace(';', ',').split(',') if d.strip()]
+    cco_list = [d.strip() for d in (req.cco or '').replace(';', ',').split(',') if d.strip()]
+
+    rows = _consultar_eventos_db(
+        busqueda=req.busqueda,
+        estado=req.estado,
+        tipo_evento=req.tipo_evento,
+        aula=req.aula,
+        fecha_inicio=req.fecha_inicio,
+        fecha_fin=req.fecha_fin
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No se encontraron eventos para exportar con los filtros seleccionados.")
+
+    titulo_rango = ""
+    if req.fecha_inicio and req.fecha_fin:
+        titulo_rango = f"{req.fecha_inicio} al {req.fecha_fin}"
+    elif req.fecha_inicio:
+        titulo_rango = f"Desde {req.fecha_inicio}"
+    elif req.fecha_fin:
+        titulo_rango = f"Hasta {req.fecha_fin}"
+
+    fecha_str = datetime.now().strftime("%Y-%m-%d")
+    pdf_bytes = None
+    xlsx_bytes = None
+    id_pdf = None
+    id_excel = None
+    filename_pdf = f"Historial_Eventos_{fecha_str}.pdf"
+    filename_xlsx = f"Historial_Eventos_{fecha_str}.xlsx"
+
+    if req.adjuntar_pdf:
+        pdf_bytes = _generar_bytes_eventos_pdf(rows, titulo_rango)
+        id_pdf = _guardar_reporte_compartido(filename_pdf, "pdf", pdf_bytes)
+
+    if req.adjuntar_excel:
+        xlsx_bytes = _generar_bytes_eventos_excel(rows, titulo_rango)
+        id_excel = _guardar_reporte_compartido(filename_xlsx, "xlsx", xlsx_bytes)
+
+    backend_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("BACKEND_URL") or str(request.base_url).rstrip('/')
+    if backend_url.endswith('/'):
+        backend_url = backend_url[:-1]
+
+    botones_html = ""
+    if id_pdf:
+        url_pdf = f"{backend_url}/api/reportes/descargar/{id_pdf}"
+        botones_html += f"""
+        <a href="{url_pdf}" style="background-color: #1c355e; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 6px; font-size: 14px;">
+            📄 Descargar Reporte PDF
+        </a>
+        """
+    if id_excel:
+        url_excel = f"{backend_url}/api/reportes/descargar/{id_excel}"
+        botones_html += f"""
+        <a href="{url_excel}" style="background-color: #16a34a; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 6px; font-size: 14px;">
+            📊 Descargar Reporte Excel
+        </a>
+        """
+
+    body_html = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; color: #333; background-color: #f4f6fb; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 24px; border-radius: 12px; border: 1px solid #e0e6ed;">
+            <h2 style="color: #1c355e; margin-top: 0; border-bottom: 2px solid #1c355e; padding-bottom: 12px;">
+                SIPREF — Agenda e Historial de Eventos
+            </h2>
+            <p style="font-size: 15px;">Hola,</p>
+            <p style="font-size: 14px; color: #475569; line-height: 1.6;">
+                {req.mensaje or 'El reporte solicitado de eventos y reservas de aulas está adjunto y disponible para su descarga.'}
+            </p>
+            <div style="margin: 24px 0; text-align: center;">
+                {botones_html}
+            </div>
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+            <p style="font-size: 12px; color: #64748b; margin-bottom: 0;">
+                Reporte generado por <strong>{req.usuario_nombre}</strong> el {datetime.now().strftime('%d/%m/%Y %H:%M')}. Total de registros: {len(rows)}.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Enviar por correo SMTP si está disponible
+    sender_email = os.getenv("SMTP_USER", "").strip() or "soporte.sipref.software@gmail.com"
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_pass = (os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")).strip()
+
+    try:
+        from email.mime.base import MIMEBase
+        from email import encoders
+
+        msg = MIMEMultipart()
+        msg['From'] = f"SIPREF Eventos <{sender_email}>"
+        msg['To'] = ", ".join(destinos)
+        if cc_list: msg['Cc'] = ", ".join(cc_list)
+        msg['Subject'] = req.asunto or "Reporte de Reservas y Eventos — SIPREF"
+        msg.attach(MIMEText(body_html, 'html'))
+
+        if pdf_bytes:
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(pdf_bytes)
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{filename_pdf}"')
+            msg.attach(part)
+
+        if xlsx_bytes:
+            part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            part.set_payload(xlsx_bytes)
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{filename_xlsx}"')
+            msg.attach(part)
+
+        all_recipients = list(destinos) + list(cc_list) + list(cco_list)
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10.0) as server:
+            server.starttls()
+            if smtp_pass:
+                server.login(sender_email, smtp_pass)
+            server.sendmail(sender_email, all_recipients, msg.as_string())
+    except Exception as e:
+        print(f"Aviso SMTP al enviar reporte de eventos: {e}")
+
+    return {"message": "Reporte de eventos generado y enviado exitosamente", "destinatarios": len(destinos)}
+
+
 @app.get("/api/eventos-hoy")
 def api_eventos_hoy():
     """Devuelve las reservas de eventos vigentes u hoy para mostrar en las tarjetas de Gestión de Aulas."""
