@@ -241,6 +241,16 @@ def migrar_columnas_verificacion():
                     fecha DATETIME DEFAULT NOW(),
                     INDEX idx_evento (evento_id)
                 )""",
+                """CREATE TABLE IF NOT EXISTS usuarios_pendientes (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    nombre VARCHAR(150) NOT NULL,
+                    correo VARCHAR(200) NOT NULL UNIQUE,
+                    turno VARCHAR(50) NOT NULL,
+                    password VARCHAR(255) NOT NULL,
+                    verification_code VARCHAR(6) NOT NULL,
+                    verification_code_expira DATETIME NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )""",
             ]:
                 try:
                     cursor.execute(sentencia)
@@ -2546,24 +2556,25 @@ def registrar_usuario(datos: RegistroUsuario, background_tasks: BackgroundTasks)
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # 1. Verificar si ya existe en usuarios (usuario verificado y activo)
             cursor.execute("SELECT id, is_verified FROM usuarios WHERE correo = %s", (correo_limpio,))
             usuario_existente = cursor.fetchone()
             
-            if usuario_existente:
-                if usuario_existente.get('is_verified'):
-                    raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado y verificado. Inicia sesión.")
-                else:
-                    # Actualizar datos y generar nuevo código para cuenta aún no verificada
-                    cursor.execute("""
-                        UPDATE usuarios 
-                        SET nombre = %s, turno = %s, password = %s, verification_code = %s, verification_code_expira = %s 
-                        WHERE id = %s
-                    """, (datos.nombre.strip(), datos.turno, password_hasheada, codigo_otp, expira_otp, usuario_existente['id']))
-            else:
-                cursor.execute("""
-                    INSERT INTO usuarios (nombre, correo, turno, password, is_verified, verification_code, verification_code_expira)
-                    VALUES (%s, %s, %s, %s, FALSE, %s, %s)
-                """, (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada, codigo_otp, expira_otp))
+            if usuario_existente and usuario_existente.get('is_verified'):
+                raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado y verificado. Inicia sesión.")
+
+            # 2. Guardar únicamente en usuarios_pendientes (NO registrar en usuarios hasta verificar correo)
+            cursor.execute("""
+                INSERT INTO usuarios_pendientes (nombre, correo, turno, password, verification_code, verification_code_expira, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON DUPLICATE KEY UPDATE
+                    nombre = VALUES(nombre),
+                    turno = VALUES(turno),
+                    password = VALUES(password),
+                    verification_code = VALUES(verification_code),
+                    verification_code_expira = VALUES(verification_code_expira),
+                    created_at = NOW()
+            """, (datos.nombre.strip(), correo_limpio, datos.turno, password_hasheada, codigo_otp, expira_otp))
 
         connection.commit()
     except HTTPException:
@@ -2671,7 +2682,9 @@ def listar_usuarios():
                            WHEN ultima_conexion IS NOT NULL AND ultima_conexion >= NOW() - INTERVAL 4 MINUTE THEN 1 
                            ELSE 0 
                        END as en_linea
-                FROM usuarios ORDER BY nombre
+                FROM usuarios 
+                WHERE is_verified = 1
+                ORDER BY nombre
             """)
             usuarios = cursor.fetchall()
         result = []
@@ -2763,25 +2776,41 @@ def verificar_correo(datos: VerificacionCorreo):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            # 1. Buscar en usuarios_pendientes
             cursor.execute(
-                "SELECT id, verification_code, verification_code_expira, is_verified FROM usuarios WHERE correo = %s",
+                "SELECT id, nombre, correo, turno, password, verification_code, verification_code_expira FROM usuarios_pendientes WHERE correo = %s",
                 (correo_limpio,)
             )
-            usuario = cursor.fetchone()
+            pendiente = cursor.fetchone()
 
-            if not usuario:
-                raise HTTPException(status_code=404, detail="Usuario no encontrado.")
-            if usuario['is_verified']:
-                return {"message": "El correo ya estaba verificado."}
-            if usuario.get('verification_code_expira') and datetime.now() > usuario['verification_code_expira']:
+            if not pendiente:
+                # Comprobar si ya existe en usuarios y ya está verificado
+                cursor.execute("SELECT id, is_verified FROM usuarios WHERE correo = %s", (correo_limpio,))
+                existente = cursor.fetchone()
+                if existente and existente.get('is_verified'):
+                    return {"success": True, "message": "El correo ya estaba verificado. Ya puedes iniciar sesión."}
+                raise HTTPException(status_code=404, detail="No se encontró una solicitud de registro pendiente para este correo.")
+
+            if pendiente.get('verification_code_expira') and datetime.now() > pendiente['verification_code_expira']:
                 raise HTTPException(status_code=400, detail="El código ha expirado. Regístrate de nuevo para recibir un código actualizado.")
-            if usuario['verification_code'] != datos.codigo.strip():
+
+            if pendiente['verification_code'] != datos.codigo.strip():
                 raise HTTPException(status_code=400, detail="Código incorrecto. Inténtalo de nuevo.")
 
-            cursor.execute(
-                "UPDATE usuarios SET is_verified = TRUE, verification_code = NULL, verification_code_expira = NULL WHERE id = %s",
-                (usuario['id'],)
-            )
+            # Código correcto: registrar ahora en la tabla oficial usuarios
+            cursor.execute("""
+                INSERT INTO usuarios (nombre, correo, turno, password, is_verified, created_at)
+                VALUES (%s, %s, %s, %s, 1, NOW())
+                ON DUPLICATE KEY UPDATE
+                    nombre = VALUES(nombre),
+                    turno = VALUES(turno),
+                    password = VALUES(password),
+                    is_verified = 1
+            """, (pendiente['nombre'], pendiente['correo'], pendiente['turno'], pendiente['password']))
+
+            # Eliminar el registro pendiente
+            cursor.execute("DELETE FROM usuarios_pendientes WHERE correo = %s", (correo_limpio,))
+
         connection.commit()
         return {"success": True, "message": "Correo verificado correctamente. Ya puedes iniciar sesión."}
     except HTTPException:
@@ -2798,23 +2827,28 @@ def reenviar_codigo_verificacion(datos: ReenviarCodigo, background_tasks: Backgr
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id, nombre, is_verified FROM usuarios WHERE correo = %s", (correo_limpio,))
+            # 1. Comprobar si ya está verificado en usuarios
+            cursor.execute("SELECT id, is_verified FROM usuarios WHERE correo = %s", (correo_limpio,))
             usuario = cursor.fetchone()
-            if not usuario:
-                raise HTTPException(status_code=404, detail="Usuario no encontrado.")
-            if usuario.get('is_verified'):
+            if usuario and usuario.get('is_verified'):
                 return {"success": True, "message": "Tu cuenta ya está verificada. Puedes iniciar sesión."}
+
+            # 2. Buscar en usuarios_pendientes
+            cursor.execute("SELECT id, nombre FROM usuarios_pendientes WHERE correo = %s", (correo_limpio,))
+            pendiente = cursor.fetchone()
+            if not pendiente:
+                raise HTTPException(status_code=404, detail="No hay ningún registro pendiente para este correo.")
 
             nuevo_codigo = f"{secrets.randbelow(900000) + 100000}"
             expira = datetime.now() + timedelta(minutes=15)
 
             cursor.execute(
-                "UPDATE usuarios SET verification_code = %s, verification_code_expira = %s WHERE id = %s",
-                (nuevo_codigo, expira, usuario['id'])
+                "UPDATE usuarios_pendientes SET verification_code = %s, verification_code_expira = %s WHERE id = %s",
+                (nuevo_codigo, expira, pendiente['id'])
             )
             connection.commit()
 
-        background_tasks.add_task(enviar_correo_otp, correo_limpio, nuevo_codigo, usuario['nombre'])
+        background_tasks.add_task(enviar_correo_otp, correo_limpio, nuevo_codigo, pendiente['nombre'])
         return {"success": True, "message": "Nuevo código enviado a tu correo institucional."}
     finally:
         connection.close()
@@ -2863,6 +2897,14 @@ def login_usuario(datos: LoginUsuario):
                             break
 
             if not usuario or not password_valida:
+                # Comprobar si está en usuarios_pendientes para dar mensaje claro
+                cursor.execute("SELECT id FROM usuarios_pendientes WHERE correo = %s", (correo_limpio,))
+                pendiente = cursor.fetchone()
+                if pendiente:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Tu cuenta aún no ha sido verificada. Debes ingresar el código de 6 dígitos enviado a tu correo institucional para activarla."
+                    )
                 raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
 
             if not bool(usuario.get('is_verified', True)):
