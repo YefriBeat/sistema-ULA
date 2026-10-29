@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
+import { useTime } from './TimeContext';
 
 export default function AgendarEventoModal({
   isOpen,
@@ -9,6 +10,7 @@ export default function AgendarEventoModal({
   aulasList = [],
   usuarioLogueado = 'Prefectura'
 }) {
+  const ahora = useTime();
   const [formData, setFormData] = useState({
     tipo_evento: 'Conferencia',
     nombre_evento: '',
@@ -72,7 +74,11 @@ export default function AgendarEventoModal({
         })));
       }
     } else {
-      const hoyISO = new Date().toISOString().slice(0, 10);
+      const refDate = ahora instanceof Date ? ahora : new Date();
+      const anio = refDate.getFullYear();
+      const mes = String(refDate.getMonth() + 1).padStart(2, '0');
+      const dia = String(refDate.getDate()).padStart(2, '0');
+      const hoyISO = `${anio}-${mes}-${dia}`;
       const lista = aulasList.length > 0 ? aulasList : aulasInternas;
       setFormData({
         tipo_evento: '',

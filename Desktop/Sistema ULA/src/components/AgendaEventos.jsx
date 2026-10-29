@@ -1,6 +1,39 @@
 import { useState, useEffect, useRef } from 'react';
 import Swal from 'sweetalert2';
 import AgendarEventoModal from './AgendarEventoModal';
+import { useTime } from './TimeContext';
+
+/**
+ * Calcula el estado dinámico de un evento en tiempo real comparando con la hora institucional/actual
+ */
+export function obtenerEstadoEvento(ev, ahoraRef = new Date()) {
+  if (!ev) return 'Programado';
+  if ((ev.estado || '').toLowerCase() === 'cancelado') return 'Cancelado';
+
+  const fStr = String(ev.fecha || '').slice(0, 10);
+  const hIni = String(ev.hora_inicio || '00:00').slice(0, 5);
+  const hFin = String(ev.hora_fin || '00:00').slice(0, 5);
+
+  if (!fStr || !hIni || !hFin) return ev.estado || 'Programado';
+
+  const [y, m, d] = fStr.split('-').map(Number);
+  const [h1, m1] = hIni.split(':').map(Number);
+  const [h2, m2] = hFin.split(':').map(Number);
+
+  if (!y || !m || !d) return ev.estado || 'Programado';
+
+  const dtIni = new Date(y, m - 1, d, h1 || 0, m1 || 0, 0, 0);
+  const dtFin = new Date(y, m - 1, d, h2 || 0, m2 || 0, 0, 0);
+  const tRef = ahoraRef instanceof Date ? ahoraRef.getTime() : new Date(ahoraRef).getTime();
+
+  if (tRef >= dtFin.getTime()) {
+    return 'Finalizado';
+  } else if (tRef >= dtIni.getTime()) {
+    return 'En curso';
+  } else {
+    return 'Programado';
+  }
+}
 
 // Hook reutilizable para mover ventanas modales arrastrando su encabezado
 function useDraggableModal() {
@@ -51,6 +84,7 @@ function useDraggableModal() {
 }
 
 export default function AgendaEventos({ aulasList = [] }) {
+  const ahora = useTime();
   const dragExport = useDraggableModal();
 
   const [eventos, setEventos] = useState([]);
@@ -116,8 +150,8 @@ export default function AgendaEventos({ aulasList = [] }) {
     }
   }, [aulasList]);
 
-  const fetchEventos = async () => {
-    setCargando(true);
+  const fetchEventos = async (silencioso = false) => {
+    if (!silencioso) setCargando(true);
     try {
       let params = new URLSearchParams();
       if (busqueda) params.append('busqueda', busqueda);
@@ -134,12 +168,20 @@ export default function AgendaEventos({ aulasList = [] }) {
     } catch (err) {
       console.error('Error al cargar eventos:', err);
     } finally {
-      setCargando(false);
+      if (!silencioso) setCargando(false);
     }
   };
 
   useEffect(() => {
     fetchEventos();
+  }, [busqueda, filtroEstado, filtroTipo, filtroAula, filtroFecha]);
+
+  // Polling silencioso en segundo plano cada 15 segundos para sincronizar nuevos eventos y mantener BD actualizada
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchEventos(true);
+    }, 15000);
+    return () => clearInterval(timer);
   }, [busqueda, filtroEstado, filtroTipo, filtroAula, filtroFecha]);
 
   const handleVerDetalle = async (ev) => {
@@ -548,7 +590,11 @@ export default function AgendaEventos({ aulasList = [] }) {
         <div className="flex justify-center py-16">
           <span className="material-symbols-outlined animate-spin text-4xl text-[#1c355e]">sync</span>
         </div>
-      ) : eventos.length === 0 ? (
+      ) : eventos.filter(ev => {
+          const est = obtenerEstadoEvento(ev, ahora);
+          if (filtroEstado !== 'todos' && est.toLowerCase() !== filtroEstado.toLowerCase()) return false;
+          return true;
+        }).length === 0 ? (
         <div className="bg-white rounded-3xl border border-[#c5c6cf]/30 p-12 text-center text-slate-400">
           <span className="material-symbols-outlined text-5xl mb-2 text-slate-300">event_busy</span>
           <p className="font-bold text-base text-slate-600">No se encontraron eventos agendados</p>
@@ -556,96 +602,107 @@ export default function AgendaEventos({ aulasList = [] }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {eventos.map((ev) => {
-            const badge = getBadgeEstado(ev.estado);
-            return (
-              <div
-                key={ev.id}
-                className={`bg-white rounded-3xl p-6 border transition-all flex flex-col justify-between space-y-4 ${
-                  ev.estado === 'Cancelado' ? 'border-red-200 bg-red-50/20 opacity-80' : 'border-slate-200 shadow-xs hover:shadow-md'
-                }`}
-              >
-                <div>
-                  {/* CABECERA TARJETA */}
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <span className="px-3 py-1 bg-slate-100 text-slate-700 font-bold text-[11px] rounded-full uppercase tracking-wider">
-                      {ev.tipo_evento}
-                    </span>
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase border flex items-center gap-1 ${badge.cls}`}>
-                      <span className="material-symbols-outlined text-xs">{badge.icon}</span>
-                      {badge.label}
-                    </span>
+          {eventos
+            .filter(ev => {
+              const est = obtenerEstadoEvento(ev, ahora);
+              if (filtroEstado !== 'todos' && est.toLowerCase() !== filtroEstado.toLowerCase()) return false;
+              return true;
+            })
+            .map((ev) => {
+              const estadoEfectivo = obtenerEstadoEvento(ev, ahora);
+              const badge = getBadgeEstado(estadoEfectivo);
+              return (
+                <div
+                  key={ev.id}
+                  className={`bg-white rounded-3xl p-6 border transition-all flex flex-col justify-between space-y-4 ${
+                    estadoEfectivo === 'Cancelado'
+                      ? 'border-red-200 bg-red-50/20 opacity-80'
+                      : estadoEfectivo === 'En curso'
+                      ? 'border-emerald-400 ring-2 ring-emerald-200/70 shadow-md bg-emerald-50/10'
+                      : 'border-slate-200 shadow-xs hover:shadow-md'
+                  }`}
+                >
+                  <div>
+                    {/* CABECERA TARJETA */}
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <span className="px-3 py-1 bg-slate-100 text-slate-700 font-bold text-[11px] rounded-full uppercase tracking-wider">
+                        {ev.tipo_evento}
+                      </span>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase border flex items-center gap-1 ${badge.cls}`}>
+                        <span className="material-symbols-outlined text-xs">{badge.icon}</span>
+                        {badge.label}
+                      </span>
+                    </div>
+
+                    {/* TÍTULO Y AULA */}
+                    <h3 className="text-lg font-bold text-[#1c355e] leading-snug line-clamp-2">
+                      {ev.nombre_evento}
+                    </h3>
+
+                    <div className="mt-3 space-y-2 text-xs font-semibold text-slate-600">
+                      <div className="flex items-center gap-2 text-indigo-900 bg-indigo-50/60 px-3 py-2 rounded-xl">
+                        <span className="material-symbols-outlined text-lg text-indigo-600">meeting_room</span>
+                        <span className="font-bold">Aula {ev.aula_nombre}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base text-slate-400">calendar_month</span>
+                        <span>Fecha: <strong className="text-slate-800">{ev.fecha}</strong></span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base text-slate-400">schedule</span>
+                        <span>Horario: <strong className="text-slate-800">{String(ev.hora_inicio).slice(0, 5)} - {String(ev.hora_fin).slice(0, 5)}</strong></span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base text-slate-400">person</span>
+                        <span className="truncate">Responsable: <strong className="text-slate-800">{ev.responsable}</strong></span>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* TÍTULO Y AULA */}
-                  <h3 className="text-lg font-bold text-[#1c355e] leading-snug line-clamp-2">
-                    {ev.nombre_evento}
-                  </h3>
-
-                  <div className="mt-3 space-y-2 text-xs font-semibold text-slate-600">
-                    <div className="flex items-center gap-2 text-indigo-900 bg-indigo-50/60 px-3 py-2 rounded-xl">
-                      <span className="material-symbols-outlined text-lg text-indigo-600">meeting_room</span>
-                      <span className="font-bold">Aula {ev.aula_nombre}</span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-base text-slate-400">calendar_month</span>
-                      <span>Fecha: <strong className="text-slate-800">{ev.fecha}</strong></span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-base text-slate-400">schedule</span>
-                      <span>Horario: <strong className="text-slate-800">{String(ev.hora_inicio).slice(0, 5)} - {String(ev.hora_fin).slice(0, 5)}</strong></span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-base text-slate-400">person</span>
-                      <span className="truncate">Responsable: <strong className="text-slate-800">{ev.responsable}</strong></span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* ACCIONES TARJETA */}
-                <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <button
-                    onClick={() => handleVerDetalle(ev)}
-                    className="text-xs font-bold text-[#1c355e] hover:bg-slate-100 px-3 py-2 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-base">visibility</span> Detalle / Historial
-                  </button>
-
-                  <div className="flex items-center gap-1">
-                    {ev.estado !== 'Cancelado' && ev.estado !== 'Finalizado' && (
-                      <>
-                        <button
-                          onClick={() => handleEditar(ev)}
-                          className="p-2 text-slate-500 hover:text-[#1c355e] hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
-                          title="Editar evento"
-                        >
-                          <span className="material-symbols-outlined text-lg">edit</span>
-                        </button>
-                        <button
-                          onClick={() => setModalCancelar(ev)}
-                          className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-all cursor-pointer"
-                          title="Cancelar evento"
-                        >
-                          <span className="material-symbols-outlined text-lg">cancel</span>
-                        </button>
-                      </>
-                    )}
+                  {/* ACCIONES TARJETA */}
+                  <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
                     <button
-                      onClick={() => handleEliminarEvento(ev)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
-                      title="Eliminar evento permanentemente"
+                      onClick={() => handleVerDetalle(ev)}
+                      className="text-xs font-bold text-[#1c355e] hover:bg-slate-100 px-3 py-2 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-lg">delete</span>
+                      <span className="material-symbols-outlined text-base">visibility</span> Detalle / Historial
                     </button>
-                  </div>
-                </div>
 
-              </div>
-            );
-          })}
+                    <div className="flex items-center gap-1">
+                      {estadoEfectivo !== 'Cancelado' && estadoEfectivo !== 'Finalizado' && (
+                        <>
+                          <button
+                            onClick={() => handleEditar(ev)}
+                            className="p-2 text-slate-500 hover:text-[#1c355e] hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                            title="Editar evento"
+                          >
+                            <span className="material-symbols-outlined text-lg">edit</span>
+                          </button>
+                          <button
+                            onClick={() => setModalCancelar(ev)}
+                            className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-all cursor-pointer"
+                            title="Cancelar evento"
+                          >
+                            <span className="material-symbols-outlined text-lg">cancel</span>
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={() => handleEliminarEvento(ev)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+                        title="Eliminar evento permanentemente"
+                      >
+                        <span className="material-symbols-outlined text-lg">delete</span>
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+              );
+            })}
         </div>
       )}
 
@@ -736,7 +793,18 @@ export default function AgendaEventos({ aulasList = [] }) {
 
               <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
                 <p className="text-slate-400 font-bold uppercase text-[10px]">Estado</p>
-                <p className="font-bold text-slate-800 text-sm mt-0.5">{eventoDetalle.estado}</p>
+                {(() => {
+                  const estDetalle = obtenerEstadoEvento(eventoDetalle, ahora);
+                  const badgeDetalle = getBadgeEstado(estDetalle);
+                  return (
+                    <div className="mt-1">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase border inline-flex items-center gap-1 ${badgeDetalle.cls}`}>
+                        <span className="material-symbols-outlined text-xs">{badgeDetalle.icon}</span>
+                        {badgeDetalle.label}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">

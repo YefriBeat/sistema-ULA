@@ -495,16 +495,16 @@ export default function VisualBd() {
     return () => clearInterval(interval);
   }, [hoyStr]);
 
-  // Fetch eventos de agenda (en curso y próximos) — polling cada 30s
+  // Fetch eventos de agenda (en curso y próximos) — polling cada 15s
   useEffect(() => {
     const fetchEventosAgenda = () => {
-      fetch('/api/eventos')
+      fetch(`/api/eventos?_t=${Date.now()}`)
         .then(r => r.ok ? r.json() : [])
         .then(data => setEventosAgenda(Array.isArray(data) ? data : []))
         .catch(() => { });
     };
     fetchEventosAgenda();
-    const interval = setInterval(fetchEventosAgenda, 30000);
+    const interval = setInterval(fetchEventosAgenda, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -680,10 +680,10 @@ export default function VisualBd() {
 
       let estadoTiempo;
       if (fStr < hoyYMD) {
-        return; // Pasado -> descartar (solo en curso o próximos)
+        estadoTiempo = 'finalizada';
       } else if (fStr === hoyYMD) {
         if (minsAhora > finMins) {
-          return; // Finalizado hoy -> descartar
+          estadoTiempo = 'finalizada';
         } else if (minsAhora >= inicioMins && minsAhora <= finMins) {
           estadoTiempo = 'en_curso';
         } else {
@@ -800,12 +800,14 @@ export default function VisualBd() {
 
     const eventosFiltrados = filasEventos.filter(ev => {
       const coincideEstado = filtroEstado === 'todas'
-        ? (ev.estadoTiempo === 'en_curso' || ev.estadoTiempo === 'proxima' || ev.estadoTiempo === 'programada')
+        ? true
         : filtroEstado === 'en_curso'
           ? ev.estadoTiempo === 'en_curso'
           : filtroEstado === 'proxima'
             ? (ev.estadoTiempo === 'proxima' || ev.estadoTiempo === 'programada')
-            : false;
+            : filtroEstado === 'finalizada'
+              ? ev.estadoTiempo === 'finalizada' && ev.fecha_evento === hoyYMD
+              : false;
 
       if (!coincideEstado) return false;
 
@@ -815,7 +817,7 @@ export default function VisualBd() {
         ev.asignatura?.toLowerCase().includes(busqueda.toLowerCase()) ||
         ev.tipo_evento?.toLowerCase().includes(busqueda.toLowerCase());
 
-      const coincideHora = filtroHora === '' || getBloqueEstandar(ev.inicio) === filtroHora;
+      const coincideHora = filtroHora === '' || ev.textoHora === filtroHora || getBloqueEstandar(ev.inicio) === filtroHora;
       const coincideDia = filtroDia === '' || ev.diaOriginal === filtroDia;
       const coincideLic = filtroLic === '';
 
@@ -827,21 +829,31 @@ export default function VisualBd() {
       if (a.diaClaseIndex !== b.diaClaseIndex) return (a.diaClaseIndex ?? 99) - (b.diaClaseIndex ?? 99);
       return (a.inicio ?? 0) - (b.inicio ?? 0);
     });
-  }, [todosAgrupados, filasSuplencias, filasEventos, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, filtroPlan, ahora]);
+  }, [todosAgrupados, filasSuplencias, filasEventos, busqueda, filtroLic, filtroAsignatura, filtroHora, filtroDia, filtroEstado, filtroPlan, ahora, hoyStr]);
 
   const datosAgrupados = useMemo(() => datosFiltrados, [datosFiltrados]);
 
   const stats = useMemo(() => {
     const diaHoy = ahora.getDay();
-    const enCurso = todosSegunPlan.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').length;
-    const proximas = todosSegunPlan.filter(c => c.estadoTiempo === 'proxima').length;
-    const finalizadas = todosSegunPlan.filter(c => c.estadoTiempo === 'finalizada' && c.diaClaseIndex === diaHoy).length;
-    const programadas = todosSegunPlan.filter(c => c.estadoTiempo === 'programada').length;
-    const total = todosSegunPlan.length;
-    const docentesEnCurso = new Set(todosSegunPlan.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').map(c => c.docente)).size;
-    const docentesTotales = new Set(todosSegunPlan.map(c => c.docente)).size;
+    const eventosEnCurso = filasEventos.filter(e => e.estadoTiempo === 'en_curso').length;
+    const eventosProximos = filasEventos.filter(e => e.estadoTiempo === 'proxima').length;
+    const eventosFinalizados = filasEventos.filter(e => e.estadoTiempo === 'finalizada' && e.fecha_evento === hoyStr).length;
+    const eventosProgramados = filasEventos.filter(e => e.estadoTiempo === 'programada').length;
+    const enCurso = todosSegunPlan.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').length + eventosEnCurso;
+    const proximas = todosSegunPlan.filter(c => c.estadoTiempo === 'proxima').length + eventosProximos;
+    const finalizadas = todosSegunPlan.filter(c => c.estadoTiempo === 'finalizada' && c.diaClaseIndex === diaHoy).length + eventosFinalizados;
+    const programadas = todosSegunPlan.filter(c => c.estadoTiempo === 'programada').length + eventosProgramados;
+    const total = todosSegunPlan.length + filasEventos.length;
+    const docentesEnCurso = new Set([
+      ...todosSegunPlan.filter(c => c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario').map(c => c.docente),
+      ...filasEventos.filter(e => e.estadoTiempo === 'en_curso').map(e => e.docente)
+    ]).size;
+    const docentesTotales = new Set([
+      ...todosSegunPlan.map(c => c.docente),
+      ...filasEventos.map(e => e.docente)
+    ]).size;
     return { enCurso, proximas, finalizadas, programadas, total, docentesEnCurso, docentesTotales };
-  }, [todosSegunPlan, ahora]);
+  }, [todosSegunPlan, filasEventos, ahora]);
 
   const donutStats = useMemo(() => {
     const esLaboratorio = (nombre) => nombre?.toLowerCase().startsWith('lab');
@@ -849,16 +861,22 @@ export default function VisualBd() {
     const laboratorios = aulasData.filter(a => esLaboratorio(a.nombre));
 
     const total = aulasNormales.length;
-    const aulasEnCursoSet = new Set(
-      todosSegunPlan
+    const aulasEventosEnCurso = filasEventos
+      .filter(e => e.estadoTiempo === 'en_curso' && e.aula_asignada && e.aula_asignada !== '—' && e.aula_asignada !== 'Por asignar')
+      .map(e => e.aula_asignada);
+
+    const aulasEnCursoSet = new Set([
+      ...todosSegunPlan
         .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && !c.esAulaLiberada && c.aula_asignada && c.aula_asignada !== 'Por asignar' && !esLaboratorio(c.aula_asignada))
-        .map(c => c.aula_asignada)
-    );
-    const labsEnCursoSet = new Set(
-      todosSegunPlan
+        .map(c => c.aula_asignada),
+      ...aulasEventosEnCurso.filter(a => !esLaboratorio(a))
+    ]);
+    const labsEnCursoSet = new Set([
+      ...todosSegunPlan
         .filter(c => (c.estadoTiempo === 'en_curso' || c.estadoTiempo === 'examen_ordinario') && !c.esAulaLiberada && c.aula_asignada && c.aula_asignada !== 'Por asignar' && esLaboratorio(c.aula_asignada))
-        .map(c => c.aula_asignada)
-    );
+        .map(c => c.aula_asignada),
+      ...aulasEventosEnCurso.filter(a => esLaboratorio(a))
+    ]);
 
     const ocupadas = aulasEnCursoSet.size;
     const disponibles = Math.max(0, total - ocupadas);
@@ -868,7 +886,7 @@ export default function VisualBd() {
     const labsOcupados = labsEnCursoSet.size;
 
     return { total, ocupadas, disponibles, porcentaje, totalLabs, labsOcupados };
-  }, [aulasData, todosSegunPlan]);
+  }, [aulasData, todosSegunPlan, filasEventos]);
 
   const RADIO_DONUT = 38;
   const CIRC_DONUT = 2 * Math.PI * RADIO_DONUT;

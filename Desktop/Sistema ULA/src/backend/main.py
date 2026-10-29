@@ -15,6 +15,7 @@ import secrets
 from contextlib import asynccontextmanager
 from collections import defaultdict
 from datetime import datetime, timedelta, date, time
+from zoneinfo import ZoneInfo
 from typing import Optional, List, Any, Dict, Union
 import uuid
 from email.mime.text import MIMEText
@@ -31,6 +32,16 @@ from io import BytesIO
 # Cargar variables de entorno desde src/backend/.env
 base_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(base_dir, ".env"))
+
+# ── Zona horaria institucional (Mérida, Yucatán — CST/CDT) ──────────────────
+ZONA_HORARIA_INSTITUCIONAL = ZoneInfo("America/Merida")
+
+def _ahora_local() -> datetime:
+    """Devuelve la fecha y hora actual en la zona horaria institucional (America/Merida), sin tzinfo."""
+    try:
+        return datetime.now(ZONA_HORARIA_INSTITUCIONAL).replace(tzinfo=None)
+    except Exception:
+        return datetime.utcnow() - timedelta(hours=6)
 
 def migrar_columnas_verificacion():
     """Agrega las columnas y tablas necesarias si no existen."""
@@ -800,7 +811,7 @@ def _parse_horario_minutos(horario_str: str):
 
 def _aplicar_mantenimiento(horarios: list) -> list:
     """Reemplaza aula_asignada por aula_temporal si el aula está en mantenimiento vigente."""
-    ahora = datetime.now()
+    ahora = _ahora_local()
     for h in horarios:
         en_mant = h.pop('en_mantenimiento', None)
         inicio_mant = h.pop('inicio_mantenimiento', None)
@@ -927,8 +938,8 @@ def ciclos_disponibles(fecha: str = None):
                 now_str = fecha
                 now = datetime.strptime(fecha, "%Y-%m-%d")
             else:
-                now_str = datetime.now().strftime("%Y-%m-%d")
-                now = datetime.now()
+                now_str = _ahora_local().strftime("%Y-%m-%d")
+                now = _ahora_local()
                 
             # 1. Intentar deducir el ciclo actual mirando los límites de fechas en la BD
             cursor.execute("""
@@ -3676,7 +3687,7 @@ def obtener_clases_hoy(dia: Optional[int] = None, mins: Optional[int] = None, fe
     mins  = minutos desde medianoche. Si se omite, usa la hora real del servidor.
     fecha = fecha ISO (YYYY-MM-DD). Para consultar eventos del calendario institucional.
     """
-    ahora = datetime.now()
+    ahora = _ahora_local()
     dia_hoy    = dia  if dia  is not None else (ahora.isoweekday() % 7)
     mins_ahora = mins if mins is not None else (ahora.hour * 60 + ahora.minute)
 
@@ -3916,7 +3927,7 @@ class LiberarAulaRequest(BaseModel):
 @app.post("/api/aulas/liberar")
 def liberar_aula(datos: LiberarAulaRequest, request: Request):
     usuario = obtener_usuario(request)
-    ahora = datetime.now()
+    ahora = _ahora_local()
     fecha_val = datos.fecha if datos.fecha else ahora.strftime("%Y-%m-%d")
     connection = get_db_connection()
     try:
@@ -3968,7 +3979,7 @@ def liberar_aula(datos: LiberarAulaRequest, request: Request):
 
 @app.get("/api/aulas/liberadas")
 def obtener_aulas_liberadas(fecha: Optional[str] = None):
-    ahora = datetime.now()
+    ahora = _ahora_local()
     fecha_val = fecha if fecha else ahora.strftime("%Y-%m-%d")
     connection = get_db_connection()
     try:
@@ -4574,7 +4585,7 @@ def obtener_docentes():
             cursor.execute("SELECT * FROM docentes ORDER BY nombre")
             docentes = cursor.fetchall()
 
-            ahora = datetime.now()
+            ahora = _ahora_local()
             mins_ahora = ahora.hour * 60 + ahora.minute
             # isoweekday: Lun=1..Dom=7 → % 7 da Lun=1..Sab=6, Dom=0 (igual que JS getDay())
             dia_hoy = ahora.isoweekday() % 7
@@ -5541,12 +5552,84 @@ def obtener_suplencias_activas():
 # ---------------------------------------------------------
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as PlatypusImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfgen import canvas
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.drawing.image import Image as OpenpyxlImage
+
+def _obtener_ruta_logo() -> Optional[str]:
+    """Busca logo.png en varias ubicaciones posibles."""
+    posibles = [
+        os.path.join(os.path.dirname(__file__), "logo.png"),
+        os.path.join(os.path.dirname(__file__), "..", "components", "logo.png"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "public", "logo.png"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "logo.png"),
+        os.path.abspath("src/backend/logo.png"),
+        os.path.abspath("src/components/logo.png"),
+        os.path.abspath("public/logo.png"),
+        os.path.abspath("logo.png"),
+    ]
+    for p in posibles:
+        if os.path.exists(p):
+            return p
+    return None
+
+def _agregar_logo_excel(ws):
+    """Agrega el logo de la universidad a un worksheet de Excel en la celda A1."""
+    logo_path = _obtener_ruta_logo()
+    if logo_path:
+        try:
+            xl_logo = OpenpyxlImage(logo_path)
+            xl_logo.width = 52
+            xl_logo.height = 48
+            ws.add_image(xl_logo, 'A1')
+        except Exception:
+            pass
+
+def _crear_header_pdf_con_logo(styles, titulo_principal, subtitulo, meta_info=""):
+    """Crea un header con logo para PDFs. Retorna lista de flowables."""
+    from reportlab.lib.styles import ParagraphStyle as PS
+    title_style = PS('_HdrTitle', parent=styles['Normal'], fontSize=14, leading=17,
+                     fontName='Helvetica-Bold', textColor=colors.HexColor('#1c355e'))
+    sub_style = PS('_HdrSub', parent=styles['Normal'], fontSize=10, leading=13,
+                   fontName='Helvetica-Bold', textColor=colors.HexColor('#1c355e'))
+    meta_style = PS('_HdrMeta', parent=styles['Normal'], fontSize=8.5, leading=11,
+                    textColor=colors.HexColor('#64748b'))
+
+    logo_path = _obtener_ruta_logo()
+    elements = []
+    if logo_path:
+        try:
+            logo_img = PlatypusImage(logo_path, width=48, height=45)
+            title_block = [Paragraph(f"<b>{titulo_principal}</b>", title_style)]
+            if subtitulo:
+                title_block.append(Paragraph(f"<b>{subtitulo}</b>", sub_style))
+            if meta_info:
+                title_block.append(Paragraph(meta_info, meta_style))
+            head_table = Table([[logo_img, title_block]], colWidths=[55, 677])
+            head_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('TOPPADDING', (0, 0), (-1, -1), 0),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ]))
+            elements.append(head_table)
+            elements.append(Spacer(1, 10))
+            return elements
+        except Exception:
+            pass
+
+    # Fallback sin logo
+    elements.append(Paragraph(f"<b>{titulo_principal}" + (f" — {subtitulo}" if subtitulo else "") + "</b>", title_style))
+    if meta_info:
+        elements.append(Spacer(1, 4))
+        elements.append(Paragraph(meta_info, meta_style))
+    elements.append(Spacer(1, 8))
+    return elements
 
 class NumberedCanvas(canvas.Canvas):
     def __init__(self, *args, **kwargs):
@@ -5573,6 +5656,12 @@ class NumberedCanvas(canvas.Canvas):
         self.setFillColor(colors.white)
         self.setFont("Helvetica-Bold", 11)
         self.drawString(36, 587, "UNIVERSIDAD LATINO  |  SIPREF - REPORTE DE HORARIOS Y EVENTOS ACADÉMICOS")
+        logo_path = _obtener_ruta_logo()
+        if logo_path:
+            try:
+                self.drawImage(logo_path, 792 - 36 - 32, 575, width=32, height=32, mask="auto", preserveAspectRatio=True)
+            except Exception:
+                pass
         
         # Pie de página
         self.setStrokeColor(colors.HexColor('#c5c6cf'))
@@ -5636,10 +5725,11 @@ def _generar_pdf_reporte(registros: list[dict], filtros: dict, usuario_nombre: s
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     tipo_repr = "BITÁCORA Y REPORTE HISTÓRICO DE CLASES" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
     
-    story.append(Paragraph(f"<b>UNIVERSIDAD LATINO — {tipo_repr}</b>", title_style))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph(f"Generado por: <b>{usuario_nombre}</b> | Fecha y Hora: <b>{ahora_str}</b> | Total Registros: <b>{len(registros)}</b>", sub_style))
-    story.append(Spacer(1, 6))
+    header_els = _crear_header_pdf_con_logo(
+        styles, "UNIVERSIDAD LATINO", tipo_repr,
+        f"Generado por: <b>{usuario_nombre}</b> | Fecha y Hora: <b>{ahora_str}</b> | Total Registros: <b>{len(registros)}</b>"
+    )
+    story.extend(header_els)
 
     if filtros:
         filtros_str_list = [f"<b>{k}:</b> {v}" for k, v in filtros.items() if v]
@@ -5751,16 +5841,20 @@ def _generar_excel_reporte(registros: list[dict], filtros: dict, usuario_nombre:
     zebra_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
 
     tipo_repr = "BITÁCORA HISTÓRICA DE CLASES E INCIDENCIAS" if es_historial else "REPORTE DE HORARIOS Y EVENTOS DE AULAS"
-    ws.cell(row=1, column=1, value=f"UNIVERSIDAD LATINO — {tipo_repr}").font = title_font
     
+    _agregar_logo_excel(ws)
+    ws.row_dimensions[1].height = 20
+    ws.row_dimensions[2].height = 18
+
+    ws.cell(row=1, column=2, value=f"UNIVERSIDAD LATINO — {tipo_repr}").font = title_font
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.cell(row=2, column=1, value=f"Generado por: {usuario_nombre} | Fecha y hora: {ahora_str} | Total registros: {len(registros)}").font = meta_font
+    ws.cell(row=2, column=2, value=f"Generado por: {usuario_nombre} | Fecha y hora: {ahora_str} | Total registros: {len(registros)}").font = meta_font
 
     row_offset = 4
     if filtros:
         filtros_str = ", ".join([f"{k}: {v}" for k, v in filtros.items() if v])
         if filtros_str:
-            ws.cell(row=3, column=1, value=f"Filtros aplicados: {filtros_str}").font = meta_font
+            ws.cell(row=3, column=2, value=f"Filtros aplicados: {filtros_str}").font = meta_font
             row_offset = 5
 
     if es_historial:
@@ -6035,10 +6129,11 @@ def _generar_pdf_bitacora(registros: list[dict], filtros: dict, usuario_nombre: 
 
     story = []
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    story.append(Paragraph("<b>UNIVERSIDAD LATINO — BITÁCORA DE CAMBIOS DEL SISTEMA</b>", title_style))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph(f"Generado por: <b>{usuario_nombre}</b> | Fecha y Hora: <b>{ahora_str}</b> | Total Registros: <b>{len(registros)}</b>", sub_style))
-    story.append(Spacer(1, 6))
+    header_els = _crear_header_pdf_con_logo(
+        styles, "UNIVERSIDAD LATINO", "BITÁCORA DE CAMBIOS DEL SISTEMA",
+        f"Generado por: <b>{usuario_nombre}</b> | Fecha y Hora: <b>{ahora_str}</b> | Total Registros: <b>{len(registros)}</b>"
+    )
+    story.extend(header_els)
 
     if filtros:
         filtros_str_list = [f"<b>{k}:</b> {v}" for k, v in filtros.items() if v]
@@ -6101,14 +6196,18 @@ def _generar_excel_bitacora(registros: list[dict], filtros: dict, usuario_nombre
     cell_font = Font(name="Calibri", size=10)
     thin_border = Border(left=Side(style='thin', color='E0E0E8'), right=Side(style='thin', color='E0E0E8'), top=Side(style='thin', color='E0E0E8'), bottom=Side(style='thin', color='E0E0E8'))
 
-    ws.cell(row=1, column=1, value="UNIVERSIDAD LATINO — BITÁCORA DE CAMBIOS DEL SISTEMA").font = title_font
-    ws.cell(row=2, column=1, value=f"Generado por: {usuario_nombre} | Fecha y hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Total registros: {len(registros)}").font = meta_font
+    _agregar_logo_excel(ws)
+    ws.row_dimensions[1].height = 20
+    ws.row_dimensions[2].height = 18
+
+    ws.cell(row=1, column=2, value="UNIVERSIDAD LATINO — BITÁCORA DE CAMBIOS DEL SISTEMA").font = title_font
+    ws.cell(row=2, column=2, value=f"Generado por: {usuario_nombre} | Fecha y hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Total registros: {len(registros)}").font = meta_font
 
     row_offset = 4
     if filtros:
         filtros_str = ", ".join([f"{k}: {v}" for k, v in filtros.items() if v])
         if filtros_str:
-            ws.cell(row=3, column=1, value=f"Filtros aplicados: {filtros_str}").font = meta_font
+            ws.cell(row=3, column=2, value=f"Filtros aplicados: {filtros_str}").font = meta_font
             row_offset = 5
 
     headers = ["Fecha", "Usuario", "Módulo", "Acción", "Entidad Tipo", "Entidad ID", "Detalles", "IP"]
@@ -6339,14 +6438,17 @@ def _generar_excel_docentes(registros: list[dict], filtros_str: str, usuario_nom
     )
     zebra_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
 
-    ws.cell(row=1, column=1, value="UNIVERSIDAD LATINO — DIRECTORIO DE DOCENTES Y ESTADO ACTUAL").font = title_font
-    
+    _agregar_logo_excel(ws)
+    ws.row_dimensions[1].height = 20
+    ws.row_dimensions[2].height = 18
+
+    ws.cell(row=1, column=2, value="UNIVERSIDAD LATINO — DIRECTORIO DE DOCENTES Y ESTADO ACTUAL").font = title_font
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.cell(row=2, column=1, value=f"Generado por: {usuario_nombre} | Fecha y hora: {ahora_str} | Total registros: {len(registros)}").font = meta_font
+    ws.cell(row=2, column=2, value=f"Generado por: {usuario_nombre} | Fecha y hora: {ahora_str} | Total registros: {len(registros)}").font = meta_font
 
     row_offset = 4
     if filtros_str:
-        ws.cell(row=3, column=1, value=f"Filtros aplicados: {filtros_str}").font = meta_font
+        ws.cell(row=3, column=2, value=f"Filtros aplicados: {filtros_str}").font = meta_font
         row_offset = 5
 
     headers = ["Docente", "Estado Actual", "Licenciaturas", "Asignaturas"]
@@ -6424,9 +6526,12 @@ def _generar_pdf_docentes(registros: list[dict], filtros_str: str, usuario_nombr
     cell_head_style = ParagraphStyle('CellHeadDoc', parent=styles['Normal'], fontSize=8, textColor=colors.white, fontName='Helvetica-Bold')
     cell_text_style = ParagraphStyle('CellTextDoc', parent=styles['Normal'], fontSize=8, leading=10)
 
-    story.append(Paragraph("UNIVERSIDAD LATINO — DIRECTORIO DE DOCENTES", title_style))
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    story.append(Paragraph(f"Generado por: {usuario_nombre} | {ahora_str} | Total: {len(registros)} docentes", sub_style))
+    header_els = _crear_header_pdf_con_logo(
+        styles, "UNIVERSIDAD LATINO", "DIRECTORIO DE DOCENTES",
+        f"Generado por: {usuario_nombre} | {ahora_str} | Total: {len(registros)} docentes"
+    )
+    story.extend(header_els)
     if filtros_str:
         story.append(Paragraph(f"<b>Filtros:</b> {filtros_str}", sub_style))
     story.append(Spacer(1, 12))
@@ -6879,7 +6984,7 @@ def _guardar_registro_historico(
 
 def _evaluar_y_cerrar_clases_vencidas():
     """Evalúa clases de hoy cuyo horario_fin ya haya transcurrido y las persiste en clases_historico."""
-    ahora = datetime.now()
+    ahora = _ahora_local()
     fecha_hoy = ahora.date()
     dia_hoy_idx = ahora.isoweekday() % 7
     mins_ahora = ahora.hour * 60 + ahora.minute
@@ -7048,7 +7153,7 @@ def obtener_clases_historico(
     """Obtiene el historial de clases (getHistoricalClasses) filtrado por periodo, licenciatura, docente, estado, etc."""
     _evaluar_y_cerrar_clases_vencidas()
 
-    ahora = datetime.now()
+    ahora = _ahora_local()
     fecha_hoy = ahora.date()
 
     if rango_fecha == "hoy":
@@ -7334,13 +7439,32 @@ def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha:
             ws = wb.active
             ws.title = "Historial"
             
+            # Logo
+            _agregar_logo_excel(ws)
+            ws.row_dimensions[1].height = 22
+            ws.row_dimensions[2].height = 18
+
+            title_font_hp = Font(name='Calibri', bold=True, size=14, color='1C355E')
+            meta_font_hp = Font(name='Calibri', size=9, italic=True, color='555555')
+            header_font_hp = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+            header_fill_hp = PatternFill(start_color='1C355E', end_color='1C355E', fill_type='solid')
+
+            ws.cell(row=1, column=2, value="UNIVERSIDAD LATINO — Historial de Periodos Cerrados").font = title_font_hp
+            ws.cell(row=2, column=2, value=f"Total registros: {len(registros)}").font = meta_font_hp
+
             # Escribir encabezados
             headers = ['Día', 'Horario', 'Asignatura', 'Docente', 'Aula Asignada', 'Carrera', 'Semestre', 'Cuatrimestre', 'Grupo', 'Ciclo', 'Modalidad', 'Fecha Archivado']
-            ws.append(headers)
+            for col_idx, h in enumerate(headers, 1):
+                cell = ws.cell(row=4, column=col_idx, value=h)
+                cell.font = header_font_hp
+                cell.fill = header_fill_hp
+                cell.alignment = Alignment(horizontal='center', vertical='center')
             
             # Escribir datos
-            for row in registros:
-                ws.append([
+            alt_fill_hp = PatternFill(start_color='F4F6FB', end_color='F4F6FB', fill_type='solid')
+            for i, row in enumerate(registros):
+                row_idx = i + 5
+                vals = [
                     row.get('dia', ''),
                     row.get('horario', ''),
                     row.get('asignatura', ''),
@@ -7353,7 +7477,13 @@ def exportar_historial_periodos(ciclo: str = None, modalidad: str = None, fecha:
                     row.get('ciclo', ''),
                     row.get('modalidad', ''),
                     row.get('fecha_archivado', '')
-                ])
+                ]
+                for col_idx, val in enumerate(vals, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.font = Font(name='Calibri', size=10)
+                    cell.alignment = Alignment(vertical='center')
+                    if i % 2 == 1:
+                        cell.fill = alt_fill_hp
                 
             output = io.BytesIO()
             wb.save(output)
@@ -7454,16 +7584,21 @@ def exportar_examenes_excel(
             title_font = Font(name='Calibri', bold=True, size=14, color='1C355E')
             subtitle_font = Font(name='Calibri', size=10, color='666666')
 
-            # Título
-            ws.merge_cells('A1:G1')
-            ws['A1'] = f"Calendario de Exámenes — {titulo_carrera}"
-            ws['A1'].font = title_font
-            ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+            # Logo
+            _agregar_logo_excel(ws)
+            ws.row_dimensions[1].height = 22
+            ws.row_dimensions[2].height = 18
 
-            ws.merge_cells('A2:G2')
-            ws['A2'] = f"Ciclo Escolar: {ciclo_escolar}" + (f"  |  Filtro de fecha: {fecha_filtro}" if fecha_filtro else "")
-            ws['A2'].font = subtitle_font
-            ws['A2'].alignment = Alignment(horizontal='center')
+            # Título
+            ws.merge_cells('B1:G1')
+            ws['B1'] = f"Calendario de Exámenes — {titulo_carrera}"
+            ws['B1'].font = title_font
+            ws['B1'].alignment = Alignment(horizontal='left', vertical='center')
+
+            ws.merge_cells('B2:G2')
+            ws['B2'] = f"Ciclo Escolar: {ciclo_escolar}" + (f"  |  Filtro de fecha: {fecha_filtro}" if fecha_filtro else "")
+            ws['B2'].font = subtitle_font
+            ws['B2'].alignment = Alignment(horizontal='left')
 
             # Encabezados
             headers = ['Carrera', 'Periodo', 'Semestre', 'Día', 'Fecha', 'Materia', 'Docente']
@@ -7491,12 +7626,12 @@ def exportar_examenes_excel(
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
                     cell.font = Font(name='Calibri', size=10)
                     cell.border = thin_border
-                    cell.alignment = Alignment(vertical='center')
+                    cell.alignment = Alignment(vertical='center', wrap_text=True)
                     if i % 2 == 1:
                         cell.fill = alt_fill
 
             # Ajustar ancho de columnas
-            col_widths = [12, 25, 15, 15, 22, 45, 30]
+            col_widths = [14, 28, 12, 12, 18, 42, 30]
             for i, w in enumerate(col_widths, 1):
                 ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -7556,51 +7691,55 @@ def exportar_examenes_pdf(
             elements = []
             
             styles = getSampleStyleSheet()
-            title_style = ParagraphStyle(name="CustomTitle", parent=styles['Heading1'], alignment=1, textColor=colors.HexColor("#1c355e"), fontSize=16)
-            subtitle_style = ParagraphStyle(name="CustomSubtitle", parent=styles['Normal'], alignment=1, textColor=colors.gray, fontSize=11, spaceAfter=20)
-            
-            elements.append(Paragraph(f"Calendario de Exámenes — {titulo_carrera}", title_style))
+
+            # Header con logo
             subtitle = f"Ciclo Escolar: {ciclo_escolar}"
             if fecha_filtro:
                 subtitle += f"  |  Filtro de fecha: {fecha_filtro}"
-            elements.append(Paragraph(subtitle, subtitle_style))
+            header_els = _crear_header_pdf_con_logo(
+                styles, "UNIVERSIDAD LATINO",
+                f"Calendario de Exámenes — {titulo_carrera}",
+                subtitle
+            )
+            elements.extend(header_els)
 
-            table_data = [['Carrera', 'Periodo', 'Semestre', 'Fecha', 'Materia', 'Docente']]
+            # Estilos de celdas
+            th_style = ParagraphStyle('ExTh', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=11, textColor=colors.whitesmoke, alignment=1)
+            td_style = ParagraphStyle('ExTd', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#1f2937'))
+            td_center = ParagraphStyle('ExTdC', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, alignment=1, textColor=colors.HexColor('#1f2937'))
+            td_bold_center = ParagraphStyle('ExTdBC', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, leading=10, alignment=1, textColor=colors.HexColor('#1c355e'))
+
+            table_data = [[
+                Paragraph('Carrera', th_style),
+                Paragraph('Periodo', th_style),
+                Paragraph('Semestre', th_style),
+                Paragraph('Fecha', th_style),
+                Paragraph('Materia', th_style),
+                Paragraph('Docente', th_style)
+            ]]
             
             for row in datos:
-                # Use Paragraph for materia and docente to allow wrapping
-                p_materia = Paragraph(row.get('materia', ''), styles['Normal'])
-                p_docente = Paragraph(row.get('docente', ''), styles['Normal'])
-                
                 table_data.append([
-                    row.get('carrera', ''),
-                    row.get('periodo', ''),
-                    row.get('semestre', ''),
-                    f"{row.get('dia','')} {row.get('fecha','')}",
-                    p_materia,
-                    p_docente
+                    Paragraph(str(row.get('carrera', '')), td_bold_center),
+                    Paragraph(str(row.get('periodo', '')), td_center),
+                    Paragraph(str(row.get('semestre', '')), td_center),
+                    Paragraph(f"{row.get('dia','')} {row.get('fecha','')}", td_center),
+                    Paragraph(str(row.get('materia', '')), td_style),
+                    Paragraph(str(row.get('docente', '')), td_style)
                 ])
 
-            t = Table(table_data, colWidths=[60, 100, 70, 110, 210, 180])
+            t = Table(table_data, colWidths=[65, 120, 50, 95, 215, 187], repeatRows=1)
             t.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1c355e")),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('TOPPADDING', (0, 0), (-1, 0), 8),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#e5e7eb")),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#e5e7eb")),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             ]))
-            
-            # Alternate row colors
-            for i in range(1, len(table_data)):
-                if i % 2 == 0:
-                    t.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor("#f9fafb"))]))
             
             elements.append(t)
             doc.build(elements)
@@ -7679,15 +7818,20 @@ async def enviar_examenes_por_correo(body: dict):
             title_font = Font(name='Calibri', bold=True, size=14, color='1C355E')
             subtitle_font = Font(name='Calibri', size=10, color='666666')
 
-            ws.merge_cells('A1:G1')
-            ws['A1'] = f"Calendario de Exámenes — {titulo_carrera}"
-            ws['A1'].font = title_font
-            ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+            # Logo
+            _agregar_logo_excel(ws)
+            ws.row_dimensions[1].height = 22
+            ws.row_dimensions[2].height = 18
 
-            ws.merge_cells('A2:G2')
-            ws['A2'] = f"Ciclo Escolar: {ciclo_escolar}" + (f"  |  Filtro de fecha: {fecha_filtro}" if fecha_filtro else "")
-            ws['A2'].font = subtitle_font
-            ws['A2'].alignment = Alignment(horizontal='center')
+            ws.merge_cells('B1:G1')
+            ws['B1'] = f"Calendario de Exámenes — {titulo_carrera}"
+            ws['B1'].font = title_font
+            ws['B1'].alignment = Alignment(horizontal='left', vertical='center')
+
+            ws.merge_cells('B2:G2')
+            ws['B2'] = f"Ciclo Escolar: {ciclo_escolar}" + (f"  |  Filtro de fecha: {fecha_filtro}" if fecha_filtro else "")
+            ws['B2'].font = subtitle_font
+            ws['B2'].alignment = Alignment(horizontal='left')
 
             headers = ['Carrera', 'Periodo', 'Semestre', 'Día', 'Fecha', 'Materia', 'Docente']
             for col_idx, h in enumerate(headers, 1):
@@ -7708,11 +7852,11 @@ async def enviar_examenes_por_correo(body: dict):
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
                     cell.font = Font(name='Calibri', size=10)
                     cell.border = thin_border
-                    cell.alignment = Alignment(vertical='center')
+                    cell.alignment = Alignment(vertical='center', wrap_text=True)
                     if i % 2 == 1:
                         cell.fill = alt_fill
 
-            col_widths = [12, 25, 15, 15, 22, 45, 30]
+            col_widths = [14, 28, 12, 12, 18, 42, 30]
             for i, w in enumerate(col_widths, 1):
                 ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -7728,42 +7872,51 @@ async def enviar_examenes_por_correo(body: dict):
             doc = SimpleDocTemplate(file_buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
             elements = []
             pdf_styles = getSampleStyleSheet()
-            title_style = ParagraphStyle(name="CustomTitle", parent=pdf_styles['Heading1'], alignment=1, textColor=colors.HexColor("#1c355e"), fontSize=16)
-            subtitle_style = ParagraphStyle(name="CustomSubtitle", parent=pdf_styles['Normal'], alignment=1, textColor=colors.gray, fontSize=11, spaceAfter=20)
-            
-            elements.append(Paragraph(f"Calendario de Exámenes — {titulo_carrera}", title_style))
+
+            # Header con logo
             subtitle = f"Ciclo Escolar: {ciclo_escolar}"
             if fecha_filtro:
                 subtitle += f"  |  Filtro de fecha: {fecha_filtro}"
-            elements.append(Paragraph(subtitle, subtitle_style))
+            header_els = _crear_header_pdf_con_logo(
+                pdf_styles, "UNIVERSIDAD LATINO",
+                f"Calendario de Exámenes — {titulo_carrera}",
+                subtitle
+            )
+            elements.extend(header_els)
 
-            table_data = [['Carrera', 'Periodo', 'Semestre', 'Fecha', 'Materia', 'Docente']]
+            # Estilos de celdas
+            th_style = ParagraphStyle('ExThMail', parent=pdf_styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=11, textColor=colors.whitesmoke, alignment=1)
+            td_style = ParagraphStyle('ExTdMail', parent=pdf_styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#1f2937'))
+            td_center = ParagraphStyle('ExTdCMail', parent=pdf_styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, alignment=1, textColor=colors.HexColor('#1f2937'))
+            td_bold_center = ParagraphStyle('ExTdBCMail', parent=pdf_styles['Normal'], fontName='Helvetica-Bold', fontSize=8, leading=10, alignment=1, textColor=colors.HexColor('#1c355e'))
+
+            table_data = [[
+                Paragraph('Carrera', th_style), Paragraph('Periodo', th_style),
+                Paragraph('Semestre', th_style), Paragraph('Fecha', th_style),
+                Paragraph('Materia', th_style), Paragraph('Docente', th_style)
+            ]]
             for row in datos:
-                p_materia = Paragraph(row.get('materia', ''), pdf_styles['Normal'])
-                p_docente = Paragraph(row.get('docente', ''), pdf_styles['Normal'])
                 table_data.append([
-                    row.get('carrera', ''), row.get('periodo', ''), row.get('semestre', ''),
-                    f"{row.get('dia','')} {row.get('fecha','')}", p_materia, p_docente
+                    Paragraph(str(row.get('carrera', '')), td_bold_center),
+                    Paragraph(str(row.get('periodo', '')), td_center),
+                    Paragraph(str(row.get('semestre', '')), td_center),
+                    Paragraph(f"{row.get('dia','')} {row.get('fecha','')}", td_center),
+                    Paragraph(str(row.get('materia', '')), td_style),
+                    Paragraph(str(row.get('docente', '')), td_style)
                 ])
 
-            t = Table(table_data, colWidths=[60, 100, 70, 110, 210, 180])
+            t = Table(table_data, colWidths=[65, 120, 50, 95, 215, 187], repeatRows=1)
             t.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1c355e")),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('TOPPADDING', (0, 0), (-1, 0), 8),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#e5e7eb")),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#e5e7eb")),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             ]))
-            for i in range(1, len(table_data)):
-                if i % 2 == 0:
-                    t.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor("#f9fafb"))]))
             elements.append(t)
             doc.build(elements)
             file_buffer.seek(0)
@@ -7883,13 +8036,106 @@ def enviar_correo_generico(correo_destino: str, asunto: str, html_content: str):
         return False
 
 
+def _formatear_hora_hhmm(val) -> str:
+    if isinstance(val, timedelta):
+        total_seconds = int(val.total_seconds())
+        h = (total_seconds // 3600) % 24
+        m = (total_seconds % 3600) // 60
+        return f"{h:02d}:{m:02d}"
+    if isinstance(val, (datetime, time)):
+        return val.strftime("%H:%M")
+    s = str(val).strip()
+    if not s:
+        return "00:00"
+    parts = s.split(":")
+    if len(parts) >= 2:
+        try:
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+        except Exception:
+            return s[:5]
+    return s[:5]
+
+
+def _calcular_estado_evento(fecha_val, hora_ini_val, hora_fin_val, estado_actual: str = "Programado") -> str:
+    """Calcula el estado dinámico de un evento según su fecha, horario y la hora institucional actual."""
+    if str(estado_actual or "").strip().capitalize() == "Cancelado":
+        return "Cancelado"
+    try:
+        now_dt = _ahora_local()
+        f_str = str(fecha_val).strip()[:10]
+        h_ini = _formatear_hora_hhmm(hora_ini_val)
+        h_fin = _formatear_hora_hhmm(hora_fin_val)
+        dt_ini = datetime.strptime(f"{f_str} {h_ini}", "%Y-%m-%d %H:%M")
+        dt_fin = datetime.strptime(f"{f_str} {h_fin}", "%Y-%m-%d %H:%M")
+
+        if now_dt >= dt_fin:
+            return "Finalizado"
+        elif now_dt >= dt_ini:
+            return "En curso"
+        else:
+            return "Programado"
+    except Exception:
+        return estado_actual or "Programado"
+
+
+def _sincronizar_estados_eventos(cursor):
+    """
+    Sincroniza en la base de datos el estado de los eventos en tiempo real:
+    - Finalizado: si ya terminó (fecha anterior a hoy O (fecha hoy Y hora_fin <= ahora))
+    - En curso: si está transcurriendo (fecha hoy Y hora_inicio <= ahora Y hora_fin > ahora)
+    - Programado: si es futuro pero quedó como 'En curso' o 'Finalizado' por reprogramación
+    Respeta eventos 'Cancelado'.
+    """
+    try:
+        now_dt = _ahora_local()
+        now_fecha = now_dt.strftime("%Y-%m-%d")
+        now_hora = now_dt.strftime("%H:%M:%S")
+
+        # 1. Marcar como Finalizado
+        cursor.execute("""
+            UPDATE eventos_aulas
+            SET estado = 'Finalizado'
+            WHERE estado NOT IN ('Cancelado', 'Finalizado')
+              AND (
+                fecha < %s 
+                OR (fecha = %s AND hora_fin <= %s)
+              )
+        """, (now_fecha, now_fecha, now_hora))
+
+        # 2. Marcar como En curso
+        cursor.execute("""
+            UPDATE eventos_aulas
+            SET estado = 'En curso'
+            WHERE estado = 'Programado'
+              AND fecha = %s
+              AND hora_inicio <= %s
+              AND hora_fin > %s
+        """, (now_fecha, now_hora, now_hora))
+
+        # 3. Revertir a Programado eventos reprogramados hacia el futuro
+        cursor.execute("""
+            UPDATE eventos_aulas
+            SET estado = 'Programado'
+            WHERE estado IN ('En curso', 'Finalizado')
+              AND (
+                fecha > %s
+                OR (fecha = %s AND hora_inicio > %s)
+              )
+        """, (now_fecha, now_fecha, now_hora))
+    except Exception as err:
+        print(f"Error sincronizando estados de eventos: {err}")
+
+
 async def worker_procesar_recordatorios():
-    """Worker asíncrono en segundo plano para procesar recordatorios programados en BD."""
+    """Worker asíncrono en segundo plano para procesar recordatorios programados en BD y mantener estados sincronizados."""
     while True:
         try:
             connection = get_db_connection()
             with connection.cursor() as cursor:
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _sincronizar_estados_eventos(cursor)
+                connection.commit()
+
+                now_str = _ahora_local().strftime("%Y-%m-%d %H:%M:%S")
                 cursor.execute("""
                     SELECT r.*, e.nombre_evento, e.tipo_evento, e.aula_nombre, e.fecha, 
                            e.hora_inicio, e.hora_fin, e.responsable, e.correo, e.descripcion, e.estado as estado_evento
@@ -8044,26 +8290,6 @@ def _time_a_minutos(val) -> int:
     return 0
 
 
-def _formatear_hora_hhmm(val) -> str:
-    if isinstance(val, timedelta):
-        total_seconds = int(val.total_seconds())
-        h = (total_seconds // 3600) % 24
-        m = (total_seconds % 3600) // 60
-        return f"{h:02d}:{m:02d}"
-    if isinstance(val, (datetime, time)):
-        return val.strftime("%H:%M")
-    s = str(val).strip()
-    if not s:
-        return "00:00"
-    parts = s.split(":")
-    if len(parts) >= 2:
-        try:
-            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
-        except Exception:
-            return s[:5]
-    return s[:5]
-
-
 def _calcular_fecha_programada(fecha_str: str, hora_inicio_str: str, valor: int, unidad: str) -> datetime:
     try:
         dt_inicio = datetime.strptime(f"{fecha_str} {hora_inicio_str[:5]}", "%Y-%m-%d %H:%M")
@@ -8176,6 +8402,8 @@ def api_verificar_disponibilidad(req: DisponibilidadReqSchema):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            _sincronizar_estados_eventos(cursor)
+            connection.commit()
             disp, motivo = _verificar_disponibilidad_interna(
                 cursor, req.aula_nombre, req.fecha, req.hora_inicio, req.hora_fin, req.evento_id
             )
@@ -8189,20 +8417,25 @@ def api_crear_evento(data: EventoCreateSchema):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            _sincronizar_estados_eventos(cursor)
+            connection.commit()
+
             disp, motivo = _verificar_disponibilidad_interna(
                 cursor, data.aula_nombre, data.fecha, data.hora_inicio, data.hora_fin
             )
             if not disp:
                 raise HTTPException(status_code=400, detail=motivo)
 
+            estado_inicial = _calcular_estado_evento(data.fecha, data.hora_inicio, data.hora_fin)
+
             cursor.execute("""
                 INSERT INTO eventos_aulas 
                 (tipo_evento, nombre_evento, aula_nombre, fecha, hora_inicio, hora_fin, responsable, correo, descripcion, usuario_creador, estado)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Programado')
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 data.tipo_evento, data.nombre_evento, data.aula_nombre, data.fecha,
                 data.hora_inicio, data.hora_fin, data.responsable, data.correo,
-                data.descripcion, data.usuario_creador
+                data.descripcion, data.usuario_creador, estado_inicial
             ))
             evento_id = cursor.lastrowid
 
@@ -8236,7 +8469,8 @@ def api_listar_eventos(
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            now_dt = datetime.now()
+            _sincronizar_estados_eventos(cursor)
+            connection.commit()
 
             query = "SELECT * FROM eventos_aulas WHERE 1=1"
             params = []
@@ -8264,33 +8498,9 @@ def api_listar_eventos(
 
             resultado = []
             for row in rows:
-                ev_id = row["id"]
-                est = row["estado"]
-                f_str = str(row["fecha"])
-                h_ini_str = _formatear_hora_hhmm(row["hora_inicio"])
-                h_fin_str = _formatear_hora_hhmm(row["hora_fin"])
-
-                try:
-                    dt_ini = datetime.strptime(f"{f_str} {h_ini_str}", "%Y-%m-%d %H:%M")
-                    dt_fin = datetime.strptime(f"{f_str} {h_fin_str}", "%Y-%m-%d %H:%M")
-
-                    if est not in ("Cancelado",):
-                        nuevo_est = est
-                        if now_dt >= dt_fin:
-                            nuevo_est = "Finalizado"
-                        elif now_dt >= dt_ini and now_dt < dt_fin:
-                            nuevo_est = "En curso"
-
-                        if nuevo_est != est:
-                            cursor.execute("UPDATE eventos_aulas SET estado = %s WHERE id = %s", (nuevo_est, ev_id))
-                            connection.commit()
-                            row["estado"] = nuevo_est
-                except Exception:
-                    pass
-
-                row["fecha"] = f_str
-                row["hora_inicio"] = h_ini_str
-                row["hora_fin"] = h_fin_str
+                row["fecha"] = str(row["fecha"])
+                row["hora_inicio"] = _formatear_hora_hhmm(row["hora_inicio"])
+                row["hora_fin"] = _formatear_hora_hhmm(row["hora_fin"])
                 resultado.append(row)
 
             return resultado
@@ -8310,6 +8520,9 @@ def _consultar_eventos_db(
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            _sincronizar_estados_eventos(cursor)
+            connection.commit()
+
             query = "SELECT * FROM eventos_aulas WHERE 1=1"
             params = []
 
@@ -8363,17 +8576,22 @@ def _generar_bytes_eventos_excel(rows, titulo_extra=""):
     title_font = Font(name='Calibri', bold=True, size=15, color='1C355E')
     subtitle_font = Font(name='Calibri', size=10, color='666666')
 
-    ws.merge_cells('A1:I1')
-    ws['A1'] = "SIPREF — Agenda e Historial de Eventos y Reservas de Aulas"
-    ws['A1'].font = title_font
-    ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    # Logo
+    _agregar_logo_excel(ws)
+    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[2].height = 18
+
+    ws.merge_cells('B1:I1')
+    ws['B1'] = "UNIVERSIDAD LATINO — SIPREF — Agenda e Historial de Eventos y Reservas de Aulas"
+    ws['B1'].font = title_font
+    ws['B1'].alignment = Alignment(horizontal='left', vertical='center')
 
     hoy_str = datetime.now().strftime("%d/%m/%Y %H:%M")
-    ws.merge_cells('A2:I2')
+    ws.merge_cells('B2:I2')
     extra_txt = f"  |  Filtro: {titulo_extra}" if titulo_extra else ""
-    ws['A2'] = f"Reporte generado el: {hoy_str}  |  Total de eventos: {len(rows)}{extra_txt}"
-    ws['A2'].font = subtitle_font
-    ws['A2'].alignment = Alignment(horizontal='center')
+    ws['B2'] = f"Reporte generado el: {hoy_str}  |  Total de eventos: {len(rows)}{extra_txt}"
+    ws['B2'].font = subtitle_font
+    ws['B2'].alignment = Alignment(horizontal='left')
 
     headers = [
         'ID', 'Fecha', 'Horario', 'Aula', 'Tipo de Evento',
@@ -8499,10 +8717,14 @@ def _generar_bytes_eventos_pdf(rows, titulo_extra=""):
         alignment=1
     )
 
-    elements.append(Paragraph("SIPREF — Agenda e Historial de Eventos", title_style))
     hoy_str = datetime.now().strftime("%d/%m/%Y %H:%M")
-    extra_txt = f" &nbsp;|&nbsp; Filtro: {titulo_extra}" if titulo_extra else ""
-    elements.append(Paragraph(f"Fecha de reporte: {hoy_str} &nbsp;|&nbsp; Total de eventos: {len(rows)}{extra_txt}", subtitle_style))
+    extra_txt = f" | Filtro: {titulo_extra}" if titulo_extra else ""
+    header_els = _crear_header_pdf_con_logo(
+        styles, "UNIVERSIDAD LATINO",
+        "SIPREF — Agenda e Historial de Eventos",
+        f"Fecha de reporte: {hoy_str} | Total de eventos: {len(rows)}{extra_txt}"
+    )
+    elements.extend(header_els)
 
     table_data = [[
         Paragraph("Fecha", cell_header_style),
@@ -8767,7 +8989,10 @@ def api_eventos_hoy():
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            _sincronizar_estados_eventos(cursor)
+            connection.commit()
+
+            today_str = _ahora_local().strftime("%Y-%m-%d")
             cursor.execute("""
                 SELECT * FROM eventos_aulas 
                 WHERE fecha = %s AND estado IN ('Programado', 'En curso')
@@ -8789,7 +9014,10 @@ def api_eventos_notificaciones_activas():
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            _sincronizar_estados_eventos(cursor)
+            connection.commit()
+
+            today_str = _ahora_local().strftime("%Y-%m-%d")
             cursor.execute("""
                 SELECT e.*, 
                        (SELECT COUNT(*) FROM eventos_recordatorios r WHERE r.evento_id = e.id AND r.estado = 'enviado') as total_enviados,
@@ -8834,6 +9062,9 @@ def api_obtener_evento(evento_id: int):
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
+            _sincronizar_estados_eventos(cursor)
+            connection.commit()
+
             cursor.execute("SELECT * FROM eventos_aulas WHERE id = %s", (evento_id,))
             ev = cursor.fetchone()
             if not ev:
@@ -8899,10 +9130,17 @@ def api_editar_evento(evento_id: int, data: EventoUpdateSchema):
             if data.correo and data.correo != actual["correo"]:
                 cambios.append(f"Correo de aviso: {data.correo}")
 
+            # Recalcular estado si no está cancelado
+            if actual.get("estado") != "Cancelado":
+                nuevo_estado = _calcular_estado_evento(nueva_fecha, nueva_ini, nueva_fin)
+            else:
+                nuevo_estado = "Cancelado"
+
             cursor.execute("""
                 UPDATE eventos_aulas SET 
                   tipo_evento = %s, nombre_evento = %s, aula_nombre = %s, fecha = %s,
-                  hora_inicio = %s, hora_fin = %s, responsable = %s, correo = %s, descripcion = %s
+                  hora_inicio = %s, hora_fin = %s, responsable = %s, correo = %s, descripcion = %s,
+                  estado = %s
                 WHERE id = %s
             """, (
                 data.tipo_evento or actual["tipo_evento"],
@@ -8911,6 +9149,7 @@ def api_editar_evento(evento_id: int, data: EventoUpdateSchema):
                 data.responsable or actual["responsable"],
                 data.correo or actual["correo"],
                 data.descripcion if data.descripcion is not None else actual["descripcion"],
+                nuevo_estado,
                 evento_id
             ))
 
@@ -8945,7 +9184,7 @@ def api_cancelar_evento(evento_id: int, data: EventoCancelarSchema):
             if not ev:
                 raise HTTPException(status_code=404, detail="Evento no encontrado.")
 
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_str = _ahora_local().strftime("%Y-%m-%d %H:%M:%S")
 
             cursor.execute("""
                 UPDATE eventos_aulas SET estado = 'Cancelado', motivo_cancelacion = %s, fecha_cancelacion = %s

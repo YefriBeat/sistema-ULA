@@ -206,8 +206,9 @@ export default function Layout() {
         }
 
         // 3. Avisos y recordatorios internos SIPREF
-        if (Array.isArray(dataEv.recordatorios_recientes)) {
-          dataEv.recordatorios_recientes.forEach(rec => {
+        const listaRec = dataEv.recordatorios || dataEv.recordatorios_recientes;
+        if (Array.isArray(listaRec)) {
+          listaRec.forEach(rec => {
             nuevasNotis.push({
               id: `rec-${rec.id}`,
               titulo: `Recordatorio: ${rec.nombre_evento}`,
