@@ -34,6 +34,7 @@ export default function GestionAulas() {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [filtroEstado, setFiltroEstado] = useState('todos');
+  const [filtroTurno, setFiltroTurno] = useState('todos'); // 'todos', 'matutino', 'vespertino', 'ambos', 'solo_matutino', 'solo_vespertino', 'sin_ocupacion'
   const [busqueda, setBusqueda] = useState('');
 
   // Estado para liberaciones manuales de aulas
@@ -466,6 +467,20 @@ export default function GestionAulas() {
     if (filtroEstado === 'en_curso' && !enClase) return false;
     if (filtroEstado === 'disponible' && (enMant || enClase)) return false;
 
+    // Filtro por Turno (Ocupación Matutino / Vespertino)
+    const infoOcup = ocupacion[aula.nombre];
+    const tieneMat = infoOcup?.matutino === true;
+    const tieneVesp = infoOcup?.vespertino === true;
+    const tieneAmbosTurnos = tieneMat && tieneVesp;
+    const sinTurno = !tieneMat && !tieneVesp;
+
+    if (filtroTurno === 'matutino' && !tieneMat) return false;
+    if (filtroTurno === 'vespertino' && !tieneVesp) return false;
+    if (filtroTurno === 'ambos' && !tieneAmbosTurnos) return false;
+    if (filtroTurno === 'solo_matutino' && (!tieneMat || tieneVesp)) return false;
+    if (filtroTurno === 'solo_vespertino' && (!tieneVesp || tieneMat)) return false;
+    if (filtroTurno === 'sin_ocupacion' && !sinTurno) return false;
+
     return true;
   }).sort((a, b) => {
     const aEsLab = a.nombre.toLowerCase().startsWith('lab');
@@ -873,45 +888,101 @@ export default function GestionAulas() {
       )}
 
 
-      {/* FILTROS ELEGANTES DE ESPACIOS Y ESTADOS */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-[#c5c6cf]/40 shadow-sm">
-        {/* Tabs Principales por Tipo de Espacio */}
-        <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto w-full sm:w-auto">
-          {[
-            { id: 'todos',        label: 'Todos los Espacios', icon: 'grid_view' },
-            { id: 'aulas',        label: 'Aulas',             icon: 'meeting_room' },
-            { id: 'laboratorios', label: 'Laboratorios',      icon: 'science' },
-            { id: 'mantenimiento',label: 'Mantenimiento',     icon: 'construction' },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setFiltroTipo(tab.id)}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
-                filtroTipo === tab.id
-                  ? 'bg-white text-[#1c355e] shadow-sm'
-                  : 'text-[#75777f] hover:text-[#1c355e]'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      {/* FILTROS ELEGANTES DE ESPACIOS, TURNOS Y ESTADOS */}
+      <div className="bg-white p-3 rounded-2xl border border-[#c5c6cf]/40 shadow-sm space-y-2.5">
+        <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+          
+          {/* Grupo 1: Botones de Tipo de Espacio */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1 hidden sm:inline">
+              Espacio:
+            </span>
+            <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto w-full sm:w-auto">
+              {[
+                { id: 'todos',        label: 'Todos los Espacios', icon: 'grid_view' },
+                { id: 'aulas',        label: 'Aulas',             icon: 'meeting_room' },
+                { id: 'laboratorios', label: 'Laboratorios',      icon: 'science' },
+                { id: 'mantenimiento',label: 'Mantenimiento',     icon: 'construction' },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setFiltroTipo(tab.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                    filtroTipo === tab.id
+                      ? 'bg-white text-[#1c355e] shadow-sm font-black'
+                      : 'text-[#75777f] hover:text-[#1c355e]'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">{tab.icon}</span>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        {/* Filtro por Estado (Ocupación) */}
-        <div className="flex items-center gap-2 px-2 pb-1 sm:pb-0 w-full sm:w-auto">
-          <span className="text-sm font-bold text-slate-600 flex items-center gap-1">
-            <span className="material-symbols-outlined text-[18px]">filter_list</span> Filtros:
-          </span>
-          <select
-            value={filtroEstado}
-            onChange={(e) => setFiltroEstado(e.target.value)}
-            className="flex-1 sm:flex-none bg-slate-50 border border-slate-200 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-[#1c355e] cursor-pointer"
-          >
-            <option value="todos">Todos los Estados</option>
-            <option value="en_curso">▶ Solo En Curso / En Uso</option>
-            <option value="disponible">✓ Solo Disponibles</option>
-          </select>
+          {/* Grupo 2: Botones de Filtro por Turno (Matutino / Vespertino / Ambos) */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1 hidden sm:inline">
+              Turno:
+            </span>
+            <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto w-full sm:w-auto">
+              {[
+                { id: 'todos',      label: 'Todos los Turnos', icon: 'view_agenda', activeClass: 'bg-white text-[#1c355e] shadow-sm font-black' },
+                { id: 'matutino',   label: 'Matutino',         icon: 'wb_sunny',    activeClass: 'bg-amber-500 text-white shadow-sm font-black' },
+                { id: 'vespertino', label: 'Vespertino',       icon: 'nights_stay', activeClass: 'bg-indigo-600 text-white shadow-sm font-black' },
+                { id: 'ambos',      label: 'Ambos Turnos',     icon: 'routine',     activeClass: 'bg-purple-600 text-white shadow-sm font-black' },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setFiltroTurno(t.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                    filtroTurno === t.id
+                      ? t.activeClass
+                      : 'text-[#75777f] hover:text-[#1c355e] hover:bg-white/50'
+                  }`}
+                  title={`Filtrar por ${t.label}`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">{t.icon}</span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Grupo 3: Selector de Estado y Botón Limpiar */}
+          <div className="flex items-center gap-2 justify-end flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-1">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider hidden sm:inline">
+                Estado:
+              </span>
+              <select
+                value={filtroEstado}
+                onChange={(e) => setFiltroEstado(e.target.value)}
+                className="bg-[#f4f3f6] border border-slate-200 text-xs rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-[#1c355e] cursor-pointer"
+              >
+                <option value="todos">Todos los Estados</option>
+                <option value="en_curso">▶ En Curso / En Uso</option>
+                <option value="disponible">✓ Disponibles</option>
+              </select>
+            </div>
+
+            {(filtroTurno !== 'todos' || filtroEstado !== 'todos' || filtroTipo !== 'todos' || busqueda) && (
+              <button
+                onClick={() => {
+                  setFiltroTurno('todos');
+                  setFiltroEstado('todos');
+                  setFiltroTipo('todos');
+                  setBusqueda('');
+                }}
+                className="text-xs text-red-600 hover:text-red-800 font-bold flex items-center gap-1 hover:underline px-2.5 py-1.5 bg-red-50 rounded-xl border border-red-100 transition-colors whitespace-nowrap"
+                title="Restablecer todos los filtros"
+              >
+                <span className="material-symbols-outlined text-[15px]">filter_alt_off</span>
+                <span>Limpiar</span>
+              </button>
+            )}
+          </div>
+
         </div>
       </div>
 
@@ -924,7 +995,22 @@ export default function GestionAulas() {
             {cargando ? (
           <p className="col-span-full text-center">Cargando datos...</p>
         ) : aulasFiltradas.length === 0 ? (
-          <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30">Sin Aulas en esta categoría</div>
+          <div className="col-span-full bg-white p-12 text-center rounded-2xl border border-[#c5c6cf]/30 space-y-3">
+            <div className="w-14 h-14 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto">
+              <span className="material-symbols-outlined text-3xl">meeting_room</span>
+            </div>
+            <h3 className="text-base font-bold text-slate-700">Sin espacios con los filtros seleccionados</h3>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              No hay aulas o laboratorios que coincidan con el turno o estado seleccionado.
+            </p>
+            <button
+              onClick={() => { setFiltroTurno('todos'); setFiltroEstado('todos'); setFiltroTipo('todos'); setBusqueda(''); }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#1c355e] text-white text-xs font-bold rounded-xl hover:bg-[#244275] transition-all"
+            >
+              <span className="material-symbols-outlined text-[16px]">filter_alt_off</span>
+              Ver Todos los Espacios
+            </button>
+          </div>
         ) : (
           aulasFiltradas.map((aula) => {
             const enMant        = estaEnMantenimiento(aula);
@@ -1003,9 +1089,34 @@ export default function GestionAulas() {
             return (
               <div key={aula.id} className={`bg-white border rounded-2xl p-6 shadow-sm transition-all ${borderClass}`}>
                 <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
-                    {claseActiva && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0 shadow-sm" />}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-2xl font-bold text-[#1b1c1e]">{aula.nombre}</h2>
+                      {claseActiva && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0 shadow-sm" />}
+                    </div>
+                    {/* Badge de Turno de Ocupación */}
+                    {ocupacion[aula.nombre] && (ocupacion[aula.nombre].matutino || ocupacion[aula.nombre].vespertino) ? (
+                      <div className="flex items-center gap-1 mt-1">
+                        {ocupacion[aula.nombre].matutino && ocupacion[aula.nombre].vespertino ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200/80">
+                            <span className="material-symbols-outlined text-[11px]">routine</span>
+                            Ambos Turnos
+                          </span>
+                        ) : ocupacion[aula.nombre].matutino ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/80">
+                            <span className="material-symbols-outlined text-[11px]">wb_sunny</span>
+                            Turno Matutino
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/80">
+                            <span className="material-symbols-outlined text-[11px]">nights_stay</span>
+                            Turno Vespertino
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-[10px] font-medium text-slate-400 mt-1">Sin turnos asignados</span>
+                    )}
                   </div>
                   {mantProg && aula.inicio_mantenimiento && (
                     <p className="text-[10px] text-yellow-700 font-semibold flex items-center gap-1 mt-0.5">

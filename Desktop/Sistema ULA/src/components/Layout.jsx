@@ -620,6 +620,11 @@ export default function Layout() {
               <span className="text-sm tracking-wide">Calendarios</span>
             </Link>
 
+            <Link to="/incidencias" onClick={cerrarMenu} className={getLinkClasses('incidencias')}>
+              <span className={getIconClasses('incidencias')}>assignment_late</span>
+              <span className="text-sm tracking-wide">Incidencias Docentes</span>
+            </Link>
+
           </nav>
 
           <div className="px-5 pb-8 mt-auto">
