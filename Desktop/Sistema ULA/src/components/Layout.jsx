@@ -221,11 +221,13 @@ export default function Layout() {
           });
         }
 
-        // Deduplicar notificaciones por título y subtítulo
+        // Deduplicar notificaciones
         const notisUnicas = [];
         const seen = new Set();
         for (const noti of nuevasNotis) {
-          const hash = `${noti.titulo}|${noti.subtitulo}`;
+          // Para exámenes, normalizar carrera y título para evitar duplicados por diferente formato de semestre (ej. 10mo vs Décimo)
+          const subtituloNorm = noti.tipo === "examen" ? (noti.subtitulo.split("-")[0] || noti.subtitulo).trim() : noti.subtitulo;
+          const hash = `${noti.tipo}|${noti.titulo.trim().toLowerCase()}|${subtituloNorm.toLowerCase()}`;
           if (!seen.has(hash)) {
             seen.add(hash);
             notisUnicas.push(noti);

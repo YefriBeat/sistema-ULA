@@ -1859,8 +1859,8 @@ async def subir_examenes_excel(
             for carrera, items in resultados.items():
                 # Borrar exámenes previos de esta carrera para este ciclo y origen
                 cursor.execute(
-                    "DELETE FROM examenes_calendario WHERE carrera = %s AND archivo_origen = %s AND ciclo_escolar = %s",
-                    (carrera, filename, ciclo_escolar)
+                    "DELETE FROM examenes_calendario WHERE carrera = %s AND ciclo_escolar = %s",
+                    (carrera, ciclo_escolar)
                 )
                 
                 for d in items:

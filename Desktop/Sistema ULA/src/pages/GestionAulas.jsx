@@ -920,45 +920,40 @@ export default function GestionAulas() {
             </div>
           </div>
 
-          {/* Grupo 2: Botones de Filtro por Turno (Matutino / Vespertino / Ambos) */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1 hidden sm:inline">
-              Turno:
-            </span>
-            <div className="flex items-center gap-1 bg-[#f4f3f6] p-1 rounded-xl overflow-x-auto w-full sm:w-auto">
-              {[
-                { id: 'todos',      label: 'Todos los Turnos', icon: 'view_agenda', activeClass: 'bg-white text-[#1c355e] shadow-sm font-black' },
-                { id: 'matutino',   label: 'Matutino',         icon: 'wb_sunny',    activeClass: 'bg-amber-500 text-white shadow-sm font-black' },
-                { id: 'vespertino', label: 'Vespertino',       icon: 'nights_stay', activeClass: 'bg-indigo-600 text-white shadow-sm font-black' },
-                { id: 'ambos',      label: 'Ambos Turnos',     icon: 'routine',     activeClass: 'bg-purple-600 text-white shadow-sm font-black' },
-              ].map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setFiltroTurno(t.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
-                    filtroTurno === t.id
-                      ? t.activeClass
-                      : 'text-[#75777f] hover:text-[#1c355e] hover:bg-white/50'
-                  }`}
-                  title={`Filtrar por ${t.label}`}
-                >
-                  <span className="material-symbols-outlined text-[15px]">{t.icon}</span>
-                  {t.label}
-                </button>
-              ))}
+          {/* Grupo 2: Selector de Turno, Selector de Estado y Botón Limpiar */}
+          <div className="flex items-center gap-2.5 justify-end flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider hidden sm:inline">
+                Turno:
+              </span>
+              <select
+                value={filtroTurno}
+                onChange={(e) => setFiltroTurno(e.target.value)}
+                className={`bg-[#f4f3f6] border text-xs rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold cursor-pointer transition-colors ${
+                  filtroTurno !== 'todos'
+                    ? 'border-indigo-400 text-indigo-700 bg-indigo-50/60'
+                    : 'border-slate-200 text-[#1c355e]'
+                }`}
+              >
+                <option value="todos">Todos los Turnos</option>
+                <option value="matutino">Matutino</option>
+                <option value="vespertino">Vespertino</option>
+                <option value="ambos">Ambos Turnos</option>
+              </select>
             </div>
-          </div>
 
-          {/* Grupo 3: Selector de Estado y Botón Limpiar */}
-          <div className="flex items-center gap-2 justify-end flex-wrap sm:flex-nowrap">
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider hidden sm:inline">
                 Estado:
               </span>
               <select
                 value={filtroEstado}
                 onChange={(e) => setFiltroEstado(e.target.value)}
-                className="bg-[#f4f3f6] border border-slate-200 text-xs rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-[#1c355e] cursor-pointer"
+                className={`bg-[#f4f3f6] border text-xs rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold cursor-pointer transition-colors ${
+                  filtroEstado !== 'todos'
+                    ? 'border-indigo-400 text-indigo-700 bg-indigo-50/60'
+                    : 'border-slate-200 text-[#1c355e]'
+                }`}
               >
                 <option value="todos">Todos los Estados</option>
                 <option value="en_curso">▶ En Curso / En Uso</option>
