@@ -9987,6 +9987,50 @@ def _generar_pdf_incidencias(
     return buffer.getvalue()
 
 
+
+@app.get("/api/test-smtp")
+def test_smtp_diagnostic():
+    import smtplib, socket
+    results = {}
+    host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+    user = os.getenv("SMTP_USER", "").strip() or "soporte.sipref.software@gmail.com"
+    pwd = (os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "") or "from lcxt muzd wugb").strip()
+
+    # 1. Test socket 587
+    try:
+        s = socket.create_connection((host, 587), timeout=5)
+        s.close()
+        results["socket_587"] = "OK"
+    except Exception as e:
+        results["socket_587"] = f"FAILED: {e}"
+
+    # 2. Test socket 465
+    try:
+        s = socket.create_connection((host, 465), timeout=5)
+        s.close()
+        results["socket_465"] = "OK"
+    except Exception as e:
+        results["socket_465"] = f"FAILED: {e}"
+
+    # 3. Test SMTP 587 with login
+    try:
+        with smtplib.SMTP(host, 587, timeout=6) as server:
+            server.starttls()
+            server.login(user, pwd)
+            results["smtp_587_login"] = "OK"
+    except Exception as e:
+        results["smtp_587_login"] = f"FAILED: {e}"
+
+    # 4. Test SMTP_SSL 465 with login
+    try:
+        with smtplib.SMTP_SSL(host, 465, timeout=6) as server:
+            server.login(user, pwd)
+            results["smtp_465_login"] = "OK"
+    except Exception as e:
+        results["smtp_465_login"] = f"FAILED: {e}"
+
+    return results
+
 @app.get('/api/incidencias/exportar-excel')
 def exportar_incidencias_excel(
     fecha_inicio: Optional[str] = None,
