@@ -808,6 +808,42 @@ class ExportarIncidenciasEmailRequest(BaseModel):
 
 
 @app.post("/api/incidencias/exportar-email")
+
+def _enviar_smtp(correo_destino: str, asunto: str, html: str):
+    """Envía correos usando la API de EmailJS (vía HTTP) para evadir el bloqueo de puertos de Render."""
+    import urllib.request, json
+    service_id = os.getenv("EMAILJS_SERVICE_ID") or "service_jhpup3s"
+    template_id = os.getenv("EMAILJS_TEMPLATE_ID") or "template_zj1opln"
+    public_key = os.getenv("EMAILJS_PUBLIC_KEY") or "crMcHqmKfSp3QZ5tL"
+    private_key = os.getenv("EMAILJS_PRIVATE_KEY") or "1E9fvAzBxLKtdHfSXPOzv"
+
+    if not service_id or not template_id or not public_key:
+        raise ValueError("Faltan las credenciales de EmailJS en las variables de entorno.")
+
+    payload = {
+        "service_id": service_id,
+        "template_id": template_id,
+        "user_id": public_key,
+        "accessToken": private_key,
+        "template_params": {
+            "to_email": correo_destino,
+            "asunto": asunto,
+            "html_content": html
+        }
+    }
+
+    req = urllib.request.Request(
+        'https://api.emailjs.com/api/v1.0/email/send',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0'
+        }
+    )
+    with urllib.request.urlopen(req, timeout=12.0) as res:
+        if res.status != 200:
+            raise Exception(f"EmailJS respondió con código HTTP {res.status}")
+
 def exportar_incidencias_email(req: ExportarIncidenciasEmailRequest, request: Request):
     destinos = [d.strip() for d in req.destinatarios.replace(';', ',').split(',') if d.strip()]
     if not destinos:
@@ -938,45 +974,67 @@ def exportar_incidencias_email(req: ExportarIncidenciasEmailRequest, request: Re
     </html>
     '''
 
-    sender_email = os.getenv("SMTP_USER", "").strip() or "soporte.sipref.software@gmail.com"
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+    sender_email = (os.getenv("SMTP_USER", "").strip() or "soporte.sipref.software@gmail.com")
+    smtp_host = (os.getenv("SMTP_HOST", "").strip() or "smtp.gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", 587))
-    smtp_pass = (os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")).strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "") or "from lcxt muzd wugb").strip()
 
-    try:
-        from email.mime.base import MIMEBase
-        from email import encoders
+    enviado_exitoso = False
+    error_smtp = None
 
-        msg = MIMEMultipart()
-        msg['From'] = f"SIPREF Incidencias <{sender_email}>"
-        msg['To'] = ", ".join(destinos)
-        if cc_list:
-            msg['Cc'] = ", ".join(cc_list)
-        msg['Subject'] = asunto
-        msg.attach(MIMEText(body_html, 'html'))
+    if sender_email and smtp_pass:
+        try:
+            from email.mime.base import MIMEBase
+            from email import encoders
 
-        if pdf_bytes:
-            part = MIMEBase('application', 'pdf')
-            part.set_payload(pdf_bytes)
-            encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename="{filename_pdf}"')
-            msg.attach(part)
+            msg = MIMEMultipart()
+            msg['From'] = f"SIPREF Incidencias <{sender_email}>"
+            msg['To'] = ", ".join(destinos)
+            if cc_list:
+                msg['Cc'] = ", ".join(cc_list)
+            msg['Subject'] = asunto
+            msg.attach(MIMEText(body_html, 'html'))
 
-        if xlsx_bytes:
-            part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            part.set_payload(xlsx_bytes)
-            encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename="{filename_xlsx}"')
-            msg.attach(part)
+            if pdf_bytes:
+                part = MIMEBase('application', 'pdf')
+                part.set_payload(pdf_bytes)
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f'attachment; filename="{filename_pdf}"')
+                msg.attach(part)
 
-        all_recipients = list(destinos) + list(cc_list) + list(cco_list)
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=12.0) as server:
-            server.starttls()
-            if smtp_pass:
+            if xlsx_bytes:
+                part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                part.set_payload(xlsx_bytes)
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f'attachment; filename="{filename_xlsx}"')
+                msg.attach(part)
+
+            all_recipients = list(destinos) + list(cc_list) + list(cco_list)
+            # Timeout corto (4s) para detectar rápidamente si Render bloquea el puerto SMTP
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=4.0) as server:
+                server.starttls()
                 server.login(sender_email, smtp_pass)
-            server.sendmail(sender_email, all_recipients, msg.as_string())
-    except Exception as e:
-        print(f"Aviso SMTP al enviar reporte de incidencias: {e}")
+                server.sendmail(sender_email, all_recipients, msg.as_string())
+            enviado_exitoso = True
+            print("Reporte de incidencias enviado exitosamente vía SMTP directo.")
+        except Exception as e:
+            error_smtp = str(e)
+            print(f"SMTP directo no disponible o bloqueado en la nube ({e}). Intentando fallback HTTP vía EmailJS...")
+
+    # Si SMTP no funcionó (común en Render por bloqueo de puertos 587/465), enviar vía EmailJS (puerto 443 HTTPS)
+    if not enviado_exitoso:
+        try:
+            all_recipients = list(destinos) + list(cc_list) + list(cco_list)
+            for dest in all_recipients:
+                _enviar_smtp(dest, asunto, body_html)
+            enviado_exitoso = True
+            print("Reporte de incidencias enviado exitosamente vía EmailJS HTTP fallback.")
+        except Exception as e_fb:
+            print(f"Error en fallback EmailJS: {e_fb}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"No se pudo enviar el correo por SMTP ({error_smtp or 'puerto bloqueado'}) ni por EmailJS ({e_fb})."
+            )
 
     try:
         _registrar_auditoria_exportacion(
