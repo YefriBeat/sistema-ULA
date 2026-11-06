@@ -99,7 +99,7 @@
   body {
     background: #ffffff !important;
     color: #000000 !important;
-    font-size: 11px !important;
+    font-size: 10px !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
@@ -126,7 +126,7 @@
 
   table {
     width: 100% !important;
-    font-size: 10px !important;
+    font-size: 8.5px !important;
     border-collapse: collapse !important;
     page-break-inside: auto;
   }
@@ -145,14 +145,22 @@
   }
 
   th, td {
-    padding: 5px 6px !important;
-    border: 1px solid #94a3b8 !important;
+    padding: 3.5px 5px !important;
+    border: 0.5px solid #cbd5e1 !important;
     color: #0f172a !important;
   }
 
   th {
     background-color: #1c355e !important;
     color: #ffffff !important;
+    border-color: #94a3b8 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  th.sub-header-print {
+    background-color: #244275 !important;
+    border-color: #94a3b8 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }

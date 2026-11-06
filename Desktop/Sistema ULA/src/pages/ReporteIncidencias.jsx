@@ -63,6 +63,32 @@ export default function ReporteIncidencias() {
     aula: '',
     observaciones: '',
   });
+  // Estados para modal de envío por correo electrónico
+  const [modalEmailAbierto, setModalEmailAbierto] = useState(false);
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [usuariosRegistrados, setUsuariosRegistrados] = useState([]);
+  const [mostrarSugerenciasEmails, setMostrarSugerenciasEmails] = useState(false);
+  const [campoDestinoEmail, setCampoDestinoEmail] = useState('destinatarios');
+  const [formEmail, setFormEmail] = useState({
+    destinatarios: '',
+    cc: '',
+    cco: '',
+    asunto: '',
+    mensaje: '',
+    adjuntar_excel: true,
+    adjuntar_pdf: true,
+  });
+
+  // Cargar usuarios para autocompletar correos
+  useEffect(() => {
+    if (modalEmailAbierto && usuariosRegistrados.length === 0) {
+      fetch('/api/usuarios')
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => setUsuariosRegistrados(Array.isArray(data) ? data : []))
+        .catch(() => setUsuariosRegistrados([]));
+    }
+  }, [modalEmailAbierto, usuariosRegistrados.length]);
+
 
   // Sugerencias de docentes al teclear
   const [mostrarSugerenciasDocente, setMostrarSugerenciasDocente] = useState(false);
@@ -349,6 +375,134 @@ export default function ReporteIncidencias() {
     window.print();
   };
 
+  // Abrir modal de correo preparando asunto y valores
+  const abrirModalEmail = () => {
+    let periodoTxt = 'Corte General Completo';
+    if (fechaInicio && fechaFin) {
+      periodoTxt = `Período del ${fechaInicio} al ${fechaFin}`;
+    } else if (fechaInicio) {
+      periodoTxt = `A partir del ${fechaInicio}`;
+    } else if (fechaFin) {
+      periodoTxt = `Hasta el ${fechaFin}`;
+    }
+
+    setFormEmail((prev) => ({
+      ...prev,
+      asunto: `Relación de Incidencias Docentes — Universidad Latino (${periodoTxt})`,
+    }));
+    setModalEmailAbierto(true);
+  };
+
+  // Enviar reporte por correo
+  const handleEnviarEmail = async (e) => {
+    e.preventDefault();
+    if (!formEmail.destinatarios || !formEmail.destinatarios.includes('@')) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Correo requerido',
+        text: 'Por favor ingresa al menos un correo electrónico válido.',
+        confirmButtonColor: '#1c355e',
+      });
+      return;
+    }
+
+    if (!formEmail.adjuntar_excel && !formEmail.adjuntar_pdf) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Selecciona un formato',
+        text: 'Debes seleccionar al menos un formato para adjuntar (Excel o PDF).',
+        confirmButtonColor: '#1c355e',
+      });
+      return;
+    }
+
+    setEnviandoEmail(true);
+
+    let nombreUsuario = 'Prefectura';
+    let correoUsuario = '';
+    try {
+      const rawUser = localStorage.getItem('usuarioLogueado');
+      if (rawUser) {
+        const parsed = JSON.parse(rawUser);
+        nombreUsuario = parsed.nombre_completo || parsed.nombre || 'Prefectura';
+        correoUsuario = parsed.correo || parsed.email || '';
+      }
+    } catch {}
+
+    try {
+      const payload = {
+        destinatarios: formEmail.destinatarios,
+        cc: formEmail.cc,
+        cco: formEmail.cco,
+        asunto: formEmail.asunto,
+        mensaje: formEmail.mensaje,
+        adjuntar_excel: formEmail.adjuntar_excel,
+        adjuntar_pdf: formEmail.adjuntar_pdf,
+        fecha_inicio: fechaInicio || null,
+        fecha_fin: fechaFin || null,
+        docente: filtroDocente || null,
+        licenciatura: filtroLicenciatura || null,
+        tipo_incidencia: filtroTipo || null,
+        busqueda: filtroBusqueda || null,
+        usuario_nombre: nombreUsuario,
+        usuario_correo: correoUsuario,
+      };
+
+      const res = await fetch('/api/incidencias/exportar-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        setModalEmailAbierto(false);
+        Swal.fire({
+          icon: 'success',
+          title: '¡Reporte enviado!',
+          text: data.message || 'El reporte de incidencias se ha enviado con éxito por correo electrónico.',
+          confirmButtonColor: '#1c355e',
+        });
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error al enviar correo',
+          text: data.detail || 'Ocurrió un error al enviar el reporte. Verifica la configuración SMTP en el servidor.',
+          confirmButtonColor: '#1c355e',
+        });
+      }
+    } catch (err) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Error de conexión',
+        text: `No se pudo conectar con el servidor: ${err.message}`,
+        confirmButtonColor: '#1c355e',
+      });
+    } finally {
+      setEnviandoEmail(false);
+    }
+  };
+
+  // Renderizar badges de correos en campos de email
+  const renderBadgesCampoEmail = (campo, valor) => {
+    const correos = (valor || '').split(',').map((c) => c.trim()).filter(Boolean);
+    if (correos.length === 0) return null;
+    return (
+      <div className="flex flex-wrap gap-1 mt-1.5">
+        {correos.map((correo, idx) => (
+          <span
+            key={idx}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-[11px] font-semibold"
+          >
+            <span className="material-symbols-outlined text-[12px]">mail</span>
+            {correo}
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   // Filtrado de sugerencias de docentes
   const docentesFiltrados = useMemo(() => {
     if (!formulario.docente_nombre) return [];
@@ -367,8 +521,25 @@ export default function ReporteIncidencias() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Nombre de usuario logueado para reporte impreso
+  let nombreUsuarioActual = 'Prefectura';
+  try {
+    const rawUser = localStorage.getItem('usuarioLogueado');
+    if (rawUser) {
+      const parsed = JSON.parse(rawUser);
+      nombreUsuarioActual = parsed.nombre_completo || parsed.nombre || parsed.username || 'Prefectura';
+    }
+  } catch {
+    nombreUsuarioActual = localStorage.getItem('usuarioLogueado') || 'Prefectura';
+  }
+
+  // Fecha y hora formateada estilo México (DD/MM/YYYY HH:MM:SS)
+  const dNow = new Date();
+  const padN = (n) => String(n).padStart(2, '0');
+  const fechaHoraImpresion = `${padN(dNow.getDate())}/${padN(dNow.getMonth() + 1)}/${dNow.getFullYear()} ${padN(dNow.getHours())}:${padN(dNow.getMinutes())}:${padN(dNow.getSeconds())}`;
+
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-6 pb-16">
+    <div className="w-full max-w-7xl mx-auto space-y-6 pb-16 print:max-w-none print:w-full print:m-0 print:p-0 print:space-y-0 print:pb-0">
       {/* =========================================================================
           ENCABEZADO PRINCIPAL (Estilo Corporativo SIPREF ULA - Oculto al imprimir)
       ========================================================================= */}
@@ -378,14 +549,6 @@ export default function ReporteIncidencias() {
 
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-3">
-            {/* Badge de área / sistema */}
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#fdbb11]"></span>
-              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#fdbb11]">
-                Prefectura Académica
-              </span>
-            </div>
-
             {/* Título e ícono institucional */}
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-2xl bg-[#fdbb11]/20 border border-[#fdbb11]/30 flex items-center justify-center text-[#fdbb11] shrink-0">
@@ -430,6 +593,15 @@ export default function ReporteIncidencias() {
             >
               <span className="material-symbols-outlined text-[20px]">table_view</span>
               <span>Excel</span>
+            </button>
+
+            <button
+              onClick={abrirModalEmail}
+              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all duration-200"
+              title="Enviar reporte de incidencias por correo electrónico"
+            >
+              <span className="material-symbols-outlined text-[20px]">mail</span>
+              <span>Correo</span>
             </button>
 
             <button
@@ -712,48 +884,9 @@ export default function ReporteIncidencias() {
       </div>
 
       {/* =========================================================================
-          TABLA DE INCIDENCIAS (FORMATO EXACTO INSTITUCIONAL)
+          TABLA DE INCIDENCIAS (PANTALLA - Oculta en impresión)
       ========================================================================= */}
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden">
-        {/* =========================================================================
-            MEMBRETE Y ENCABEZADO INSTITUCIONAL PARA IMPRESIÓN OFICIAL
-        ========================================================================= */}
-        <div className="hidden print:block p-4 mb-2 border-b-2 border-[#1c355e]">
-          <div className="flex items-center justify-between pb-3">
-            <div className="flex items-center gap-4">
-              <img src={logo} alt="Universidad Latino" className="w-20 h-auto object-contain flex-shrink-0" />
-              <div>
-                <h1 className="text-2xl font-black uppercase text-[#1c355e] tracking-tight m-0">UNIVERSIDAD LATINO</h1>
-                <p className="text-[10px] font-extrabold uppercase tracking-[0.25em] text-[#1c355e] mt-0.5">
-                  Prefectura y Control Escolar — SIPREF
-                </p>
-                <h2 className="text-base font-extrabold text-slate-900 uppercase mt-1">
-                  Relación de Incidencias Docentes
-                </h2>
-              </div>
-            </div>
-
-            <div className="text-right text-[10px] space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-300">
-              <p><span className="font-bold text-slate-700">Período de Reporte:</span> <span className="font-bold text-[#1c355e]">{fechaInicio && fechaFin ? `Del ${fechaInicio} al ${fechaFin}` : 'Corte General Completo'}</span></p>
-              <p><span className="font-bold text-slate-700">Fecha de Emisión:</span> {new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-              <p><span className="font-bold text-slate-700">Total de Registros:</span> <span className="font-bold">{resumen.total_incidencias}</span></p>
-            </div>
-          </div>
-
-          {/* Barra de Resumen Ejecutivo en una línea */}
-          <div className="flex items-center justify-between text-[10px] bg-slate-100 px-3 py-1.5 rounded border border-slate-300 font-semibold text-slate-750">
-            <div>
-              <span className="font-bold text-slate-800">Filtros:</span> {filtroLicenciatura ? `Carrera: ${filtroLicenciatura}` : 'Todas las licenciaturas'} {filtroTipo ? `| Tipo: ${filtroTipo}` : ''} {filtroDocente ? `| Docente: ${filtroDocente}` : ''}
-            </div>
-            <div className="flex items-center gap-4">
-              <span><b className="text-red-800">Faltas:</b> {resumen.total_faltas} ({resumen.total_horas_falta} hrs)</span>
-              <span><b className="text-amber-800">Retardos:</b> {resumen.total_retardos}</span>
-              <span><b className="text-orange-800">Salidas Anticipadas:</b> {resumen.total_salidas_anticipadas}</span>
-              <span><b className="text-[#1c355e]">Docentes involucrados:</b> {resumen.docentes_afectados}</span>
-            </div>
-          </div>
-        </div>
-
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden print:hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -966,22 +1099,176 @@ export default function ReporteIncidencias() {
           </table>
         </div>
 
-        {/* Firmas institucionales para impresión oficial */}
-        <div className="hidden print:grid grid-cols-3 gap-8 pt-16 pb-6 px-4 text-center text-[10px]" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-          <div>
-            <div className="w-48 mx-auto border-b-2 border-slate-800 mb-2"></div>
-            <p className="font-extrabold text-slate-900 uppercase">Prefectura de Turno</p>
-            <p className="text-slate-500 text-[9px]">Elaboró / Reportó</p>
+      </div>
+
+      {/* =========================================================================
+          FORMATO INSTITUCIONAL EXCLUSIVO PARA IMPRESIÓN OFICIAL (IDÉNTICO A PDF)
+      ========================================================================= */}
+      <div className="hidden print:block w-full text-slate-800" style={{ fontFamily: 'Helvetica, Arial, sans-serif' }}>
+        {/* Encabezado con Logo y Metadatos en una sola fila */}
+        <div className="flex items-center gap-3 pb-2">
+          <img src={logo} alt="Universidad Latino" className="w-12 h-12 object-contain shrink-0" />
+          <div className="flex-1">
+            <h1 className="text-[15px] font-black uppercase text-[#1c355e] leading-tight m-0 tracking-tight">
+              UNIVERSIDAD LATINO
+            </h1>
+            <h2 className="text-[11px] font-black uppercase text-[#1c355e] leading-tight mt-0.5 m-0 tracking-normal">
+              RELACIÓN DE INCIDENCIAS DOCENTES
+            </h2>
+            <p className="text-[8.5px] text-[#64748b] leading-tight mt-1 m-0">
+              <span className="font-bold text-[#334155]">Periodo:</span> {fechaInicio && fechaFin ? `Del ${fechaInicio} al ${fechaFin}` : fechaInicio ? `A partir del ${fechaInicio}` : fechaFin ? `Hasta el ${fechaFin}` : 'Corte General Completo'}
+              {filtroLicenciatura ? ` | Licenciatura: ${filtroLicenciatura}` : ''}
+              {filtroTipo ? ` | Tipo: ${filtroTipo}` : ''}
+              {filtroDocente ? ` | Docente: ${filtroDocente}` : ''}
+              {' | '}
+              <span className="font-bold text-[#334155]">Generado por:</span> {nombreUsuarioActual}
+              {' | '}
+              <span className="font-bold text-[#334155]">Fecha y hora:</span> {fechaHoraImpresion}
+              {' | '}
+              <span className="font-bold text-[#334155]">Total registros:</span> {incidencias.length}
+            </p>
           </div>
-          <div>
-            <div className="w-48 mx-auto border-b-2 border-slate-800 mb-2"></div>
-            <p className="font-extrabold text-slate-900 uppercase">Coordinación Académica</p>
-            <p className="text-slate-500 text-[9px]">Revisó y Validó</p>
-          </div>
-          <div>
-            <div className="w-48 mx-auto border-b-2 border-slate-800 mb-2"></div>
-            <p className="font-extrabold text-slate-900 uppercase">Dirección / Recursos Humanos</p>
-            <p className="text-slate-500 text-[9px]">Vo. Bo. Nómina</p>
+        </div>
+
+        {/* Barra Resumen / KPIs (5 columnas fondo #f1f5f9) */}
+        <div className="grid grid-cols-5 text-center text-[8.5px] bg-[#f1f5f9] border border-[#cbd5e1] divide-x divide-[#e2e8f0] py-1 mt-1 mb-2 font-bold text-[#1c355e] print-exact">
+          <div>Faltas: {resumen.total_faltas} ({resumen.total_horas_falta} hrs)</div>
+          <div>Retardos: {resumen.total_retardos}</div>
+          <div>Salidas Anticipadas: {resumen.total_salidas_anticipadas}</div>
+          <div>Docentes involucrados: {resumen.docentes_afectados}</div>
+          <div>Total incidencias: {incidencias.length}</div>
+        </div>
+
+        {/* Tabla de Incidencias estilo PDF ReportLab */}
+        <table className="w-full text-left border-collapse border border-[#94a3b8] text-[8px]" style={{ width: '100%' }}>
+          <thead>
+            <tr className="bg-[#1c355e] text-white font-bold text-center print-exact">
+              <th rowSpan={2} className="py-1 px-1.5 border border-[#94a3b8] w-[70px] text-center align-middle">
+                Fecha
+              </th>
+              <th rowSpan={2} className="py-1 px-2 border border-[#94a3b8] text-left align-middle" style={{ width: '170px' }}>
+                Nombre del Docente
+              </th>
+              <th colSpan={3} className="py-0.5 px-1 border border-[#94a3b8] text-center bg-[#1c355e]">
+                INCIDENCIAS
+              </th>
+              <th rowSpan={2} className="py-1 px-1 border border-[#94a3b8] w-[80px] text-center align-middle">
+                Licenciatura
+              </th>
+              <th rowSpan={2} className="py-1 px-1 border border-[#94a3b8] w-[70px] text-center align-middle">
+                Grado - Gpo
+              </th>
+              <th rowSpan={2} className="py-1 px-2 border border-[#94a3b8] text-left align-middle">
+                Observaciones
+              </th>
+            </tr>
+            <tr className="bg-[#244275] sub-header-print font-bold text-center print-exact">
+              <th className="py-0.5 px-1 border border-[#94a3b8] sub-header-print w-[55px] text-[#fca5a5] text-center">
+                Falta (h)
+              </th>
+              <th className="py-0.5 px-1 border border-[#94a3b8] sub-header-print w-[55px] text-[#fde68a] text-center">
+                Retardo
+              </th>
+              <th className="py-0.5 px-1 border border-[#94a3b8] sub-header-print w-[60px] text-[#fed7aa] text-center">
+                Salida ant.
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {incidencias.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-4 text-center text-slate-500 italic border border-[#cbd5e1]">
+                  No hay incidencias registradas en este período
+                </td>
+              </tr>
+            ) : (
+              incidencias.map((inc, idx) => {
+                const tieneFalta = inc.falta_horas && inc.falta_horas.trim().length > 0;
+                const tieneRetardo = inc.retardo && inc.retardo.trim().length > 0;
+                const tieneSalida = inc.salida_anticipada && inc.salida_anticipada.trim().length > 0;
+
+                let textoFalta = '-';
+                if (tieneFalta) {
+                  const fStr = inc.falta_horas.trim();
+                  textoFalta = fStr.toLowerCase().includes('hr') ? fStr : `${fStr} hrs`;
+                }
+
+                let textoRet = '-';
+                if (tieneRetardo) {
+                  const rStr = inc.retardo.trim();
+                  textoRet = rStr.toLowerCase().includes('min') ? rStr : `${rStr} min.`;
+                }
+
+                let textoSal = '-';
+                if (tieneSalida) {
+                  const sStr = inc.salida_anticipada.trim();
+                  textoSal = sStr.toLowerCase().includes('min') ? sStr : `${sStr} min.`;
+                }
+
+                return (
+                  <tr
+                    key={`print-${inc.id || idx}`}
+                    className={idx % 2 === 0 ? 'bg-white' : 'bg-[#f8fafc] print-exact'}
+                  >
+                    <td className="py-1 px-1.5 text-center border border-[#cbd5e1] font-mono text-slate-700 whitespace-nowrap">
+                      {inc.fecha}
+                    </td>
+                    <td className="py-1 px-2 text-left border border-[#cbd5e1] font-bold text-slate-900">
+                      {inc.docente_nombre}
+                    </td>
+                    <td className={`py-1 px-1 text-center border border-[#cbd5e1] ${tieneFalta ? 'font-bold text-[#b91c1c]' : 'text-slate-400'}`}>
+                      {textoFalta}
+                    </td>
+                    <td className={`py-1 px-1 text-center border border-[#cbd5e1] ${tieneRetardo ? 'font-bold text-[#b45309]' : 'text-slate-400'}`}>
+                      {textoRet}
+                    </td>
+                    <td className={`py-1 px-1 text-center border border-[#cbd5e1] ${tieneSalida ? 'font-bold text-[#c2410c]' : 'text-slate-400'}`}>
+                      {textoSal}
+                    </td>
+                    <td className="py-1 px-1 text-center border border-[#cbd5e1] text-slate-700">
+                      {inc.licenciatura || '-'}
+                    </td>
+                    <td className="py-1 px-1 text-center border border-[#cbd5e1] text-slate-700">
+                      {inc.grado_grupo || '-'}
+                    </td>
+                    <td className="py-1 px-2 text-left border border-[#cbd5e1] text-slate-700">
+                      {inc.observaciones || '-'}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+          {incidencias.length > 0 && (
+            <tfoot>
+              <tr className="bg-[#ebf2fa] font-bold border-t-2 border-[#94a3b8] print-exact">
+                <td className="py-1 px-1.5 border border-[#94a3b8]"></td>
+                <td className="py-1 px-2 text-right border border-[#94a3b8] uppercase text-[#1c355e]">
+                  TOTALES:
+                </td>
+                <td className="py-1 px-1 text-center border border-[#94a3b8] text-[#b91c1c]">
+                  {resumen.total_horas_falta > 0 ? `${resumen.total_horas_falta} hrs` : '-'}
+                </td>
+                <td className="py-1 px-1 text-center border border-[#94a3b8] text-[#b45309]">
+                  {resumen.total_retardos > 0 ? `${resumen.total_retardos} ret.` : '-'}
+                </td>
+                <td className="py-1 px-1 text-center border border-[#94a3b8] text-[#c2410c]">
+                  {resumen.total_salidas_anticipadas > 0 ? `${resumen.total_salidas_anticipadas} sal.` : '-'}
+                </td>
+                <td className="py-1 px-1 border border-[#94a3b8]"></td>
+                <td className="py-1 px-1 border border-[#94a3b8]"></td>
+                <td className="py-1 px-2 border border-[#94a3b8]"></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+
+        {/* Firma de Prefectura (Centrada) */}
+        <div className="pt-10 pb-4 text-center" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+          <div className="w-56 mx-auto">
+            <div className="w-48 mx-auto border-b border-slate-700 mb-1.5"></div>
+            <p className="font-bold text-slate-900 uppercase text-[9px] m-0">Prefectura de Turno</p>
+            <p className="text-slate-500 text-[8px] m-0">Elaboró / Reportó</p>
           </div>
         </div>
       </div>
@@ -1310,6 +1597,270 @@ export default function ReporteIncidencias() {
           </div>
         </div>
       )}
+      {/* =========================================================================
+          MODAL PARA ENVIAR REPORTE POR CORREO ELECTRÓNICO
+      ========================================================================= */}
+      {modalEmailAbierto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full max-h-[92vh] overflow-y-auto border border-slate-100 flex flex-col">
+            {/* Encabezado del modal */}
+            <div className="bg-gradient-to-r from-[#1c355e] to-[#244275] p-5 sm:p-6 text-white flex items-center justify-between sticky top-0 z-20">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-sky-500/20 rounded-xl text-sky-300">
+                  <span className="material-symbols-outlined text-2xl">mail</span>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold">Enviar Reporte por Correo</h3>
+                  <p className="text-xs text-slate-300">Relación de Incidencias Docentes ULA</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalEmailAbierto(false)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+
+            {/* Formulario */}
+            <form onSubmit={handleEnviarEmail} className="p-5 sm:p-6 space-y-4">
+              {/* Tarjeta de alcance del reporte */}
+              <div className="p-3.5 bg-blue-50/70 rounded-2xl border border-blue-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+                <div>
+                  <p className="font-bold text-[#1c355e] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-blue-600">assessment</span>
+                    Alcance del reporte a enviar:
+                  </p>
+                  <p className="text-slate-600 mt-0.5">
+                    {fechaInicio && fechaFin ? `Período: ${fechaInicio} al ${fechaFin}` : 'Corte general completo'}
+                    {filtroDocente ? ` • Docente: ${filtroDocente}` : ''}
+                    {filtroLicenciatura ? ` • Carrera: ${filtroLicenciatura}` : ''}
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 rounded-xl bg-blue-600 text-white font-bold text-[11px] whitespace-nowrap">
+                  {incidencias.length} {incidencias.length === 1 ? 'incidencia' : 'incidencias'}
+                </span>
+              </div>
+
+              {/* Destinatarios */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide">
+                    Destinatario(s) *
+                  </label>
+                  {usuariosRegistrados.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarSugerenciasEmails(!mostrarSugerenciasEmails)}
+                      className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">group</span>
+                      {mostrarSugerenciasEmails ? 'Ocultar usuarios' : `Ver registrados (${usuariosRegistrados.length})`}
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="ejemplo@universidadlatino.edu.mx, otro@correo.com"
+                  value={formEmail.destinatarios}
+                  onFocus={() => setCampoDestinoEmail('destinatarios')}
+                  onChange={(e) => setFormEmail({ ...formEmail, destinatarios: e.target.value })}
+                  className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl text-xs sm:text-sm text-slate-800 outline-none transition-all ${
+                    campoDestinoEmail === 'destinatarios'
+                      ? 'border-[#1c355e] ring-2 ring-[#1c355e]/20 bg-white'
+                      : 'border-slate-300'
+                  }`}
+                />
+                {renderBadgesCampoEmail('destinatarios', formEmail.destinatarios)}
+
+                {/* Chips de usuarios registrados */}
+                {mostrarSugerenciasEmails && usuariosRegistrados.length > 0 && (
+                  <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                    <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[13px] text-blue-600">verified_user</span>
+                      Seleccionar destinatario rápido:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                      {usuariosRegistrados.map((user) => {
+                        const correo = user.correo || user.email || '';
+                        if (!correo) return null;
+                        const listaActual = (formEmail[campoDestinoEmail] || '')
+                          .split(',')
+                          .map((e) => e.trim());
+                        const yaAgregado = listaActual.includes(correo);
+
+                        return (
+                          <button
+                            key={user.id || correo}
+                            type="button"
+                            onClick={() => {
+                              const actual = formEmail[campoDestinoEmail] || '';
+                              if (!yaAgregado) {
+                                const nuevo = actual ? `${actual}, ${correo}` : correo;
+                                setFormEmail({ ...formEmail, [campoDestinoEmail]: nuevo });
+                              }
+                            }}
+                            className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all border flex items-center gap-1 cursor-pointer ${
+                              yaAgregado
+                                ? 'bg-[#1c355e] text-white border-[#1c355e]'
+                                : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:bg-blue-50/50'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[12px]">
+                              {yaAgregado ? 'check' : 'add'}
+                            </span>
+                            {user.nombre || user.nombre_completo || correo}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* CC y CCO */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    CC (Con Copia)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="copia@universidadlatino.edu.mx"
+                    value={formEmail.cc}
+                    onFocus={() => setCampoDestinoEmail('cc')}
+                    onChange={(e) => setFormEmail({ ...formEmail, cc: e.target.value })}
+                    className={`w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs text-slate-800 outline-none transition-all ${
+                      campoDestinoEmail === 'cc'
+                        ? 'border-[#1c355e] ring-2 ring-[#1c355e]/20 bg-white'
+                        : 'border-slate-300'
+                    }`}
+                  />
+                  {renderBadgesCampoEmail('cc', formEmail.cc)}
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    CCO (Copia Oculta)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="oculta@universidadlatino.edu.mx"
+                    value={formEmail.cco}
+                    onFocus={() => setCampoDestinoEmail('cco')}
+                    onChange={(e) => setFormEmail({ ...formEmail, cco: e.target.value })}
+                    className={`w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs text-slate-800 outline-none transition-all ${
+                      campoDestinoEmail === 'cco'
+                        ? 'border-[#1c355e] ring-2 ring-[#1c355e]/20 bg-white'
+                        : 'border-slate-300'
+                    }`}
+                  />
+                  {renderBadgesCampoEmail('cco', formEmail.cco)}
+                </div>
+              </div>
+
+              {/* Asunto */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                  Asunto del Correo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formEmail.asunto}
+                  onChange={(e) => setFormEmail({ ...formEmail, asunto: e.target.value })}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-800 outline-none focus:border-[#1c355e] focus:ring-2 focus:ring-[#1c355e]/20 font-medium"
+                />
+              </div>
+
+              {/* Mensaje / Observación personalizada */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                  Mensaje o Nota Adicional (Opcional)
+                </label>
+                <textarea
+                  rows="3"
+                  placeholder="Escribe un mensaje explicativo para los destinatarios..."
+                  value={formEmail.mensaje}
+                  onChange={(e) => setFormEmail({ ...formEmail, mensaje: e.target.value })}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-800 outline-none focus:border-[#1c355e] focus:ring-2 focus:ring-[#1c355e]/20"
+                ></textarea>
+              </div>
+
+              {/* Formatos a adjuntar */}
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[18px] text-slate-500">attach_file</span>
+                  Formatos a Adjuntar:
+                </span>
+                <div className="flex items-center gap-4">
+                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={formEmail.adjuntar_excel}
+                      onChange={(e) =>
+                        setFormEmail({ ...formEmail, adjuntar_excel: e.target.checked })
+                      }
+                      className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-emerald-800 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px]">table_view</span>
+                      Excel (.xlsx)
+                    </span>
+                  </label>
+
+                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={formEmail.adjuntar_pdf}
+                      onChange={(e) =>
+                        setFormEmail({ ...formEmail, adjuntar_pdf: e.target.checked })
+                      }
+                      className="w-4 h-4 rounded text-red-600 focus:ring-red-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-red-800 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                      PDF Oficial
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Botones de acción */}
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setModalEmailAbierto(false)}
+                  disabled={enviandoEmail}
+                  className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs sm:text-sm hover:bg-slate-50 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={enviandoEmail}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#1c355e] hover:bg-[#244275] text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer disabled:opacity-60"
+                >
+                  {enviandoEmail ? (
+                    <>
+                      <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
+                      <span>Enviando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined text-[18px]">send</span>
+                      <span>Enviar Reporte</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
